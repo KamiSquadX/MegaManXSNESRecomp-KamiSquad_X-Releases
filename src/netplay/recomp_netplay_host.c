@@ -447,6 +447,107 @@ static void host_caps_watch_step(void);
  * equality check -- a package can be present and still be configured
  * differently. Two grains, two questions.
  */
+/* The room's published mod set, as the runtime's canonical newline text.
+ *
+ * Published either whole (newlines written as ';') or -- online, when the
+ * whole text is longer than the lobby server takes -- compact: '~' and then
+ * only the entries that carry options, as "<pkg>/<feature> <opt>=<val> ...",
+ * ';'-separated. The plan rows already name every enabled feature, in the same
+ * order the runtime writes its set, so plan + compact rebuild the whole text;
+ * the host publishes the compact form only after checking that they do.
+ * Without it a host with a dozen mods published nothing, and a guest could
+ * not take the host's choices (or be asked for their ROMs) until the match
+ * refused them at launch.
+ *
+ * Returns the length written, 0 for no set, -1 when it does not fit. */
+static int mod_set_expand(const RNetLobbyMatchCaps *caps, const char *set,
+                          char *out, size_t cap)
+{
+  size_t o = 0;
+  int r;
+  if (!out || cap < 2) return -1;
+  out[0] = '\0';
+  if (!set || !set[0]) return 0;
+  if (set[0] != '~') {
+    size_t i;
+    for (i = 0; set[i]; ++i) {
+      if (o + 2 >= cap) return -1;
+      out[o++] = set[i] == ';' ? '\n' : set[i];
+    }
+    if (out[o - 1] != '\n') out[o++] = '\n';
+    out[o] = '\0';
+    return (int)o;
+  }
+  ++set;
+  if (!caps) return -1;
+  for (r = 0; r < caps->mod_count; ++r) {
+    const RNetLobbyModPkg *row = &caps->mods[r];
+    const size_t id_len = strlen(row->id);
+    const char *f = row->feats;
+    while (*f) {
+      const char *f_end = strchr(f, ',');
+      const size_t f_len = f_end ? (size_t)(f_end - f) : strlen(f);
+      const char *opts = "";
+      size_t opts_len = 0;
+      const char *p = set;
+      int w;
+      while (*p) {
+        const char *p_end = strchr(p, ';');
+        const size_t p_len = p_end ? (size_t)(p_end - p) : strlen(p);
+        if (p_len > id_len + 1 + f_len && !strncmp(p, row->id, id_len) &&
+            p[id_len] == '/' && !strncmp(p + id_len + 1, f, f_len) &&
+            p[id_len + 1 + f_len] == ' ') {
+          opts = p + id_len + 1 + f_len;
+          opts_len = p_len - (id_len + 1 + f_len);
+          break;
+        }
+        if (!p_end) break;
+        p = p_end + 1;
+      }
+      w = snprintf(out + o, cap - o, "%s@%s/%.*s%.*s\n", row->id, row->ver,
+                   (int)f_len, f, (int)opts_len, opts);
+      if (w < 0 || (size_t)w >= cap - o) return -1;
+      o += (size_t)w;
+      if (!f_end) break;
+      f = f_end + 1;
+    }
+  }
+  return (int)o;
+}
+
+/* The compact form of `text` (see mod_set_expand), or 0 when it does not fit
+ * in `cap` or would not rebuild `text` exactly from this plan. */
+static int mod_set_compact(const RNetLobbyMatchCaps *caps, const char *text,
+                           char *out, size_t cap)
+{
+  static char check[16384];
+  const char *line = text;
+  size_t o = 0;
+  if (!caps || !text || !out || cap < 2) return 0;
+  out[o++] = '~';
+  out[o] = '\0';
+  while (*line) {
+    const char *nl = strchr(line, '\n');
+    const size_t len = nl ? (size_t)(nl - line) : strlen(line);
+    const char *at = (const char *)memchr(line, '@', len);
+    const char *slash = at ? (const char *)memchr(at, '/', len - (size_t)(at - line)) : NULL;
+    const char *space = slash ? (const char *)memchr(slash, ' ', len - (size_t)(slash - line)) : NULL;
+    if (len && (!at || !slash)) return 0;
+    if (space) {
+      const int w = snprintf(out + o, cap - o, "%s%.*s%.*s", o > 1 ? ";" : "",
+                             (int)(at - line), line,
+                             (int)(len - (size_t)(slash - line)), slash);
+      if (w < 0 || (size_t)w >= cap - o) return 0;
+      o += (size_t)w;
+    }
+    if (!nl) break;
+    line = nl + 1;
+  }
+  if (mod_set_expand(caps, out, check, sizeof(check)) <= 0 || strcmp(check, text))
+    return 0;
+  return (int)o;
+}
+
 static void fill_caps_mods(RNetLobbyMatchCaps *caps)
 {
   int n;
@@ -489,13 +590,15 @@ static void fill_caps_mods(RNetLobbyMatchCaps *caps)
   caps->mod_count = n;
   /* The exact configuration, not just the package list. */
   if (g_mods->effective_set) {
-    char text[1024];
+    char text[4096];
     const int need = g_mods->effective_set(g_mods->ctx, text,
                                            (uint32_t)sizeof(text));
     if (need > 0 && need < (int)sizeof(text) && strcmp(text, "(none)\n") != 0) {
       size_t o = 0;
       size_t k;
-      for (k = 0; text[k] && o + 1 < sizeof(caps->mod_set); ++k) {
+      /* The lobby server accepts RNET_LOBBY_SERVER_MOD_SET_MAX; a longer set
+       * is not published here and is matched by the in-match handshake. */
+      for (k = 0; text[k] && o + 1 < RNET_LOBBY_SERVER_MOD_SET_MAX; ++k) {
         char c = text[k];
         if (c == '\n') {
           if (o == 0 || caps->mod_set[o - 1] == ';') continue;
@@ -507,10 +610,16 @@ static void fill_caps_mods(RNetLobbyMatchCaps *caps)
       if (o && caps->mod_set[o - 1] == ';') caps->mod_set[o - 1] = '\0';
       if (text[k] != '\0') {
         /* Publishing a PREFIX would be worse than publishing nothing: a guest
-         * would adopt a partial configuration and believe it matched. */
-        caps->mod_set[0] = '\0';
-        fprintf(stderr, "netplay: mod set too long to publish; guests will be "
-                        "asked to match it at launch instead\n");
+         * would adopt a partial configuration and believe it matched. The
+         * compact form says the same thing in fewer bytes, or nothing. */
+        char compact[RNET_LOBBY_SERVER_MOD_SET_MAX];
+        if (mod_set_compact(caps, text, compact, sizeof(compact)) > 0) {
+          snprintf(caps->mod_set, sizeof(caps->mod_set), "%s", compact);
+        } else {
+          caps->mod_set[0] = '\0';
+          fprintf(stderr, "netplay: mod set too long to publish; guests will be "
+                          "asked to match it at launch instead\n");
+        }
       }
     }
   }
@@ -540,19 +649,49 @@ static void fill_caps_mods(RNetLobbyMatchCaps *caps)
  * server asks is possession. Which of them actually RUN is the host's plan to
  * decide, and a peer that owns a mod it has switched off can still play in a
  * lobby that requires it. */
+static const RNetLobbyMatchCaps *room_caps(void);
+
+/* Every installed (id, version) the runtime lists, more than an offer can
+ * carry: the offer has RNET_LOBBY_MAX_MODS rows, and a game can ship more
+ * packages than that (Mega Man X ships 18). */
+#define MOD_OFFER_SCAN_MAX 128
+
 static int mod_offer_rows(RNetLobbyModPkg *out, int max, void *ctx)
 {
-  RNetLobbyModPkg rows[RNET_LOBBY_MAX_MODS];
-  int n;
+  static RNetLobbyModPkg all[MOD_OFFER_SCAN_MAX];
+  static RNetLobbyModPkg rows[MOD_OFFER_SCAN_MAX];
+  const RNetLobbyMatchCaps *plan = room_caps();
+  int total;
+  int n = 0;
   int i;
   int o = 0;
   (void)ctx;
   if (!out || max <= 0 || !g_mods || !g_mods->installed_rows)
     return 0;
-  memset(rows, 0, sizeof(rows));
-  n = g_mods->installed_rows(g_mods->ctx, rows, RNET_LOBBY_MAX_MODS);
-  if (n > RNET_LOBBY_MAX_MODS)
-    n = RNET_LOBBY_MAX_MODS;
+  memset(all, 0, sizeof(all));
+  total = g_mods->installed_rows(g_mods->ctx, all, MOD_OFFER_SCAN_MAX);
+  if (total < 0)
+    total = 0;
+  if (total > MOD_OFFER_SCAN_MAX)
+    total = MOD_OFFER_SCAN_MAX;
+  /* The packages this room's plan requires go first. The list used to be cut
+   * at RNET_LOBBY_MAX_MODS in catalog order, so with 18 packages installed
+   * the last two (the X2 and X3 weapon packs) never reached the host: the
+   * guest's own lobby showed every mod OK while the host saw "Needs mods" and
+   * could not start. Possession of a plan package is the only thing the host
+   * and the lobby server read from an offer; the rest only fills spare rows. */
+  if (plan && plan->valid) {
+    int p;
+    for (p = 0; p < plan->mod_count; ++p)
+      for (i = 0; i < total; ++i)
+        if (all[i].id[0] && !strcmp(all[i].id, plan->mods[p].id)) {
+          rows[n++] = all[i];
+          all[i].id[0] = '\0';
+        }
+  }
+  for (i = 0; i < total; ++i)
+    if (all[i].id[0])
+      rows[n++] = all[i];
   for (i = 0; i < n && o < max; ++i) {
     int dup = 0;
     int k;
@@ -3111,12 +3250,14 @@ static int cb_lobby_mods_get(void *ctx, int index,
    * local settings, which are not what the match will run. */
   {
     const RNetLobbyMatchCaps *caps = room_caps();
+    static char full[16384];
     size_t o = 0;
-    if (caps && caps->valid && caps->mod_set[0]) {
-      const char *p = caps->mod_set;
+    if (caps && caps->valid && caps->mod_set[0] &&
+        mod_set_expand(caps, caps->mod_set, full, sizeof(full)) > 0) {
+      const char *p = full;
       const size_t id_len = strlen(id);
       while (*p) {
-        const char *end = strchr(p, ';');
+        const char *end = strchr(p, '\n');
         const size_t len = end ? (size_t)(end - p) : strlen(p);
         /* "<id>@" anchors the match, so a package whose id is a prefix of
          * another's cannot claim its line. */
@@ -3251,11 +3392,11 @@ static void dl_queue_step(void)
  * layer's job: any path that changes the effective set, present or future, is
  * covered by comparing the set itself. The comparison is against the canonical
  * text, so it fires on a real change and not on a redraw. */
-static char g_published_set[1024];
+static char g_published_set[4096];
 
 static void host_caps_watch_step(void)
 {
-  char text[1024];
+  char text[4096];
   int need;
 
   if (!g_mods || !g_mods->effective_set)
@@ -3293,15 +3434,18 @@ static void host_caps_watch_step(void)
  *
  * Only ever toward the host's set, only for a guest, and only when it
  * actually differs. */
-static char g_adopted_set[512];
+/* The EXPANDED set last adopted (mod_set_expand), never the published text:
+ * the compact form carries only option values, so enabling a mod without
+ * options (the X2/X3 weapon packs) leaves it unchanged, and keying on it
+ * skipped that change -- the guest kept its old set and Play failed with
+ * mod_set_mismatch. */
+static char g_adopted_set[16384];
 
 static void mod_set_sync_step(void)
 {
   const RNetLobbyMatchCaps *caps;
-  char want[1024];
+  static char want[16384];   /* the expanded set (mod_set_expand) */
   char reason[160];
-  size_t i;
-  size_t o = 0;
 
   if (!g_mods)
     return;
@@ -3325,21 +3469,18 @@ static void mod_set_sync_step(void)
   mods_set_cosmetic_allow(caps->mod_cosmetic_allow);
   if (!caps->mod_set[0])
     return;
-  if (!strcmp(g_adopted_set, caps->mod_set))
-    return;                      /* already tried this exact set */
-
   /* Back to the canonical newline form the runtime speaks. */
-  for (i = 0; caps->mod_set[i] && o + 2 < sizeof(want); ++i)
-    want[o++] = caps->mod_set[i] == ';' ? '\n' : caps->mod_set[i];
-  want[o++] = '\n';
-  want[o] = '\0';
+  if (mod_set_expand(caps, caps->mod_set, want, sizeof(want)) <= 0)
+    return;
+  if (!strcmp(g_adopted_set, want))
+    return;                      /* already tried this exact set */
 
   reason[0] = '\0';
   if (g_mods->check_set &&
       g_mods->check_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0)
     return;                      /* already matches */
 
-  snprintf(g_adopted_set, sizeof(g_adopted_set), "%s", caps->mod_set);
+  snprintf(g_adopted_set, sizeof(g_adopted_set), "%s", want);
   if (g_mods->adopt_set &&
       g_mods->adopt_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0) {
     fprintf(stderr, "netplay: matched the host's mod configuration:\n%s", want);
@@ -3356,18 +3497,17 @@ static void mod_set_sync_step(void)
 static int room_mods_ready(void)
 {
   const RNetLobbyMatchCaps *caps = room_caps();
-  char want[1024], reason[160] = {0};
-  size_t i = 0;
+  static char want[16384];
+  char reason[160] = {0};
   if (!caps || !caps->valid || !caps->mod_set[0]) return 1;
   if (!g_mods || !g_mods->check_set) {
     if (!caps_require_mods(caps)) return 1;
     snprintf(g_runtime_error, sizeof(g_runtime_error), "mods_unsupported");
     return 0;
   }
-  for (; caps->mod_set[i] && i + 2 < sizeof(want); ++i)
-    want[i] = caps->mod_set[i] == ';' ? '\n' : caps->mod_set[i];
-  if (i == 0 || want[i-1] != '\n') want[i++] = '\n';
-  want[i] = '\0';
+  /* A set this peer cannot rebuild is treated like an unpublished one: the
+   * session's own mod-set exchange still checks it at launch. */
+  if (mod_set_expand(caps, caps->mod_set, want, sizeof(want)) <= 0) return 1;
   if (g_mods->check_set(g_mods->ctx, want, reason, sizeof(reason)) == 0) return 1;
   snprintf(g_runtime_error, sizeof(g_runtime_error), "mod_set_mismatch");
   return 0;

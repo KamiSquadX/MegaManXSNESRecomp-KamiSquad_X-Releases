@@ -612,6 +612,16 @@ static void snes_gamepad_label(const char* token, char* out, size_t cap) {
     if (token_eq(token, "RsDown"))    { copy_str(out, cap, "R-Stick Down"); return; }
     if (token_eq(token, "RsLeft"))    { copy_str(out, cap, "R-Stick Left"); return; }
     if (token_eq(token, "RsRight"))   { copy_str(out, cap, "R-Stick Right"); return; }
+    /* Face buttons are named by their SNES POSITION, not the Xbox letter
+     * printed on them: the stored token stays SDL's (A = bottom, B = right,
+     * X = left, Y = top), but the chip reads the SNES button sitting in that
+     * spot (B bottom, A right, Y left, X top). So the default layout shows
+     * A beside SNES A, B beside B, and so on -- display only, the binding
+     * itself is untouched. */
+    if (token_eq(token, "A"))         { copy_str(out, cap, "B"); return; }
+    if (token_eq(token, "B"))         { copy_str(out, cap, "A"); return; }
+    if (token_eq(token, "X"))         { copy_str(out, cap, "Y"); return; }
+    if (token_eq(token, "Y"))         { copy_str(out, cap, "X"); return; }
     copy_str(out, cap, token);
 }
 
@@ -958,6 +968,317 @@ void launcher_binds_apply_snes_pad_profile(LauncherModel* m, int player) {
         copy_str(m->player_pad_name[player - 1],
                  sizeof(m->player_pad_name[player - 1]), name);
     reload_player_display(m, player);
+}
+
+/* ---- SNES named input profiles (input_profiles.ini) ----------------------
+ *
+ * A profile the PLAYER names, holding one complete input setup: the source it
+ * was saved from (keyboard, or a gamepad by GUID), the gamepad mapping, the
+ * keyboard mapping and the deadzone. Several can share one device -- that is
+ * the point: a player keeps two layouts for the same pad and swaps between
+ * them from the Profile dropdown.
+ *
+ * The file sits beside config.ini and belongs to the launcher alone, so it is
+ * rewritten whole on every change (order preserved: new profiles go last).
+ *
+ *   [Profile]
+ *   Name       = My layout
+ *   Source     = 2                      ; 0 none, 1 keyboard, 2 gamepad
+ *   Guid       = 03000000...
+ *   Device     = DualSense Wireless Controller
+ *   Deadzone   = 40
+ *   Controls   = DpadUp, DpadDown, ...  ; the [GamepadMap] line
+ *   ControlsExt= L2, R2, ...
+ *   Keys       = 27, 29, ...            ; keybinds.ini scancodes, its order */
+#define SNES_NAMED_PROFILE_MAX 64
+
+typedef struct SnesNamedProfile {
+    char name[64];
+    int  source;
+    char guid[40];
+    char device[64];
+    int  deadzone;            /* -1: not recorded */
+    char controls[768];
+    char controls_ext[768];
+    char keys[512];
+} SnesNamedProfile;
+
+static SnesNamedProfile s_named[SNES_NAMED_PROFILE_MAX];
+static int  s_named_count;
+static int  s_named_loaded;
+static char s_named_path[1024];
+
+static const char* named_profiles_path(void) {
+    static char path[1024];
+    const char* cfg = config_path();
+    const char* slash = strrchr(cfg, '/');
+    const char* bslash = strrchr(cfg, '\\');
+    size_t dir;
+    if (bslash && (!slash || bslash > slash)) slash = bslash;
+    dir = slash ? (size_t)(slash - cfg + 1) : 0;
+    if (dir >= sizeof(path) - 32) dir = 0;
+    memcpy(path, cfg, dir);
+    copy_str(path + dir, sizeof(path) - dir, "input_profiles.ini");
+    return path;
+}
+
+static void named_profiles_load(void) {
+    const char* path = named_profiles_path();
+    long len = 0;
+    char* text;
+    char* save = NULL;
+    SnesNamedProfile* cur = NULL;
+
+    if (s_named_loaded && !strcmp(path, s_named_path)) return;
+    s_named_loaded = 1;
+    copy_str(s_named_path, sizeof(s_named_path), path);
+    s_named_count = 0;
+    text = read_whole(path, &len);
+    if (!text) return;
+    for (char* line = strtok_r(text, "\n", &save); line;
+         line = strtok_r(NULL, "\n", &save)) {
+        char* p = trim_token(line);
+        char* eq;
+        char* key;
+        char* val;
+        if (!*p || *p == '#' || *p == ';') continue;
+        if (*p == '[') {
+            cur = NULL;
+            if (!strncmp(p, "[Profile]", 9) &&
+                s_named_count < SNES_NAMED_PROFILE_MAX) {
+                cur = &s_named[s_named_count++];
+                memset(cur, 0, sizeof(*cur));
+                cur->deadzone = -1;
+            }
+            continue;
+        }
+        if (!cur || !(eq = strchr(p, '='))) continue;
+        *eq = '\0';
+        key = trim_token(p);
+        val = trim_token(eq + 1);
+        if (!strcmp(key, "Name"))             copy_str(cur->name, sizeof(cur->name), val);
+        else if (!strcmp(key, "Source"))      cur->source = atoi(val);
+        else if (!strcmp(key, "Guid"))        copy_str(cur->guid, sizeof(cur->guid), val);
+        else if (!strcmp(key, "Device"))      copy_str(cur->device, sizeof(cur->device), val);
+        else if (!strcmp(key, "Deadzone"))    cur->deadzone = val[0] ? atoi(val) : -1;
+        else if (!strcmp(key, "Controls"))    copy_str(cur->controls, sizeof(cur->controls), val);
+        else if (!strcmp(key, "ControlsExt")) copy_str(cur->controls_ext, sizeof(cur->controls_ext), val);
+        else if (!strcmp(key, "Keys"))        copy_str(cur->keys, sizeof(cur->keys), val);
+    }
+    free(text);
+    /* A section with no name cannot be listed or picked; drop it. */
+    {
+        int w = 0;
+        for (int i = 0; i < s_named_count; ++i)
+            if (s_named[i].name[0]) s_named[w++] = s_named[i];
+        s_named_count = w;
+    }
+}
+
+static int named_profiles_write(void) {
+    const char* path = named_profiles_path();
+    FILE* f = fopen(path, "wb");
+    if (!f) return 0;
+    fputs("# Input profiles saved from the launcher's Configure page.\n"
+          "# Managed by the launcher: pick, rename and delete them there.\n", f);
+    for (int i = 0; i < s_named_count; ++i) {
+        const SnesNamedProfile* q = &s_named[i];
+        fprintf(f, "\n[Profile]\nName = %s\nSource = %d\n", q->name, q->source);
+        if (q->guid[0])     fprintf(f, "Guid = %s\n", q->guid);
+        if (q->device[0])   fprintf(f, "Device = %s\n", q->device);
+        if (q->deadzone >= 0) fprintf(f, "Deadzone = %d\n", q->deadzone);
+        fprintf(f, "Controls = %s\n", q->controls);
+        if (q->controls_ext[0]) fprintf(f, "ControlsExt = %s\n", q->controls_ext);
+        fprintf(f, "Keys = %s\n", q->keys);
+    }
+    fclose(f);
+    copy_str(s_named_path, sizeof(s_named_path), path);
+    s_named_loaded = 1;
+    return 1;
+}
+
+/* Names are compared without case so "Main" and "main" cannot both exist and
+ * leave the player unable to tell which one the dropdown is offering. */
+static int name_ieq(const char* a, const char* b) {
+    return ieq(a, strlen(a), b);
+}
+
+static void clean_profile_name(const char* in, char* out, size_t cap) {
+    char tmp[64];
+    char* t;
+    copy_str(tmp, sizeof(tmp), in ? in : "");
+    /* One line: a newline or bracket would corrupt the file's structure. */
+    for (char* c = tmp; *c; ++c)
+        if (*c == '\r' || *c == '\n' || *c == '\t') *c = ' ';
+    t = trim_token(tmp);
+    copy_str(out, cap, t);
+}
+
+int launcher_binds_input_profile_count(void) {
+    named_profiles_load();
+    return s_named_count;
+}
+
+const char* launcher_binds_input_profile_name(int index) {
+    named_profiles_load();
+    return (index >= 0 && index < s_named_count) ? s_named[index].name : "";
+}
+
+int launcher_binds_input_profile_find(const char* name) {
+    char clean[64];
+    clean_profile_name(name, clean, sizeof(clean));
+    if (!clean[0]) return -1;
+    named_profiles_load();
+    for (int i = 0; i < s_named_count; ++i)
+        if (name_ieq(s_named[i].name, clean)) return i;
+    return -1;
+}
+
+int launcher_binds_input_profile_save(LauncherModel* m, int player,
+                                      const char* name) {
+    SnesNamedProfile q;
+    char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
+    int idx;
+
+    if (!m || !is_snes_profile(m) || player < 1 || player > 2) return -1;
+    memset(&q, 0, sizeof(q));
+    clean_profile_name(name, q.name, sizeof(q.name));
+    if (!q.name[0]) return -1;
+
+    q.source = m->s.player_src[player - 1];
+    if (q.source == 2) {
+        copy_str(q.guid, sizeof(q.guid), m->s.player_gamepad_guid[player - 1]);
+        copy_str(q.device, sizeof(q.device), m->player_pad_name[player - 1]);
+    }
+    q.deadzone = m->s.deadzone[player - 1];
+    if (q.deadzone < 0) q.deadzone = 0;
+    if (q.deadzone > 100) q.deadzone = 100;
+
+    snes_gamepad_read_config_order(player - 1, controls);
+    for (int i = 0; i < LNG_SNES_PAD_BUTTON_COUNT; ++i) {
+        if (i) strncat(q.controls, ", ", sizeof(q.controls) - strlen(q.controls) - 1);
+        strncat(q.controls, controls[i], sizeof(q.controls) - strlen(q.controls) - 1);
+    }
+    if (m->profile &&
+        ((const SystemProfile*)m->profile)->controller.button_count ==
+            LNG_SNES_MODERN_PAD_BUTTON_COUNT) {
+        char ext[LNG_SNES_EXT_COUNT][48];
+        snes_gamepad_read_ext(player - 1, ext);
+        for (int i = 0; i < LNG_SNES_EXT_COUNT; ++i) {
+            if (i) strncat(q.controls_ext, ", ",
+                           sizeof(q.controls_ext) - strlen(q.controls_ext) - 1);
+            strncat(q.controls_ext, ext[i],
+                    sizeof(q.controls_ext) - strlen(q.controls_ext) - 1);
+        }
+    }
+    for (int i = 0; i < recompui_keybinds_button_count(); ++i) {
+        char num[16];
+        snprintf(num, sizeof(num), "%s%d", i ? ", " : "",
+                 (int)recompui_keybinds_get_button(player, i));
+        strncat(q.keys, num, sizeof(q.keys) - strlen(q.keys) - 1);
+    }
+
+    /* The same name saves over that profile in place; a new one goes last. */
+    idx = launcher_binds_input_profile_find(q.name);
+    if (idx < 0) {
+        if (s_named_count >= SNES_NAMED_PROFILE_MAX) return -1;
+        idx = s_named_count++;
+    }
+    s_named[idx] = q;
+    if (!named_profiles_write()) {
+        s_named_loaded = 0;   /* re-read what is really on disk */
+        return -1;
+    }
+    /* Keep the per-controller memory in step too, so choosing this pad from
+     * Input source later still brings back the layout last saved on it. */
+    if (q.source == 2 && q.guid[0])
+        launcher_binds_save_snes_gamepad(m, player);
+    return idx;
+}
+
+int launcher_binds_input_profile_load(LauncherModel* m, int player, int index,
+                                      const LauncherPad* pads, int pad_count) {
+    SnesNamedProfile q;
+    const int p = player - 1;
+
+    if (!m || !is_snes_profile(m) || player < 1 || player > 2) return 0;
+    named_profiles_load();
+    if (index < 0 || index >= s_named_count) return 0;
+    q = s_named[index];
+
+    /* Input source first: set_source clears the pad fields for a keyboard
+     * source, and the mapping below must land on the source it belongs to.
+     * A gamepad profile switches to its controller even when that controller
+     * is not plugged in -- the slot holds the GUID, and the game picks the
+     * pad up the moment it connects. */
+    if (q.source == 2 && q.guid[0]) {
+        uint32_t id = 0;
+        int live = 0;
+        const char* name = q.device[0] ? q.device : "Controller";
+        for (int i = 0; pads && i < pad_count; ++i) {
+            if (pads[i].guid[0] && !strcmp(pads[i].guid, q.guid)) {
+                id = pads[i].id;
+                live = 1;
+                if (!q.device[0] && pads[i].name[0]) name = pads[i].name;
+                break;
+            }
+        }
+        launcher_model_set_source(m, p, 2, id, name, q.guid);
+        if (!live) {
+            m->player_pad_id[p] = 0;
+            m->s.player_gamepad_instance[p] = 0;
+        }
+    } else {
+        launcher_model_set_source(m, p, q.source == 1 ? 1 : 0, 0, NULL, NULL);
+    }
+
+    if (q.controls[0])
+        launcher_ini_kv_write(config_path(), "GamepadMap",
+                              snes_gamepad_config_key(p), q.controls);
+    if (q.controls_ext[0] && m->profile &&
+        ((const SystemProfile*)m->profile)->controller.button_count ==
+            LNG_SNES_MODERN_PAD_BUTTON_COUNT)
+        launcher_ini_kv_write(config_path(), "GamepadMap",
+                              snes_gamepad_ext_key(p), q.controls_ext);
+    if (q.keys[0]) {
+        const char* s = q.keys;
+        const int n = recompui_keybinds_button_count();
+        for (int i = 0; i < n && *s; ++i) {
+            char* end = NULL;
+            long sc = strtol(s, &end, 10);
+            if (end == s) break;
+            recompui_keybinds_set_button(player, i, (SDL_Scancode)sc);
+            s = end;
+            while (*s == ',' || *s == ' ') ++s;
+        }
+        recompui_keybinds_save();
+    }
+    if (q.deadzone >= 0)
+        m->s.deadzone[p] = q.deadzone > 100 ? 100 : q.deadzone;
+    reload_player_display(m, player);
+    return 1;
+}
+
+int launcher_binds_input_profile_rename(int index, const char* name) {
+    char clean[64];
+    int other;
+    clean_profile_name(name, clean, sizeof(clean));
+    named_profiles_load();
+    if (!clean[0] || index < 0 || index >= s_named_count) return 0;
+    other = launcher_binds_input_profile_find(clean);
+    if (other >= 0 && other != index) return 0;   /* name already taken */
+    copy_str(s_named[index].name, sizeof(s_named[index].name), clean);
+    if (!named_profiles_write()) { s_named_loaded = 0; return 0; }
+    return 1;
+}
+
+int launcher_binds_input_profile_delete(int index) {
+    named_profiles_load();
+    if (index < 0 || index >= s_named_count) return 0;
+    for (int i = index; i + 1 < s_named_count; ++i) s_named[i] = s_named[i + 1];
+    --s_named_count;
+    if (!named_profiles_write()) { s_named_loaded = 0; return 0; }
+    return 1;
 }
 
 static void snes_gamepad_reset_player(int player, int modern) {

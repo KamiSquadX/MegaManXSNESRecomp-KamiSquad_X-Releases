@@ -3294,6 +3294,11 @@ void draw_source_selectables(LauncherModel* m, int p) {
 
     for (int i = 0; i < g_pad_count; ++i)
         push_opt(g_pads[i].guid, g_pads[i].name, g_pads[i].id, true);
+    /* SNES: a loaded input profile can point the slot at a controller that is
+     * not plugged in. List it as "(disconnected)" so the selection shows in
+     * this menu too; a live pad of that GUID was already added above. */
+    if (snes_prof && m->s.player_src[p] == 2 && m->s.player_gamepad_guid[p][0])
+        push_opt(m->s.player_gamepad_guid[p], m->player_pad_name[p], 0, false);
 
     const int claim_n = launcher_model_visible_player_count(m);
     for (int i = 0; i < nopt; ++i) {
@@ -3329,6 +3334,11 @@ void draw_source_selectables(LauncherModel* m, int p) {
                  * copy into a live file the way SNES has to. */
                 launcher_binds_refresh(m);
             } else if (snes_prof) {
+                if (!opts[i].live) {
+                    /* No SDL instance to point at until it is plugged in. */
+                    m->player_pad_id[p] = 0;
+                    m->s.player_gamepad_instance[p] = 0;
+                }
                 /* Selecting a controller restores the profile saved for it, so
                  * swapping pads swaps layouts instead of leaving whichever one
                  * was configured last in [GamepadMap]. Does nothing when that
@@ -5537,74 +5547,190 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             draw_source_selectables(m, p);
             ImGui::EndCombo();
         }
-        /* SNES: Save / Rename / Delete for the selected controller.
+        /* SNES: named input profiles.
          *
-         * Same three actions PSX offers, writing into this console's own
-         * config.ini as [Controller.<guid>]. Disabled until a pad with a GUID
-         * is the player's source -- there is nothing to key a profile on
-         * before that, and a profile saved against "no device" could never be
-         * found again. */
+         * Input source | Save Profile | Rename | Profile [name field][v] | Delete
+         *
+         * The Profile box is a text field with a drop arrow: type a name and
+         * press Save Profile to store this player's whole setup under it (new
+         * names go to the bottom of the list); open the arrow and click one to
+         * load it -- that switches the Input source to the device it was saved
+         * from (even one not plugged in) and applies its bindings and
+         * deadzone. Rename and Delete act on the profile named in the box.
+         * Store: input_profiles.ini beside config.ini (launcher_binds.c). */
         if (cfg_snes) {
-            static bool s_snes_rename_open = false;
-            static char s_snes_rename_buf[64] = {};
-            const bool can_pad = m->s.player_src[p] == 2 &&
-                                 m->s.player_gamepad_guid[p][0];
+            static char s_prof_buf[2][64] = {};
+            static bool s_prof_rename_open = false;
+            static char s_prof_rename_buf[64] = {};
+            static int  s_prof_rename_index = -1;
+            static bool s_prof_delete_open = false;
+            static char s_prof_delete_name[64] = {};
+            static int  s_prof_delete_index = -1;
+            static double s_prof_saved_until = 0.0;
+            static int  s_prof_saved_player = -1;
+            const int pi = p < 2 ? p : 1;
+            char* const name_buf = s_prof_buf[pi];
+            const int sel = launcher_binds_input_profile_find(name_buf);
 
             ImGui::SameLine();
-            if (!can_pad) ImGui::BeginDisabled();
-            if (ImGui::Button("Save Profile"))
-                launcher_binds_save_snes_gamepad(m, p + 1);
-            if (ImGui::IsItemHovered() && can_pad)
-                ImGui::SetTooltip("Store this controller's mapping, name and "
-                                  "deadzone so it comes back next time it is "
-                                  "selected");
+            ImGui::BeginDisabled(name_buf[0] == '\0');
+            if (ImGui::Button("Save Profile")) {
+                const int idx = launcher_binds_input_profile_save(m, p + 1, name_buf);
+                if (idx >= 0) {
+                    std::snprintf(name_buf, sizeof(s_prof_buf[0]), "%s",
+                                  launcher_binds_input_profile_name(idx));
+                    s_prof_saved_until = ImGui::GetTime() + 2.5;
+                    s_prof_saved_player = p;
+                }
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", name_buf[0]
+                    ? "Save this player's input source, bindings and deadzone "
+                      "under the name in the Profile box"
+                    : "Type a name in the Profile box first");
             ImGui::SameLine();
+            ImGui::BeginDisabled(sel < 0);
             if (ImGui::Button("Rename")) {
-                std::snprintf(s_snes_rename_buf, sizeof(s_snes_rename_buf),
-                              "%s", m->player_pad_name[p]);
-                s_snes_rename_open = true;
+                std::snprintf(s_prof_rename_buf, sizeof(s_prof_rename_buf), "%s",
+                              launcher_binds_input_profile_name(sel));
+                s_prof_rename_index = sel;
+                s_prof_rename_open = true;
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine(0.0f, px(14.0f));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(col(th.text_muted), "Profile");
+            ImGui::SameLine();
+            {
+                const float arrow_w = ImGui::GetFrameHeight();
+                ImGui::SetNextItemWidth(px(180.0f));
+                ImGui::InputTextWithHint("##snes_prof_name", "New profile name",
+                                         name_buf, sizeof(s_prof_buf[0]));
+                const ImVec2 field_min = ImGui::GetItemRectMin();
+                const ImVec2 field_max = ImGui::GetItemRectMax();
+                ImGui::SameLine(0.0f, 0.0f);
+                if (ImGui::ArrowButton("##snes_prof_arrow", ImGuiDir_Down))
+                    ImGui::OpenPopup("##snes_prof_list");
+                ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y));
+                ImGui::SetNextWindowSizeConstraints(
+                    ImVec2(field_max.x - field_min.x + arrow_w, 0.0f),
+                    ImVec2(100000.0f, px(320.0f)));
+                if (ImGui::BeginPopup("##snes_prof_list")) {
+                    const int n = launcher_binds_input_profile_count();
+                    if (n == 0) {
+                        ImGui::BeginDisabled();
+                        ImGui::Selectable("(no saved profiles)");
+                        ImGui::EndDisabled();
+                    }
+                    for (int i = 0; i < n; ++i) {
+                        ImGui::PushID(i);
+                        const char* pn = launcher_binds_input_profile_name(i);
+                        if (ImGui::Selectable(pn, i == sel)) {
+                            std::snprintf(name_buf, sizeof(s_prof_buf[0]), "%s", pn);
+                            launcher_binds_input_profile_load(m, p + 1, i,
+                                                              g_pads, g_pad_count);
+                            launcher_binds_refresh(m);
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndPopup();
+                }
             }
             {
                 const float del_w = px(130.0f);
                 const float right = ImGui::GetWindowContentRegionMax().x;
-                if (right - del_w > ImGui::GetCursorPosX())
+                if (right - del_w > ImGui::GetCursorPosX() + px(200.0f))
                     ImGui::SameLine(right - del_w);
                 else
                     ImGui::SameLine();
-                if (ImGui::Button("Delete Profile", ImVec2(del_w, 0)))
-                    launcher_binds_delete_snes_gamepad(m, p + 1);
-                if (ImGui::IsItemHovered() && can_pad)
-                    ImGui::SetTooltip("Forget this controller's saved profile. "
-                                      "The mapping in use is not changed.");
+                ImGui::BeginDisabled(sel < 0);
+                if (ImGui::Button("Delete Profile", ImVec2(del_w, 0))) {
+                    std::snprintf(s_prof_delete_name, sizeof(s_prof_delete_name),
+                                  "%s", launcher_binds_input_profile_name(sel));
+                    s_prof_delete_index = sel;
+                    s_prof_delete_open = true;
+                }
+                ImGui::EndDisabled();
             }
-            if (!can_pad) ImGui::EndDisabled();
+            if (s_prof_saved_player == p && ImGui::GetTime() < s_prof_saved_until)
+                ImGui::TextColored(col(th.accent2), "Input Profile Saved!");
 
-            if (s_snes_rename_open) ImGui::OpenPopup("Rename Controller");
+            if (s_prof_rename_open) ImGui::OpenPopup("Rename Profile");
             ImVec2 c2 = ImGui::GetMainViewport()->GetCenter();
             ImGui::SetNextWindowPos(c2, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            if (ImGui::BeginPopupModal("Rename Controller", &s_snes_rename_open,
+            if (ImGui::BeginPopupModal("Rename Profile", &s_prof_rename_open,
                                        ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::TextUnformatted("Display name for this controller:");
+                ImGui::TextUnformatted("Display name for this profile:");
                 ImGui::SetNextItemWidth(px(320));
                 const bool enter = ImGui::InputText(
-                    "##snes_rename_pad", s_snes_rename_buf,
-                    sizeof(s_snes_rename_buf),
+                    "##snes_rename_prof", s_prof_rename_buf,
+                    sizeof(s_prof_rename_buf),
                     ImGuiInputTextFlags_EnterReturnsTrue);
+                const int clash = launcher_binds_input_profile_find(s_prof_rename_buf);
+                const bool taken = clash >= 0 && clash != s_prof_rename_index;
+                if (taken)
+                    ImGui::TextColored(col(th.warn),
+                                       "Another profile already has that name.");
                 ImGui::Spacing();
                 if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
-                    s_snes_rename_open = false;
+                    s_prof_rename_open = false;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                const bool ok = s_snes_rename_buf[0] != '\0';
+                const bool ok = s_prof_rename_buf[0] != '\0' && !taken;
                 ImGui::BeginDisabled(!ok);
                 if ((ImGui::Button("OK", ImVec2(px(120), 0)) || enter) && ok) {
-                    launcher_binds_rename_snes_gamepad(m, p + 1,
-                                                       s_snes_rename_buf);
-                    s_snes_rename_open = false;
+                    const char* old = launcher_binds_input_profile_name(
+                        s_prof_rename_index);
+                    char old_name[64];
+                    std::snprintf(old_name, sizeof(old_name), "%s", old);
+                    if (launcher_binds_input_profile_rename(s_prof_rename_index,
+                                                            s_prof_rename_buf)) {
+                        for (int q = 0; q < 2; ++q)
+                            if (!std::strcmp(s_prof_buf[q], old_name) || q == pi)
+                                std::snprintf(s_prof_buf[q], sizeof(s_prof_buf[q]),
+                                              "%s", launcher_binds_input_profile_name(
+                                                  s_prof_rename_index));
+                    }
+                    s_prof_rename_open = false;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::EndDisabled();
+                ImGui::EndPopup();
+            }
+
+            if (s_prof_delete_open) ImGui::OpenPopup("Question");
+            ImGui::SetNextWindowPos(c2, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Question", &s_prof_delete_open,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted("Are you sure you want to delete this profile?");
+                ImGui::SetNextItemWidth(px(320));
+                ImGui::InputText("##snes_delete_prof", s_prof_delete_name,
+                                 sizeof(s_prof_delete_name),
+                                 ImGuiInputTextFlags_ReadOnly);
+                ImGui::Spacing();
+                if (ImGui::Button("No", ImVec2(px(120), 0))) {
+                    s_prof_delete_open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Yes", ImVec2(px(120), 0))) {
+                    /* By index, but only while that index still holds the
+                     * name the player confirmed. */
+                    if (s_prof_delete_index >= 0 &&
+                        !std::strcmp(launcher_binds_input_profile_name(
+                                         s_prof_delete_index),
+                                     s_prof_delete_name) &&
+                        launcher_binds_input_profile_delete(s_prof_delete_index)) {
+                        for (int q = 0; q < 2; ++q)
+                            if (!std::strcmp(s_prof_buf[q], s_prof_delete_name))
+                                s_prof_buf[q][0] = '\0';
+                    }
+                    s_prof_delete_open = false;
+                    ImGui::CloseCurrentPopup();
+                }
                 ImGui::EndPopup();
             }
         }
@@ -7098,6 +7224,8 @@ static void np_copyable_readonly_input(const char* id, char* buf, size_t buf_len
     ImGui::PopStyleColor(4);
 }
 
+static void np_lobby_mods_restore(LauncherModel* m);  /* "Save Mods Preferences" */
+
 static void np_save_network_settings(const LauncherModel* m) {
     if (!m) return;
     np_ensure_netplay_dir();
@@ -8181,6 +8309,9 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                     if (np->input_delay_set)
                         (void)np->input_delay_set(np->ctx,
                                                   m->netplay_lobby_input_delay);
+                    /* "Save Mods Preferences": the room starts with the mods
+                     * and settings saved from the last hosted room. */
+                    np_lobby_mods_restore(m);
                     const int rc = np->create(np->ctx, lobby, endpoint,
                                               m->netplay_host_password, &m->s,
                                               m->netplay_lan_only ? 1 : 0,
@@ -9582,6 +9713,151 @@ static void draw_lobby_mod_files_popup(LauncherModel* m, const LauncherTheme& th
     ImGui::EndPopup();
 }
 
+/* "Save Mods Preferences" for the host's Lobby Mods picker.
+ *
+ * Netplay runs on a temporary copy of the mod selection, so whatever the host
+ * picks for a room is gone once the room closes. While the box is ticked the
+ * picker's state -- every listed feature on or off, and every option value of
+ * the enabled ones (Player 1 character, Saber Zero tuning, ...) -- is written
+ * here as it changes, and the next hosted room starts from it. The file also
+ * remembers the box itself.
+ *
+ *   save=1
+ *   F<TAB>package<TAB>feature<TAB>0|1
+ *   O<TAB>package<TAB>feature<TAB>option<TAB>value
+ *
+ * Restoring goes through the same provider calls the picker uses, so the
+ * netplay rules (one co-op mod, no solo characters) still apply. */
+static const char kNpLobbyModsPath[] = "saves/netplay/lobby mods.txt";
+static int s_lobby_mods_save = -1;  /* -1 = not read from the file yet */
+static std::string s_lobby_mods_written;
+
+static std::string np_lobby_mods_snapshot(const RecompLauncherCModProvider* mods) {
+    std::string out;
+    if (!mods || !mods->feature_count || !mods->feature_get) return out;
+    const int n = mods->feature_count(mods->ctx);
+    for (int i = 0; i < n; ++i) {
+        RecompLauncherCModFeature f{};
+        if (!mods->feature_get(mods->ctx, i, &f) ||
+            !launcher_mod_feature_listed(mods, &f))
+            continue;
+        out += std::string("F\t") + f.package_id + "\t" + f.id + "\t" +
+               (f.enabled ? "1" : "0") + "\n";
+        if (!f.enabled || !mods->feature_option_get) continue;
+        for (int o = 0; o < f.option_count; ++o) {
+            RecompLauncherCModOption opt{};
+            if (!mods->feature_option_get(mods->ctx, f.package_id, f.id, o, &opt))
+                continue;
+            out += std::string("O\t") + f.package_id + "\t" + f.id + "\t" +
+                   opt.id + "\t" + opt.value + "\n";
+        }
+    }
+    return out;
+}
+
+static void np_lobby_mods_write(const RecompLauncherCModProvider* mods, bool save) {
+    np_ensure_netplay_dir();
+    std::string body = std::string("save=") + (save ? "1" : "0") + "\n";
+    if (save) {
+        body += np_lobby_mods_snapshot(mods);
+    } else {
+        /* Unticked: keep the last saved set for when the box comes back. */
+        FILE* old = std::fopen(kNpLobbyModsPath, "rb");
+        if (old) {
+            char line[1024];
+            while (std::fgets(line, sizeof(line), old))
+                if (std::strncmp(line, "save=", 5) != 0) body += line;
+            std::fclose(old);
+        }
+    }
+    if (body == s_lobby_mods_written) return;
+    FILE* f = std::fopen(kNpLobbyModsPath, "wb");
+    if (!f) return;
+    std::fwrite(body.data(), 1, body.size(), f);
+    std::fclose(f);
+    s_lobby_mods_written = body;
+}
+
+static std::vector<std::vector<std::string>> np_lobby_mods_read(bool* save) {
+    std::vector<std::vector<std::string>> rows;
+    *save = false;
+    FILE* f = std::fopen(kNpLobbyModsPath, "rb");
+    if (!f) return rows;
+    char line[1024];
+    while (std::fgets(line, sizeof(line), f)) {
+        std::string s(line);
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+        if (s.rfind("save=", 0) == 0) { *save = s == "save=1"; continue; }
+        std::vector<std::string> cols;
+        size_t start = 0;
+        for (;;) {
+            const size_t tab = s.find('\t', start);
+            cols.push_back(s.substr(start, tab == std::string::npos ? std::string::npos
+                                                                     : tab - start));
+            if (tab == std::string::npos) break;
+            start = tab + 1;
+        }
+        if ((cols[0] == "F" && cols.size() == 4) || (cols[0] == "O" && cols.size() == 5))
+            rows.push_back(cols);
+    }
+    std::fclose(f);
+    return rows;
+}
+
+static bool np_lobby_mods_save_enabled() {
+    if (s_lobby_mods_save < 0) {
+        bool save = false;
+        (void)np_lobby_mods_read(&save);
+        s_lobby_mods_save = save ? 1 : 0;
+    }
+    return s_lobby_mods_save == 1;
+}
+
+/* Put the saved picker state back before a room is created. Features are
+ * switched on first (a co-op mod replaces the other on its own), then the
+ * rest off, then options -- twice, because a "distinct from" pair such as
+ * Player 1 / Player 2 can refuse a value the other still holds. Anything this
+ * build no longer has is skipped. */
+static void np_lobby_mods_restore(LauncherModel* m) {
+    const RecompLauncherCModProvider* mods = m ? m->mods : nullptr;
+    if (!mods || !mods->feature_enable || !np_lobby_mods_save_enabled()) return;
+    bool save = false;
+    const auto rows = np_lobby_mods_read(&save);
+    if (!save) return;
+    auto current_enabled = [&](const std::string& pkg, const std::string& fid) {
+        const int n = mods->feature_count ? mods->feature_count(mods->ctx) : 0;
+        for (int i = 0; i < n; ++i) {
+            RecompLauncherCModFeature f{};
+            if (mods->feature_get(mods->ctx, i, &f) && pkg == f.package_id && fid == f.id)
+                return f.enabled ? 1 : 0;
+        }
+        return -1; /* not installed / not listed */
+    };
+    for (int want = 1; want >= 0; --want)
+        for (const auto& r : rows) {
+            if (r[0] != "F" || (r[3] == "1") != (want == 1)) continue;
+            const int have = current_enabled(r[1], r[2]);
+            if (have >= 0 && have != want)
+                (void)mods->feature_enable(mods->ctx, r[1].c_str(), r[2].c_str(), want);
+        }
+    if (mods->feature_set_option && mods->feature_option_get)
+        for (int pass = 0; pass < 2; ++pass)
+            for (const auto& r : rows) {
+                if (r[0] != "O" || current_enabled(r[1], r[2]) != 1) continue;
+                bool same = false;
+                for (int o = 0;; ++o) {
+                    RecompLauncherCModOption opt{};
+                    if (!mods->feature_option_get(mods->ctx, r[1].c_str(), r[2].c_str(), o, &opt))
+                        break;
+                    if (r[3] == opt.id) { same = r[4] == opt.value; break; }
+                }
+                if (!same)
+                    (void)mods->feature_set_option(mods->ctx, r[1].c_str(), r[2].c_str(),
+                                                   r[3].c_str(), r[4].c_str());
+            }
+    m->mod_status[0] = '\0';
+}
+
 /* Lobby mod picker: the HOST owns the session plan. Every peer applies the
  * host's required-mod list at launch (match_caps.mods), so guests get a
  * read-only view of what they are about to run. Compact by design — the full
@@ -9953,6 +10229,26 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
         if (ImGui::Button("Close", ImVec2(px(120), 0))) {
             m->netplay_lobby_mods_open = false;
             ImGui::CloseCurrentPopup();
+        }
+        if (is_host) {
+            /* Same row as Close, flush right. */
+            bool save = np_lobby_mods_save_enabled();
+            const char* label = "Save Mods Preferences";
+            const float box = ImGui::GetFrameHeight() +
+                              ImGui::GetStyle().ItemInnerSpacing.x +
+                              ImGui::CalcTextSize(label).x;
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                 std::max(0.0f, ImGui::GetContentRegionAvail().x - box));
+            if (ImGui::Checkbox(label, &save)) {
+                s_lobby_mods_save = save ? 1 : 0;
+                np_lobby_mods_write(mods, save);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("Start the next lobby you host with these mods "
+                                  "and their settings.");
+            /* Kept current while ticked, so leaving the room keeps it. */
+            if (save) np_lobby_mods_write(mods, true);
         }
         ImGui::EndPopup();
     }
@@ -11899,6 +12195,9 @@ static void draw_mod_feature_option(LauncherModel* m,
                     std::snprintf(next, sizeof(next), "%s", choice.value);
                     changed = true;
                 }
+                if (choice.description[0] &&
+                    ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("%s", choice.description);
                 if (taken) ImGui::EndDisabled();
                 if (selected) ImGui::SetItemDefaultFocus();
             }

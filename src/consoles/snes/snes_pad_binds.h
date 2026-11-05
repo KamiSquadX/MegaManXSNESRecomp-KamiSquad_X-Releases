@@ -34,7 +34,7 @@ extern "C" {
 #ifndef LNG_SNES_PAD_BUTTON_COUNT
 #define LNG_SNES_PAD_BUTTON_COUNT 12
 #endif
-#define RUI_SNES_PAD_DEFAULT_DEADZONE_PCT 10
+#define RUI_SNES_PAD_DEFAULT_DEADZONE_PCT 40
 
 void rui_snes_pad_binds_init(const char* path);
 

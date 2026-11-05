@@ -10,8 +10,12 @@
  *     Hydration now binds the first live pad no other slot has claimed.
  *
  *  2. The deadzone that comes with it. A pad with no saved profile gets the
- *     console default (10%), not whatever the previous selection left in the
+ *     console default (40%), not whatever the previous selection left in the
  *     slot: a deadzone belongs to the device.
+ *
+ * Also: the SNES face-button chip labels (named by SNES position, so the
+ * default layout reads A/B/X/Y beside A/B/X/Y), and the named input profiles
+ * of the Configure page (save, load, rename, delete, order, persistence).
  *
  * Includes the translation unit under test (as launcher_discs_test.c does) so
  * the static profile helpers are reachable, and links launcher_model.c for the
@@ -26,11 +30,18 @@
 /* Generated stubs. launcher_binds.c reaches every console's bridge; this
  * test drives only the SNES paths, so the rest resolve to empty bodies. */
 
-SDL_Scancode recompui_keybinds_get_button(int player, int button) { (void)player; (void)button; return 0; }
+/* A small in-memory keyboard store, so profiles can round-trip key maps. */
+static SDL_Scancode g_keys[2][20];
+int recompui_keybinds_button_count(void) { return 20; }
+SDL_Scancode recompui_keybinds_get_button(int player, int button) {
+    return (player == 1 || player == 2) && button >= 0 && button < 20 ? g_keys[player - 1][button] : 0;
+}
 void recompui_keybinds_init(const char *exe_path) { (void)exe_path; }
 void recompui_keybinds_reset_player(int player) { (void)player; }
 void recompui_keybinds_save(void) { }
-void recompui_keybinds_set_button(int player, int button, SDL_Scancode sc) { (void)player; (void)button; (void)sc; }
+void recompui_keybinds_set_button(int player, int button, SDL_Scancode sc) {
+    if ((player == 1 || player == 2) && button >= 0 && button < 20) g_keys[player - 1][button] = sc;
+}
 int rui_gb_binds_get(const char* path, int b) { (void)path; (void)b; return 0; }
 int rui_gb_binds_get_slot(const char* path, int b, int slot) { (void)path; (void)b; (void)slot; return 0; }
 void rui_gb_binds_init(const char* path) { (void)path; }
@@ -177,6 +188,103 @@ int main(int argc, char** argv) {
     expect(m.s.deadzone[0] == 0, "set_deadzone clamps below 0");
     launcher_model_set_deadzone(&m, 0, 7);
     expect(m.s.deadzone[0] == 7, "and takes any whole percent between");
+
+    /* ---- face-button chip labels -------------------------------------- */
+    {
+        char out[32];
+        snes_gamepad_label("B", out, sizeof(out));
+        expect(strcmp(out, "A") == 0, "the right face button (default SNES A) reads A");
+        snes_gamepad_label("A", out, sizeof(out));
+        expect(strcmp(out, "B") == 0, "the bottom face button (default SNES B) reads B");
+        snes_gamepad_label("Y", out, sizeof(out));
+        expect(strcmp(out, "X") == 0, "the top face button (default SNES X) reads X");
+        snes_gamepad_label("X", out, sizeof(out));
+        expect(strcmp(out, "Y") == 0, "the left face button (default SNES Y) reads Y");
+        snes_gamepad_label("Lb", out, sizeof(out));
+        expect(strcmp(out, "L1") == 0, "other labels are unchanged");
+        expect(RUI_SNES_PAD_DEFAULT_DEADZONE_PCT == 40, "the SNES default deadzone is 40%");
+    }
+
+    /* ---- named input profiles ------------------------------------------ */
+    {
+        char profiles[1100];
+        const char* slash = strrchr(cfg, '/');
+        snprintf(profiles, sizeof(profiles), "%.*sinput_profiles.ini",
+                 slash ? (int)(slash - cfg + 1) : 0, cfg);
+        remove(profiles);
+        s_named_loaded = 0;
+        expect(launcher_binds_input_profile_count() == 0, "no profiles before the first save");
+
+        make_model(&m);
+        launcher_model_set_source(&m, 0, 2, 7, "DualSense", "03000000aabbccdd0001");
+        m.s.deadzone[0] = 25;
+        launcher_ini_kv_write(cfg, "GamepadMap", "Controls",
+            "DpadUp, DpadDown, DpadLeft, DpadRight, Back, Start, A, B, X, Y, Lb, Rb");
+        g_keys[0][0] = (SDL_Scancode)4;
+        expect(launcher_binds_input_profile_save(&m, 1, "  Main  ") == 0,
+               "a new profile goes to index 0, name trimmed");
+        expect(strcmp(launcher_binds_input_profile_name(0), "Main") == 0, "its name is stored");
+
+        m.s.deadzone[0] = 33;
+        launcher_ini_kv_write(cfg, "GamepadMap", "Controls",
+            "DpadUp, DpadDown, DpadLeft, DpadRight, Back, Start, B, A, Y, X, Lb, Rb");
+        g_keys[0][0] = (SDL_Scancode)5;
+        expect(launcher_binds_input_profile_save(&m, 1, "Alt") == 1, "the next profile goes last");
+        expect(launcher_binds_input_profile_count() == 2, "two profiles listed");
+        expect(launcher_binds_input_profile_find("main") == 0, "names match without case");
+        expect(launcher_binds_input_profile_save(&m, 1, "ALT") == 1,
+               "saving under an existing name replaces it in place");
+        expect(launcher_binds_input_profile_count() == 2, "and adds nothing");
+
+        /* Load "Main" into player 1 with no controller connected. */
+        launcher_model_set_source(&m, 0, 1, 0, NULL, NULL);
+        m.s.deadzone[0] = 3;
+        g_keys[0][0] = (SDL_Scancode)9;
+        expect(launcher_binds_input_profile_load(&m, 1, 0, NULL, 0),
+               "loading a profile succeeds");
+        expect(m.s.player_src[0] == 2 &&
+               strcmp(m.s.player_gamepad_guid[0], "03000000aabbccdd0001") == 0,
+               "it switches to the saved controller, connected or not");
+        expect(strcmp(m.player_pad_name[0], "DualSense") == 0, "and names it");
+        expect(m.player_pad_id[0] == 0 && m.s.player_gamepad_instance[0] == 0,
+               "a disconnected controller has no SDL instance");
+        expect(m.s.deadzone[0] == 25, "its deadzone comes back");
+        expect(g_keys[0][0] == 4, "its keyboard map comes back");
+        {
+            char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
+            snes_gamepad_read_config_order(0, controls);
+            expect(strcmp(controls[6], "A") == 0 && strcmp(controls[7], "B") == 0,
+                   "its gamepad map is written back to [GamepadMap]");
+        }
+
+        /* A live controller resolves to its SDL id. */
+        expect(launcher_binds_input_profile_load(&m, 1, 0, pads, 2) &&
+               m.player_pad_id[0] == pads[0].id, "a connected controller gets its live id");
+
+        expect(!launcher_binds_input_profile_rename(1, "main"),
+               "renaming onto another profile's name is refused");
+        expect(launcher_binds_input_profile_rename(1, "Boss fights"), "rename succeeds");
+        expect(launcher_binds_input_profile_delete(0), "delete succeeds");
+        expect(launcher_binds_input_profile_count() == 1 &&
+               strcmp(launcher_binds_input_profile_name(0), "Boss fights") == 0,
+               "the remaining profile moves up");
+
+        s_named_loaded = 0;   /* as on the next launch */
+        expect(launcher_binds_input_profile_count() == 1 &&
+               strcmp(launcher_binds_input_profile_name(0), "Boss fights") == 0,
+               "profiles persist in input_profiles.ini");
+
+        /* A keyboard profile switches the slot back to the keyboard. */
+        launcher_model_set_source(&m, 1, 1, 0, NULL, NULL);
+        g_keys[1][3] = (SDL_Scancode)44;
+        expect(launcher_binds_input_profile_save(&m, 2, "Keys") == 1, "a keyboard profile saves");
+        launcher_model_set_source(&m, 1, 2, 9, pads[1].name, pads[1].guid);
+        g_keys[1][3] = 0;
+        expect(launcher_binds_input_profile_load(&m, 2, 1, pads, 2) &&
+               m.s.player_src[1] == 1 && !m.s.player_gamepad_guid[1][0] && g_keys[1][3] == 44,
+               "loading it switches to Keyboard and restores the keys");
+        remove(profiles);
+    }
 
     remove(cfg);
     if (fails) { fprintf(stderr, "%d failure(s)\n", fails); return 1; }

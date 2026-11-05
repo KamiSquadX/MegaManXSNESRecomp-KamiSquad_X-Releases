@@ -1066,6 +1066,9 @@ typedef struct RecompLauncherCModChoice {
      * distinct_from). The UI shows it greyed and unselectable. Appended for
      * ABI stability. */
     int  disabled;
+    /* Hover text for this choice (manifest key: description on the choice).
+     * Empty for none. Appended for ABI stability. */
+    char description[256];
 } RecompLauncherCModChoice;
 
 typedef struct RecompLauncherCModVersion {

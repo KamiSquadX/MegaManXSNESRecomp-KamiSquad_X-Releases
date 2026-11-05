@@ -103,6 +103,27 @@ void launcher_binds_hydrate_snes_pad_names(LauncherModel* m,
                                            const LauncherPad* pads,
                                            int pad_count);
 
+// ---- SNES named input profiles (input_profiles.ini beside config.ini) -----
+// Player-named snapshots of one player's whole input setup: input source
+// (keyboard, or a gamepad by GUID), gamepad mapping, keyboard mapping and
+// deadzone. Listed in save order; a save under an existing name (any case)
+// replaces that profile in place, a new name goes last.
+int         launcher_binds_input_profile_count(void);
+const char* launcher_binds_input_profile_name(int index);
+int         launcher_binds_input_profile_find(const char* name);   // -1: none
+// Returns the profile's index, or -1 (no name / not SNES / write failed).
+int         launcher_binds_input_profile_save(LauncherModel* m, int player /*1-based*/,
+                                              const char* name);
+// Switches the player to the profile's input source (even a controller that
+// is not connected) and applies its mappings and deadzone. `pads` resolves a
+// live SDL id for the GUID when that controller is plugged in.
+int         launcher_binds_input_profile_load(LauncherModel* m, int player /*1-based*/,
+                                              int index, const LauncherPad* pads,
+                                              int pad_count);
+// 0 when the name is empty or another profile already has it.
+int         launcher_binds_input_profile_rename(int index, const char* name);
+int         launcher_binds_input_profile_delete(int index);
+
 // ---- PSX gamepad registry (input.ini [gamepads] + [mapping.<guid>]) --------
 // Save Profile: persist this player's selected gamepad name, custom-name flag,
 // deadzone, and button mappings into input.ini.
