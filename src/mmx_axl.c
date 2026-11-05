@@ -58,9 +58,26 @@ enum {
 
 static bool enabled;
 static MmxSaberAssets *assets;
-static MmxAxlState state;
-static uint8_t live_slots;   /* active buster slots after the last frame */
-static bool cap_lifted;
+/* One state per co-op seat; solo play uses seat 0. In co-op each seat that
+ * plays Axl keeps its own state, and `state` is the seat whose body is in
+ * WRAM right now: co-op projects one seat at a time (MmxCoopSelect). */
+static MmxAxlState seats[2];
+static uint8_t seat_live[2];  /* active buster slots after the last frame */
+static bool seat_cap[2];
+static uint8_t coop_seats;    /* co-op: a bit per seat that plays Axl; 0 = solo */
+static int render_seat = -1;  /* the seat being drawn, when not the live one */
+unsigned MmxCoopCurrentSeat(void);
+bool MmxCoopSeatReady(unsigned seat);
+bool MmxCoopSelect(uint8_t *ram, unsigned player);
+uint8_t MmxCoopSeatShotMask(unsigned seat);
+void MmxCoopSeatCamera(unsigned seat, int *x, int *y);
+static unsigned axl_seat(void) {
+  if (render_seat >= 0) return (unsigned)render_seat;
+  return coop_seats ? MmxCoopCurrentSeat() & 1 : 0;
+}
+#define state seats[axl_seat()]
+#define live_slots seat_live[axl_seat()]
+#define cap_lifted seat_cap[axl_seat()]
 static unsigned team_start = MMX_AXL_CHAR_X, team_partner = MMX_AXL_CHAR_NONE;
 static void (*sound_hook)(unsigned cue);
 void MmxAxlSetSoundHook(void (*play)(unsigned cue)) { sound_hook = play; }
@@ -83,14 +100,21 @@ void MmxAxlSetTeam(unsigned start, unsigned partner) {
 }
 unsigned MmxAxlTeamStart(void) { return team_start; }
 void MmxAxlResetState(void) {
-  memset(&state, 0, sizeof(state));
-  /* X's body is Axl when Axl starts, or when the team is Zero and Axl. */
-  state.active = team_start == MMX_AXL_CHAR_AXL ||
-      (team_start == MMX_AXL_CHAR_ZERO && team_partner == MMX_AXL_CHAR_AXL);
-  state.aim = state.pose_aim = 2;
-  state.special = MMX_AXL_SPECIAL_MAX * SPECIAL_UNIT;
-  live_slots = 0; cap_lifted = false;
+  for (unsigned i = 0; i < 2; ++i) {
+    MmxAxlState *t = &seats[i];
+    memset(t, 0, sizeof(*t));
+    /* X's body is Axl when Axl starts, or when the team is Zero and Axl; in
+     * co-op, in each seat that plays him. */
+    t->active = coop_seats ? (coop_seats >> i) & 1 :
+        i == 0 && (team_start == MMX_AXL_CHAR_AXL ||
+                   (team_start == MMX_AXL_CHAR_ZERO && team_partner == MMX_AXL_CHAR_AXL));
+    t->aim = t->pose_aim = 2;
+    t->special = MMX_AXL_SPECIAL_MAX * SPECIAL_UNIT;
+    seat_live[i] = 0; seat_cap[i] = false;
+  }
 }
+void MmxAxlSetCoopSeats(unsigned mask) { coop_seats = (uint8_t)(mask & 3); MmxAxlResetState(); }
+unsigned MmxAxlCoopSeats(void) { return coop_seats; }
 void MmxAxlEnable(bool on) {
   enabled = on && MmxAxlLoad();
   MmxAxlResetState();
@@ -98,12 +122,14 @@ void MmxAxlEnable(bool on) {
 void MmxAxlDisable(void) {
   enabled = false;
   team_start = MMX_AXL_CHAR_X; team_partner = MMX_AXL_CHAR_NONE;
+  coop_seats = 0;
   MmxAxlResetState();
 }
 bool MmxAxlEnabled(void) { return enabled; }
 static bool zero_live(void) { return MmxZeroEnabled() && MmxZeroActive(); }
 bool MmxAxlActive(void) { return enabled && state.active && !zero_live(); }
-MmxAxlState MmxAxlGetState(void) { return state; }
+MmxAxlState MmxAxlGetState(void) { return seats[0]; }
+MmxAxlState MmxAxlGetSeatState(unsigned seat) { return seats[seat & 1]; }
 bool MmxAxlValidState(const MmxAxlState *s) {
   if (!s || s->active > 1 || s->arms_lent > 1 || s->wall_side > 3 || s->aim > 4 || s->pose_aim > 4 || s->roll > ROLL_FRAMES || s->dash_dir > 7 ||
       s->giga > GIGA_END || s->special > MMX_AXL_SPECIAL_MAX * SPECIAL_UNIT) return false;
@@ -112,13 +138,20 @@ bool MmxAxlValidState(const MmxAxlState *s) {
         (s->shots[i].slot - 0x1228) % 64 || s->shots[i].kind > 1)) return false;
   return true;
 }
-void MmxAxlSetState(const MmxAxlState *s) {
-  if (!MmxAxlValidState(s)) return;
-  state = *s;
-  live_slots = 0;
-  for (unsigned i = 0; i < 8; ++i) if (g_ram[0x1228 + i * 64]) live_slots |= 1u << i;
-  cap_lifted = true; /* recount once */
+void MmxAxlSetSeatState(unsigned seat, const MmxAxlState *s) {
+  if (seat > 1 || !MmxAxlValidState(s)) return;
+  seats[seat] = *s;
+  /* In co-op the roster decides which seats play Axl, whatever was saved. */
+  if (coop_seats) seats[seat].active = (coop_seats >> seat) & 1;
+  /* A co-op seat's shots may be stored away from WRAM. */
+  if (coop_seats) seat_live[seat] = MmxCoopSeatShotMask(seat);
+  else {
+    seat_live[seat] = 0;
+    for (unsigned i = 0; i < 8; ++i) if (g_ram[0x1228 + i * 64]) seat_live[seat] |= 1u << i;
+  }
+  seat_cap[seat] = true; /* recount once */
 }
+void MmxAxlSetState(const MmxAxlState *s) { MmxAxlSetSeatState(0, s); }
 
 static bool grounded(const uint8_t *r) { return (r[0xbd3] & 4) != 0; }
 /* Untouchable: the hurt latches ($0BD8, $0C32) X1 sets on a hit, held by
@@ -221,15 +254,20 @@ static bool zero_exchange_allowed(void) {
   unsigned now = current_character(), next = next_character(now);
   return now != next && (now == MMX_AXL_CHAR_ZERO || next == MMX_AXL_CHAR_ZERO);
 }
-void MmxAxlFrameBegin(uint32_t *inputs) {
+/* One seat's buttons: bits [shift, shift+12) of *inputs, extended controls
+ * from pad slot `seat`. Its body is the one in WRAM. Co-op keeps Select for
+ * itself (join, leave, teleport): no CHANGE PLAYER there. */
+static void frame_begin_seat(uint32_t *inputs, unsigned seat) {
+  const unsigned shift = seat * 12;
+  const uint32_t field = 0x0fffu << shift;
   /* The team owns CHANGE PLAYER on every frame, before anything below can
    * return early: Select never starts an exchange the team does not have. */
   uint32_t raw = *inputs;
-  if (!zero_exchange_allowed()) *inputs &= ~(uint32_t)PAD_SELECT;
+  if (!coop_seats && !zero_exchange_allowed()) *inputs &= ~(uint32_t)PAD_SELECT;
   if (!enabled) return;
-  unsigned in = raw & 0x0fff, prev = state.prev_input_lo | state.prev_input_hi << 8;
+  unsigned in = (raw >> shift) & 0x0fff, prev = state.prev_input_lo | state.prev_input_hi << 8;
   unsigned pressed = in & ~prev;
-  uint8_t ext = RtlGetPadExt(0), ext_pressed = ext & ~state.prev_ext;
+  uint8_t ext = RtlGetPadExt((int)seat), ext_pressed = ext & ~state.prev_ext;
   state.prev_input_lo = (uint8_t)in; state.prev_input_hi = (uint8_t)(in >> 8);
   state.prev_ext = ext;
   if (!playable(g_ram) || MmxZeroSwapping()) {
@@ -238,13 +276,15 @@ void MmxAxlFrameBegin(uint32_t *inputs) {
   }
   /* `in` keeps the player's Select for the X/Axl switch below; `out` starts
    * from the team-filtered input. */
-  unsigned action = g_ram[0xbaa], out = *inputs & 0x0fff;
+  unsigned action = g_ram[0xbaa], out = (*inputs >> shift) & 0x0fff;
   bool busy = state.roll || state.giga;
   /* CHANGE PLAYER (Select): Zero's own exchange (with its teleport and
    * separate health) whenever Zero is involved; X and Axl share the body,
    * its health and weapons, and switch at once. */
   unsigned now = current_character();
-  if ((pressed & PAD_SELECT) && !busy) {
+  if (coop_seats) {
+    /* Co-op: Select passes through untouched. */
+  } else if ((pressed & PAD_SELECT) && !busy) {
     unsigned next = next_character(now);
     if (next == now) out &= ~PAD_SELECT;
     else if (now == MMX_AXL_CHAR_ZERO || next == MMX_AXL_CHAR_ZERO) {
@@ -256,7 +296,7 @@ void MmxAxlFrameBegin(uint32_t *inputs) {
     }
   } else if (now == MMX_AXL_CHAR_AXL || !MmxZeroEnabled() || team_partner == MMX_AXL_CHAR_ALONE)
     out &= ~PAD_SELECT;
-  if (!MmxAxlActive()) { *inputs = (*inputs & ~0x0fffu) | out; return; }
+  if (!MmxAxlActive()) { *inputs = (*inputs & ~field) | ((uint32_t)out << shift); return; }
 
   if (state.special < MMX_AXL_SPECIAL_MAX * SPECIAL_UNIT && !state.giga &&
       ++state.regen >= SPECIAL_REGEN) {
@@ -279,7 +319,7 @@ void MmxAxlFrameBegin(uint32_t *inputs) {
     if (sound_hook) sound_hook(MMX_AXL_SOUND_GIGA_START);
     state.dash = state.hover = 0; state.shot_pose = 0;
   }
-  if (state.giga) { *inputs = (*inputs & ~0x0fffu); return; }
+  if (state.giga) { *inputs = (*inputs & ~field); return; }
 
   /* Dodge roll: Down + Dash on the ground, or Down while dashing. Native
    * dash input drives the motion so terrain collision stays native. */
@@ -298,7 +338,7 @@ void MmxAxlFrameBegin(uint32_t *inputs) {
       if (state.roll <= ROLL_MOVE)
         out = PAD_A | (state.roll_facing ? PAD_RIGHT : PAD_LEFT);
       if (++state.roll > ROLL_FRAMES) state.roll = 0;
-      *inputs = (*inputs & ~0x0fffu) | out;
+      *inputs = (*inputs & ~field) | ((uint32_t)out << shift);
       return;
     }
   }
@@ -402,7 +442,20 @@ void MmxAxlFrameBegin(uint32_t *inputs) {
       state.shot_pose = SHOT_POSE; state.pose_aim = state.aim;
     }
   }
-  *inputs = (*inputs & ~0x0fffu) | out;
+  *inputs = (*inputs & ~field) | ((uint32_t)out << shift);
+}
+
+void MmxAxlFrameBegin(uint32_t *inputs) {
+  if (!coop_seats) { frame_begin_seat(inputs, 0); return; }
+  if (!enabled) return;
+  /* Each Axl seat with its own body in WRAM, then the live seat again. */
+  unsigned live = MmxCoopCurrentSeat() & 1;
+  for (unsigned seat = 0; seat < 2; ++seat) {
+    if (!((coop_seats >> seat) & 1) || !MmxCoopSeatReady(seat)) continue;
+    if (seat != live && !MmxCoopSelect(g_ram, seat)) continue;
+    frame_begin_seat(inputs, seat);
+    if (seat != live) MmxCoopSelect(g_ram, live);
+  }
 }
 
 /* ---- physics, through X's native velocities ------------------------------ */
@@ -516,7 +569,7 @@ void MmxAxlCollisionRom(uint8_t *rom, size_t size) {
   static const uint8_t box[4] = {0, 0, 127, 112}, empty[4] = {255, 255, 255, 255};
   if (!rom || size < GIGA_BOX_ROM + 4) return;
   if (memcmp(rom + GIGA_BOX_ROM, empty, 4) && memcmp(rom + GIGA_BOX_ROM, box, 4)) return;
-  memcpy(rom + GIGA_BOX_ROM, enabled && state.giga ? box : empty, 4);
+  memcpy(rom + GIGA_BOX_ROM, enabled && (seats[0].giga || seats[1].giga) ? box : empty, 4);
 }
 
 /* ---- after the frame --------------------------------------------------- */
@@ -604,7 +657,10 @@ static void giga_tick(void) {
     state.giga_slot = (uint16_t)d;
     cap_lifted = true;
   }
-  int32_t x = ((int32_t)word(g_ram, 0x1e4d) + 128) << 8, y = ((int32_t)word(g_ram, 0x1e50) + 112) << 8;
+  /* The centre of his own screen: in co-op that seat's view. */
+  int cx = (int)word(g_ram, 0x1e4d), cy = (int)word(g_ram, 0x1e50);
+  if (coop_seats) MmxCoopSeatCamera(axl_seat(), &cx, &cy);
+  int32_t x = ((int32_t)cx + 128) << 8, y = ((int32_t)cy + 112) << 8;
   place(d, x, y);
   giga_boss_hits();
   putword(g_ram, d + 0x1a, 0);
@@ -686,8 +742,7 @@ static void advance_animation(unsigned anim) {
   }
 }
 
-void MmxAxlFrameEnd(void) {
-  if (!enabled) return;
+static void frame_end_seat(void) {
   if (state.arms_lent) { g_ram[0x1f99] &= (uint8_t)~2; state.arms_lent = 0; }
   uint8_t now = 0;
   for (unsigned i = 0; i < 8; ++i) if (g_ram[0x1228 + i * 64]) now |= 1u << i;
@@ -696,7 +751,7 @@ void MmxAxlFrameEnd(void) {
 
   /* The title: when Axl starts, his three pistol shots replace the title
    * shot (drawn by MmxAxlFrame). */
-  if (team_start == MMX_AXL_CHAR_AXL && title_cursor(g_ram)) {
+  if (!coop_seats && team_start == MMX_AXL_CHAR_AXL && title_cursor(g_ram)) {
     if (fresh && !state.title_shot) state.title_shot = 1;
     else if (state.title_shot && state.title_shot < 120) ++state.title_shot;
     advance_animation(state.title_shot && state.title_shot < 30 ? MMX_AXL_ANIM_SHOT : MMX_AXL_ANIM_IDLE);
@@ -730,7 +785,9 @@ void MmxAxlFrameEnd(void) {
   state.copy_pending = 0;
   /* Axl's shots keep their own straight lines; the native frame's motion is
    * replaced, its collision and expiry are not. */
+  /* Off his own screen they end: in co-op that seat's view. */
   int cx = (int)word(g_ram, 0x1e4d), cy = (int)word(g_ram, 0x1e50);
+  if (coop_seats) MmxCoopSeatCamera(axl_seat(), &cx, &cy);
   for (unsigned i = 0; i < MMX_AXL_SHOTS; ++i) {
     MmxAxlShot *s = &state.shots[i];
     if (!s->slot) continue;
@@ -792,6 +849,18 @@ void MmxAxlFrameEnd(void) {
   advance_animation(pick_animation(g_ram[0xbaa]));
 }
 
+void MmxAxlFrameEnd(void) {
+  if (!enabled) return;
+  if (!coop_seats) { frame_end_seat(); return; }
+  unsigned live = MmxCoopCurrentSeat() & 1;
+  for (unsigned seat = 0; seat < 2; ++seat) {
+    if (!((coop_seats >> seat) & 1) || !MmxCoopSeatReady(seat)) continue;
+    if (seat != live && !MmxCoopSelect(g_ram, seat)) continue;
+    frame_end_seat();
+    if (seat != live) MmxCoopSelect(g_ram, live);
+  }
+}
+
 /* ---- presentation ------------------------------------------------------ */
 static bool plane_for(unsigned anim, unsigned age, bool hold, MmxRenderPlayerOverlayPlane *out) {
   const MmxSaberAnimation *a = MmxSaberAssetsAnimationById(assets, (uint16_t)anim);
@@ -837,13 +906,25 @@ static bool body_for(const uint8_t *ram, MmxRenderAxlFrame *out) {
   if (state.roll) b->facing_left = !state.roll_facing;
   return true;
 }
-bool MmxAxlFrame(const uint8_t *ram, MmxRenderAxlFrame *out) {
+static bool axl_frame(const uint8_t *ram, MmxRenderAxlFrame *out, bool partner);
+bool MmxAxlFrame(const uint8_t *ram, MmxRenderAxlFrame *out) { return axl_frame(ram, out, false); }
+/* A co-op partner seat, drawn from `ram` with that seat's body projected. */
+bool MmxAxlSeatFrame(unsigned seat, const uint8_t *ram, MmxRenderAxlFrame *out) {
+  memset(out, 0, sizeof(*out));
+  out->special = -1;
+  if (!coop_seats || seat > 1 || !((coop_seats >> seat) & 1)) return false;
+  render_seat = (int)seat;
+  bool shown_axl = axl_frame(ram, out, true);
+  render_seat = -1;
+  return shown_axl;
+}
+static bool axl_frame(const uint8_t *ram, MmxRenderAxlFrame *out, bool partner) {
   memset(out, 0, sizeof(*out));
   out->special = -1;
   if (!enabled || !assets || !ram) return false;
   out->body.palette = MmxSaberAssetsPalette(assets);
   out->body.palette_count = MmxSaberAssetsPaletteCount(assets);
-  if (team_start == MMX_AXL_CHAR_AXL && title_cursor(ram)) {
+  if (!coop_seats && team_start == MMX_AXL_CHAR_AXL && title_cursor(ram)) {
     if (!state.anim || !body_for(ram, out)) return false;
     out->title = true;
     out->body.facing_left = false;
@@ -859,7 +940,7 @@ bool MmxAxlFrame(const uint8_t *ram, MmxRenderAxlFrame *out) {
     return true;
   }
   /* CHANGE PLAYER's beam, when it carries Axl (X's body). */
-  if (MmxZeroSwapping()) {
+  if (!coop_seats && MmxZeroSwapping()) {
     MmxZeroState z = MmxZeroGetState();
     unsigned pose = MmxZeroSwapPose(&z), anim = MMX_AXL_ANIM_IDLE, step = 0;
     if (!z.active_x || !state.active || pose == 255) return false;
@@ -872,7 +953,7 @@ bool MmxAxlFrame(const uint8_t *ram, MmxRenderAxlFrame *out) {
     return true;
   }
   /* Axl's HUD badge, and his portrait and life head in the pause menu. */
-  if (MmxAxlActive() && ram[0xd1] == 2 && ram[0xd2] == 4) {
+  if (!coop_seats && MmxAxlActive() && ram[0xd1] == 2 && ram[0xd2] == 4) {
     art(MMX_AXL_ANIM_HUD_BADGE, &out->badge);
     if (pause_menu(ram)) {
       out->menu = true;
@@ -882,12 +963,13 @@ bool MmxAxlFrame(const uint8_t *ram, MmxRenderAxlFrame *out) {
     }
   }
   unsigned beam_anim, beam_step;
-  bool beam = MmxAxlActive() && MmxWidePolicy_IsStageScene(ram) && body_group(ram) &&
+  bool axl = partner ? state.active != 0 : MmxAxlActive();
+  bool beam = axl && MmxWidePolicy_IsStageScene(ram) && body_group(ram) &&
       beam_frame(ram[0xbaa], ram[0xbbf], &beam_anim, &beam_step);
-  if (!beam && (!MmxAxlActive() || !shown(ram) || ram[0xbaa] == 0x2c)) return false;
+  if (!beam && (!axl || !shown(ram) || ram[0xbaa] == 0x2c)) return false;
   /* Axl owns X's body: X's art never shows through, also on blank frames. */
   out->own_body = true;
-  out->special = beam ? -1 : state.special / SPECIAL_UNIT;
+  out->special = beam || partner ? -1 : state.special / SPECIAL_UNIT;
   for (unsigned i = 0; i < MMX_AXL_SHOTS; ++i) {
     const MmxAxlShot *s = &state.shots[i];
     if (!s->slot || !ram[s->slot]) continue;

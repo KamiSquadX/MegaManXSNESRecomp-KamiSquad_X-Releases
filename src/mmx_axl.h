@@ -83,6 +83,12 @@ MmxAxlState MmxAxlGetState(void);
 bool MmxAxlValidState(const MmxAxlState *state);
 void MmxAxlSetState(const MmxAxlState *state);
 void MmxAxlResetState(void);
+/* Co-op: the seats (bit 0 = P1, bit 1 = P2) that play Axl on an X body,
+ * each with its own state (savestate chunk v27 stores both). 0 = solo. */
+void MmxAxlSetCoopSeats(unsigned mask);
+unsigned MmxAxlCoopSeats(void);
+MmxAxlState MmxAxlGetSeatState(unsigned seat);
+void MmxAxlSetSeatState(unsigned seat, const MmxAxlState *state);
 
 /* The solo team: who starts and who CHANGE PLAYER brings in. A partner of
  * MMX_AXL_CHAR_NONE cycles through every enabled character instead;
@@ -104,3 +110,5 @@ void MmxAxlSetSoundHook(void (*play)(unsigned cue));
 
 /* Renderer provider. */
 bool MmxAxlFrame(const uint8_t *ram, struct MmxRenderAxlFrame *out);
+/* A co-op partner seat that plays Axl, from RAM with its body projected. */
+bool MmxAxlSeatFrame(unsigned seat, const uint8_t *ram, struct MmxRenderAxlFrame *out);

@@ -67,6 +67,27 @@ static SNESModAudioClip register_ogg(const uint8_t *data, size_t size) {
 static void play_sound(unsigned cue) {
   if (cue < 2 && giga_clips[cue] && !RtlSpeculativeFrame()) snes_mod_audio_play(giga_clips[cue], 100);
 }
+static void install(void) {
+  MmxAxlInstallHooks(true);
+  MmxRendererSetAxlProvider(MmxAxlFrame);
+  MmxRendererSetAxlSeatProvider(MmxAxlSeatFrame);
+  if (!giga_clips[0]) giga_clips[0] = register_ogg(kMmxAxlEmbeddedGigaStart, kMmxAxlEmbeddedGigaStartSize);
+  if (!giga_clips[1]) giga_clips[1] = register_ogg(kMmxAxlEmbeddedGigaShot, kMmxAxlEmbeddedGigaShotSize);
+  MmxAxlSetSoundHook(play_sound);
+  const unsigned pcs[] = {0x01971f, 0x019796, 0x0198ff};
+  for (unsigned i = 0; i < sizeof(pcs) / sizeof(pcs[0]); ++i)
+    interp_bridge_add_pre_opcode_hook(pcs[i], upgrade_hook);
+}
+/* Co-op (mmx_zero_plugin.c): the seats that play Axl, on X bodies. */
+void MmxAxlCoopActivate(unsigned seats) {
+  if (!(seats & 3)) return;
+  MmxAxlSetTeam(MMX_AXL_CHAR_X, MMX_AXL_CHAR_NONE);
+  MmxAxlEnable(true);
+  if (!MmxAxlEnabled()) return;
+  MmxAxlSetCoopSeats(seats);
+  install();
+  fprintf(stderr, "[mmx-axl] X8 Axl 0.0.1 enabled for co-op seats %u\n", seats & 3);
+}
 static void activate(void) {
   /* The co-op modes claim this plugin only to keep apart from Add Axl. */
   if (!snes_mod_runtime_feature_enabled_c(kAxl, "axl")) return;
@@ -75,14 +96,7 @@ static void activate(void) {
   MmxAxlSetTeam(start, partner);
   MmxAxlEnable(true);
   if (!MmxAxlEnabled()) return;
-  MmxAxlInstallHooks(true);
-  MmxRendererSetAxlProvider(MmxAxlFrame);
-  if (!giga_clips[0]) giga_clips[0] = register_ogg(kMmxAxlEmbeddedGigaStart, kMmxAxlEmbeddedGigaStartSize);
-  if (!giga_clips[1]) giga_clips[1] = register_ogg(kMmxAxlEmbeddedGigaShot, kMmxAxlEmbeddedGigaShotSize);
-  MmxAxlSetSoundHook(play_sound);
-  const unsigned pcs[] = {0x01971f, 0x019796, 0x0198ff};
-  for (unsigned i = 0; i < sizeof(pcs) / sizeof(pcs[0]); ++i)
-    interp_bridge_add_pre_opcode_hook(pcs[i], upgrade_hook);
+  install();
   fprintf(stderr, "[mmx-axl] X8 Axl 0.0.1 enabled; team %u/%u\n", start, partner);
 }
 static void activate_team(void) {
@@ -101,6 +115,7 @@ static void reset(void) {
   MmxAxlDisable();
   MmxAxlInstallHooks(false);
   MmxRendererSetAxlProvider(NULL);
+  MmxRendererSetAxlSeatProvider(NULL);
 }
 SNES_MOD_CONSTRUCTOR(mmx_register_axl_plugin) {
   (void)snes_mod_register_reset_callback(reset);

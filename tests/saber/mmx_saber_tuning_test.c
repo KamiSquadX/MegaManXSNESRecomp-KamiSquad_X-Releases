@@ -213,7 +213,7 @@ static void check_defaults(void) {
             tuning->normal_damage[MMX_SABER_TUNING_DAMAGE_X3_FINISHER] == 16 &&
             tuning->normal_damage[MMX_SABER_TUNING_DAMAGE_AIR] == 3 &&
             tuning->normal_damage[MMX_SABER_TUNING_DAMAGE_WALL] == 3 &&
-            tuning->normal_damage[MMX_SABER_TUNING_DAMAGE_DASH] == 3 &&
+            tuning->normal_damage[MMX_SABER_TUNING_DAMAGE_DASH] == 5 &&
             tuning->normal_damage[MMX_SABER_TUNING_DAMAGE_WAVE] == 6,
         "normal damage defaults match the manifest");
   check(tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_SLASH1] == 1 &&
@@ -221,16 +221,16 @@ static void check_defaults(void) {
             tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_SLASH3] == 2 &&
             tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_AIR] == 1 &&
             tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_WALL] == 1 &&
-            tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_DASH] == 1 &&
+            tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_DASH] == 2 &&
             tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_X3_FINISHER] == 6 &&
             tuning->boss_damage[MMX_SABER_TUNING_DAMAGE_WAVE] == 4,
         "boss damage defaults match operator decision D-OP-60");
-  check(tuning->priority[MMX_SABER_TUNING_PRIORITY_SLASH1] == 2 &&
-            tuning->priority[MMX_SABER_TUNING_PRIORITY_SLASH2] == 3 &&
-            tuning->priority[MMX_SABER_TUNING_PRIORITY_SLASH3] == 4 &&
+  check(tuning->priority[MMX_SABER_TUNING_PRIORITY_SLASH1] == 6 &&
+            tuning->priority[MMX_SABER_TUNING_PRIORITY_SLASH2] == 7 &&
+            tuning->priority[MMX_SABER_TUNING_PRIORITY_SLASH3] == 8 &&
             tuning->priority[MMX_SABER_TUNING_PRIORITY_AIR] == 1 &&
             tuning->priority[MMX_SABER_TUNING_PRIORITY_WALL] == 1 &&
-            tuning->priority[MMX_SABER_TUNING_PRIORITY_DASH] == 5 &&
+            tuning->priority[MMX_SABER_TUNING_PRIORITY_DASH] == 9 &&
             tuning->priority[MMX_SABER_TUNING_PRIORITY_CHARGE_SMALL] == 1 &&
             tuning->priority[MMX_SABER_TUNING_PRIORITY_CHARGE_FULL] == 1 &&
             tuning->priority[MMX_SABER_TUNING_PRIORITY_MAX_SHOT1] == 2 &&

@@ -12,7 +12,10 @@
 #include "recomp_launcher.h"
 
 static const char *const kCoop = "megaman-x.coop";
+static const char *const kCoopAxl = "megaman-x.coop-axl";
 static const char *const kZero = "megaman-x.character.zero";
+static const char *const kAxl = "megaman-x.character.axl";
+static const char *const kTeam = "megaman-x.team-select";
 static const char *const kWide = "megaman-x.enhancement.widescreen";
 static const RecompLauncherCModProvider *s_mods;
 static const RecompLauncherCNetplayCallbacks *s_net;
@@ -22,6 +25,20 @@ static int s_active;
 static char s_error[512];
 
 int MmxNetplayActive(void) { return s_active; }
+
+/* Either co-op mod satisfies netplay: X + Zero (0.0.1) or X / Zero / Axl
+ * (0.0.2). They claim the same plugins, so at most one is ever enabled. */
+static int is_coop(const char *pkg) { return !strcmp(pkg, kCoop) || !strcmp(pkg, kCoopAxl); }
+/* Solo character modes claim the co-op plugins; enabling one would turn
+ * co-op off, so netplay keeps them off and out of the list. */
+static int is_solo(const char *pkg) {
+  return !strcmp(pkg, kZero) || !strcmp(pkg, kAxl) || !strcmp(pkg, kTeam);
+}
+static const char *active_coop(void) {
+  if (snes_mod_runtime_feature_enabled_c(kCoopAxl, "coop")) return kCoopAxl;
+  if (snes_mod_runtime_feature_enabled_c(kCoop, "coop")) return kCoop;
+  return NULL;
+}
 
 int MmxNetplayReady(char *reason, size_t cap) {
   if (!MmxCoopEnabled()) {
@@ -75,7 +92,10 @@ static void mode_changed(int enabled) {
   }
   s_active = 1;
   s_mods->feature_enable(s_mods->ctx, kZero, "zero", 0);
-  if (!s_mods->feature_enable(s_mods->ctx, kCoop, "coop", 1))
+  s_mods->feature_enable(s_mods->ctx, kAxl, "axl", 0);
+  s_mods->feature_enable(s_mods->ctx, kTeam, "team", 0);
+  /* Keep the co-op mod the player already chose; otherwise X + Zero. */
+  if (!active_coop() && !s_mods->feature_enable(s_mods->ctx, kCoop, "coop", 1))
     fail("The X + Zero co-op mod is missing. Restore the bundled mods.");
   /* Preserve an existing fixed choice; Adaptive becomes 16:9 in this
    * temporary plan only. Disabled widescreen remains the native view. */
@@ -86,12 +106,13 @@ static void mode_changed(int enabled) {
 }
 
 static int validate_plan(void) {
-  if (!s_active || !snes_mod_runtime_feature_enabled_c(kCoop, "coop"))
-    return fail("Netplay requires X + Zero co-op. Reopen Netplay to prepare the room.");
+  const char *coop = s_active ? active_coop() : NULL;
+  if (!coop)
+    return fail("Netplay requires a co-op mod. Enable X + Zero Co-op or X / Zero / Axl Co-op.");
   if (snes_mod_runtime_feature_enabled_c(kZero, "zero"))
     return fail("Character switching must be off during co-op netplay.");
   char cameras[32] = {0};
-  snes_mod_runtime_feature_option_value_c(kCoop, "coop", "cameras", cameras, sizeof(cameras));
+  snes_mod_runtime_feature_option_value_c(coop, "coop", "cameras", cameras, sizeof(cameras));
   if (strcmp(cameras, "independent") && strcmp(cameras, "unified"))
     return fail("Choose Independent or Unified netplay cameras. Restore the bundled co-op mod if this option is missing.");
   if (snes_mod_runtime_feature_enabled_c(kWide, "widescreen")) {
@@ -106,31 +127,38 @@ static int validate_plan(void) {
 
 static int feature_enable(void *ctx, const char *pkg, const char *feature, int enabled) {
   s_error[0] = 0;
-  if (s_active && ((!strcmp(pkg, kCoop) && !enabled) || (!strcmp(pkg, kZero) && enabled)))
-    return fail("Netplay requires X / Zero Co-op; Add Zero is unavailable.");
+  if (s_active && is_solo(pkg) && enabled)
+    return fail("Netplay always uses co-op; Add Zero, Add Axl and Solo Team select are unavailable.");
+  if (s_active && is_coop(pkg) && !enabled) {
+    /* Unticking X / Zero / Axl Co-op goes back to X + Zero Co-op; the room
+     * always has one co-op mod. */
+    if (!strcmp(pkg, kCoopAxl) && s_mods->feature_enable(ctx, kCoop, "coop", 1)) return 1;
+    return fail("Netplay requires a co-op mod. Tick the other co-op mod to switch.");
+  }
   return s_mods->feature_enable(ctx, pkg, feature, enabled);
 }
 static int set_enabled(void *ctx, const char *pkg, int enabled) {
-  if (s_active && ((!strcmp(pkg, kCoop) && !enabled) || (!strcmp(pkg, kZero) && enabled)))
-    return fail("Netplay requires X + Zero co-op.");
+  if (s_active && ((is_coop(pkg) && !enabled && active_coop() && !strcmp(active_coop(), pkg)) ||
+                   (is_solo(pkg) && enabled)))
+    return fail("Netplay requires a co-op mod.");
   s_error[0] = 0;
   return s_mods->set_enabled(ctx, pkg, enabled);
 }
 static int feature_get(void *ctx, int index, RecompLauncherCModFeature *out) {
   if (!s_mods->feature_get(ctx, index, out)) return 0;
-  if (!s_active && !strcmp(out->package_id, kCoop)) {
+  if (!s_active && is_coop(out->package_id)) {
     RecompLauncherCModOption option;
-    for (int i=0; s_mods->feature_option_get(ctx, kCoop, out->id, i, &option); ++i)
+    for (int i=0; s_mods->feature_option_get(ctx, out->package_id, out->id, i, &option); ++i)
       if (!strcmp(option.id, "cameras")) --out->option_count;
   }
-  if (s_active && !strcmp(out->package_id, kZero)) out->hidden = 1;
-  if (s_active && !strcmp(out->package_id, kCoop) && !out->has_error)
-    snprintf(out->status, sizeof(out->status), "Required for netplay");
+  if (s_active && is_solo(out->package_id)) out->hidden = 1;
+  if (s_active && is_coop(out->package_id) && !out->has_error)
+    snprintf(out->status, sizeof(out->status), "Netplay uses one co-op mod");
   return 1;
 }
 static int option_get(void *ctx, const char *pkg, const char *fid, int index,
                       RecompLauncherCModOption *out) {
-  if (!s_active && !strcmp(pkg, kCoop)) {
+  if (!s_active && is_coop(pkg)) {
     int visible=0, found=0;
     for (int i=0; s_mods->feature_option_get(ctx, pkg, fid, i, out); ++i) {
       if (!strcmp(out->id, "cameras")) continue;
@@ -159,8 +187,15 @@ static int choice_get(void *ctx, const char *pkg, const char *fid, const char *o
 }
 static int set_option(void *ctx, const char *pkg, const char *fid, const char *option, const char *value) {
   s_error[0] = 0;
-  if (!s_active && !strcmp(pkg, kCoop) && !strcmp(option, "cameras"))
+  if (!s_active && is_coop(pkg) && !strcmp(option, "cameras"))
     return fail("Offline play always uses Unified cameras. Open Netplay to choose the room's cameras.");
+  if (!strcmp(option, "behavior") && !strcmp(pkg, kCoopAxl) && !strcmp(fid, "coop")) {
+    /* 0.0.2's Zero behavior follows the same shared preference. */
+    if (!s_mods->feature_set_option(ctx, pkg, fid, option, value)) return 0;
+    (void)s_mods->feature_set_option(ctx, kZero, "zero", option, value);
+    (void)s_mods->feature_set_option(ctx, kCoop, "coop", option, value);
+    return 1;
+  }
   if (!strcmp(option, "behavior") &&
       ((!strcmp(pkg, kZero) && !strcmp(fid, "zero")) ||
        (!strcmp(pkg, kCoop) && !strcmp(fid, "coop")))) {
@@ -177,6 +212,7 @@ static int set_option(void *ctx, const char *pkg, const char *fid, const char *o
       s_mods->feature_set_option(ctx, pkg, fid, option, previous);
       return fail("Cannot update the shared Zero behavior. Restore both bundled character mods.");
     }
+    (void)s_mods->feature_set_option(ctx, kCoopAxl, "coop", option, value);
     return 1;
   }
   if (s_active && !strcmp(pkg, kWide) && !strcmp(option, "aspect") &&

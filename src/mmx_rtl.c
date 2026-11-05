@@ -370,7 +370,7 @@ void mmx_host_yield(uint8_t countdown) {
 #include "snes/saveload.h"
 
 #define MMX_SAV_CHUNK_MAGIC   0x4D4D5854u  /* "MMXT" */
-#define MMX_SAV_CHUNK_VERSION 26u /* Add Axl */
+#define MMX_SAV_CHUNK_VERSION 27u /* Axl in co-op: seat 2's Axl */
 
 typedef struct MmxSavChunk {
   uint32_t magic, version;
@@ -415,7 +415,7 @@ static MmxBossRushRosterState g_load_rush_roster;
 static MmxBossRushScratchState g_load_rush_scratch;
 static MmxOptionsState g_load_options;
 static bool g_load_options_ok;
-static MmxAxlState g_load_axl;
+static MmxAxlState g_load_axl,g_load_axl_seat2;
 static bool g_load_axl_ok;
 
 void MmxStateSaveExtra(struct SaveLoadInfo *sli) {
@@ -481,7 +481,9 @@ void MmxStateSaveExtra(struct SaveLoadInfo *sli) {
   sli->func(sli,&scratch,sizeof(scratch));
   MmxOptionsState options=MmxOptionsGetState();
   sli->func(sli,&options,sizeof(options));
-  MmxAxlState axl=MmxAxlGetState();
+  MmxAxlState axl=MmxAxlGetSeatState(0);
+  sli->func(sli,&axl,sizeof(axl));
+  axl=MmxAxlGetSeatState(1);
   sli->func(sli,&axl,sizeof(axl));
 }
 
@@ -589,7 +591,8 @@ void MmxStateLoadExtra(struct SaveLoadInfo *sli, uint32_t version) {
         (g_load_chunk.version>=23?sizeof(g_load_rush_roster):0)+
         (g_load_chunk.version>=24?sizeof(g_load_rush_scratch):0)+
         (g_load_chunk.version>=25?sizeof(g_load_options):0)+
-        (g_load_chunk.version>=26?sizeof(g_load_axl):0);
+        (g_load_chunk.version>=26?sizeof(g_load_axl):0)+
+        (g_load_chunk.version>=27?sizeof(g_load_axl_seat2):0);
     if(remaining!=expected) g_load_chunk_ok=0;
     if(g_load_chunk_ok && extension)
       sli->func(sli,g_load_zero_extension,sizeof(g_load_zero_extension));
@@ -633,7 +636,11 @@ void MmxStateLoadExtra(struct SaveLoadInfo *sli, uint32_t version) {
     g_load_axl_ok=false;
     if(g_load_chunk_ok && g_load_chunk.version>=26) {
       sli->func(sli,&g_load_axl,sizeof(g_load_axl));
-      if(!MmxAxlValidState(&g_load_axl)) g_load_chunk_ok=0;
+      /* v27 adds co-op seat 2's Axl; older states have none there. */
+      memset(&g_load_axl_seat2,0,sizeof(g_load_axl_seat2));
+      if(g_load_chunk.version>=27) sli->func(sli,&g_load_axl_seat2,sizeof(g_load_axl_seat2));
+      else {g_load_axl_seat2.aim=g_load_axl_seat2.pose_aim=2;}
+      if(!MmxAxlValidState(&g_load_axl) || !MmxAxlValidState(&g_load_axl_seat2)) g_load_chunk_ok=0;
       else g_load_axl_ok=true;
     }
     if(g_load_chunk_ok && rush && !MmxBossRushRosterMatches(&g_load_rush,&g_load_rush_roster))
@@ -655,8 +662,8 @@ void MmxOnStateLoaded(uint32_t version) {
     MmxBossRushSetState(&g_load_rush);MmxBossRushRosterSetState(&g_load_rush_roster);
     MmxBossRushScratchSetState(&g_load_rush_scratch);
     if(g_load_options_ok) MmxOptionsSetState(&g_load_options);
-    if(g_load_axl_ok) MmxAxlSetState(&g_load_axl);
-    else MmxAxlResetState();
+    /* Axl's seats are restored after co-op (below): a co-op seat counts its
+     * live shots from that seat's own stored pool. */
   } else MmxBossRushReset();
   MmxBossRushVisualState empty_visual={0};
   MmxBossRushVisualSetState(g_load_chunk_ok && g_load_complete?&g_load_rush_visual:&empty_visual);
@@ -690,6 +697,9 @@ void MmxOnStateLoaded(uint32_t version) {
   MmxCoopViewsSetWorldState(&g_load_views);
   MmxCoopViewsSetBoundsState(&g_load_view_bounds);
   MmxCoopTraceStateLoaded();
+  if(g_load_chunk_ok && g_load_complete && g_load_axl_ok) {
+    MmxAxlSetSeatState(0,&g_load_axl);MmxAxlSetSeatState(1,&g_load_axl_seat2);
+  } else if(g_load_chunk_ok && g_load_complete) MmxAxlResetState();
   if (version < 5 || !g_load_chunk_ok) {
     /* Legacy v4 save: no chunk, no rebuild — preserve the historical
      * behavior exactly (live fibers limp along; loads are only reliable
@@ -989,6 +999,8 @@ void RunOneFrameOfGame(void) {
   s_graphics_frame_active = g_did_reset;
 #if !MMX_VARIANT_JP
   interp_bridge_set_pre_opcode_hook(0x008121, MmxGraphicsYieldHook);
+  interp_bridge_set_pre_opcode_hook(0x00e0f9, MmxWsPlayerEdgeHook);
+  interp_bridge_set_pre_opcode_hook(0x00e115, MmxWsPlayerEdgeHook);
   if (!MmxCoopEnabled()) {
     static const uint32_t culls[] = {0x82807d,0x82809e,0x8280c3,0x838957};
     for (unsigned i=0;i<sizeof(culls)/sizeof(culls[0]);++i)
@@ -1271,6 +1283,67 @@ void MmxWsCullHook(CpuState *cpu, uint32_t pc) {
   cpu->_flag_C=carry;cpu->P=(cpu->P&~1)|carry;
 }
 
+/* The player's screen-edge wall lives in the camera routine $00:DE40. With
+ * D on the camera block (D+5 camera X $1E4D, D+$0E/$10 the left/right camera
+ * limits), once the camera has stopped at a room end:
+ *   E0E4..E0F8  if X + 8 >= camera + 256   -> E0F9: X = right + $F8
+ *   E108..E114  if X - 8 <  left           -> E115: X = left  + 8
+ * i.e. 8 px inside the native 4:3 picture. Widescreen draws `margin` more
+ * pixels past each side of that camera, so the player met an invisible wall
+ * well inside the visible picture. These two hooks run at the stores, which
+ * the native test only reaches when X is past the 4:3 limit: re-test against
+ * the visible widescreen edge, store the widened limit when it is still
+ * passed, and continue after the store either way. On the left the margin is
+ * capped at the left limit, so X never crosses world 0.
+ * MmxCameraRouteDE40 sends DE40 through the interpreter while a margin
+ * exists, so the hooks run in solo play too, not only in co-op. */
+int MmxWsPlayerEdgeMargin(void) {
+  /* The exact visible extra, not MmxWsMargin's tile-rounded one: the wall
+   * belongs 8 px inside the picture, as it is in 4:3. */
+  extern int g_ws_extra;
+  if (!MmxWsMargin()) return 0; /* 0 outside widescreen stages */
+  return g_mmx_custom_renderer ? g_mmx_custom_view.extra : g_ws_extra;
+}
+
+bool MmxCameraRouteDE40(const CpuState *cpu) {
+  (void)cpu;
+  return MmxCoopEnabled() || MmxWsPlayerEdgeMargin() != 0;
+}
+
+static unsigned edge_word(unsigned address) {
+  extern uint8_t g_ram[0x20000];
+  return g_ram[address] | (g_ram[address + 1] << 8);
+}
+static void edge_store(unsigned x) {
+  extern uint8_t g_ram[0x20000];
+  g_ram[0x0bad] = (uint8_t)x;
+  g_ram[0x0bae] = (uint8_t)(x >> 8);
+}
+
+void MmxWsPlayerEdgeHook(CpuState *cpu, uint32_t pc) {
+  const int m = MmxWsPlayerEdgeMargin();
+  const unsigned d = cpu->D;
+  const int x = (int)edge_word(0x0bad);
+  if (!m) return;
+  switch (pc & 0xffff) {
+    case 0xe0f9: {
+      const int cam = (int)edge_word(d + 5), right = (int)edge_word(d + 0x10);
+      if (x + 8 >= cam + 256 + m) edge_store((unsigned)(right + 0xf8 + m));
+      interp_bridge_pre_opcode_redirect((pc & 0xff0000) | 0xe102);
+      return;
+    }
+    case 0xe115: {
+      const int left = (int)edge_word(d + 0x0e);
+      const int ml = m < left ? m : left;
+      if (x - 8 < left - ml) edge_store((unsigned)(left + 8 - ml));
+      interp_bridge_pre_opcode_redirect((pc & 0xff0000) | 0xe11e);
+      return;
+    }
+    default:
+      return;
+  }
+}
+
 /* bank_00_D76A rejects a metasprite tile when (screenX + 16) reaches
  * vanilla_limit ($010F), which suppresses all ordinary enemy OAM at the
  * native right edge.  Extending the limit exposes the live right margin;
@@ -1551,6 +1624,17 @@ static bool MmxViewNativeTiming(const MmxCoopState *coop) {
   }
   return false;
 }
+/* Independent views: records whose object seizes the NATIVE camera as it
+ * wakes. Boss/miniboss encounters, plus Highway's airship event (kind 2 $0E
+ * at x=6848), which locks the camera and sends the airship ($1A): woken for
+ * a partner, it waited on the world actor's camera, so the airship never
+ * came and he stood at an invisible wall (x=7160) that the world actor's
+ * region left in place. Only the world actor's view wakes one; the partner
+ * reaching it first takes the world (MmxCoopViewsEncounterSeat). */
+static bool MmxViewWorldEncounter(unsigned kind,uint8_t object_id) {
+  return (kind==3 && MmxWidePolicy_IsScriptedEncounter(object_id)) ||
+      (kind==2 && g_ram[0x1f7a]==0 && object_id==0x0e);
+}
 static bool MmxViewRecordWanted(unsigned flag,const MmxCoopState *coop) {
   if(flag<0xfa00 || flag>0xfffb) return false;
   unsigned rec=g_ram[flag+3]|g_ram[flag+4]<<8;
@@ -1562,8 +1646,39 @@ static bool MmxViewRecordWanted(unsigned flag,const MmxCoopState *coop) {
   /* Mechanisms, doors and encounter controllers retain their native entry
    * timing around a player. Ordinary enemies get the usual spawn hysteresis. */
   bool scripted=kind!=3 || MmxWidePolicy_IsScriptedEncounter(desc[3]) || MmxViewNativeTiming(coop);
+  /* A boss/miniboss encounter seizes the NATIVE camera as it wakes, and the
+   * native camera is the world actor's. Woken by the partner's view, it
+   * dragged the world actor's screen across the stage to its arena (pushing
+   * him into pits on the way). Only the world actor's view spawns one;
+   * MmxCoopViewsEncounterSeat hands the world to the partner first. */
+  if(MmxViewWorldEncounter(kind,desc[3]))
+    return MmxCoopViewSeatContains(g_ram,coop,coop->anchor,x,y,0,256,32,256,0);
   return MmxCoopViewContains(g_ram,coop,x,y,scripted?0:64,scripted?256:320,
       scripted?32:64,scripted?256:288,scripted?0:g_mmx_custom_view.extra);
+}
+/* The seat whose view, and only whose view, holds a dormant boss/miniboss
+ * encounter record: the world actor's view must hold it before it may spawn
+ * (MmxViewRecordWanted). -1 when there is none or the world actor already
+ * sees it. Reads only WRAM and the rollback-owned view state. */
+int MmxCoopViewsEncounterSeat(const MmxCoopState *coop) {
+  unsigned other=coop->anchor^1u;
+  for(unsigned col=0;col<256;++col) {
+    unsigned table=0xf800+col*2;
+    unsigned first=g_ram[table]|g_ram[table+1]<<8;
+    unsigned end=g_ram[table+2]|g_ram[table+3]<<8;
+    if(first<0xfa02 || end>0xfffc || end<first || (end-first)%5) continue;
+    for(unsigned flag=first;flag<end;flag+=5) {
+      if(flag<0xfa00 || flag>0xfffb || g_ram[flag] || MmxCoopViewsSeen(flag)) continue;
+      unsigned rec=g_ram[flag+3]|g_ram[flag+4]<<8;
+      if(rec<0x8000) continue;
+      const uint8_t *desc=RomPtr(0x850000u|rec);
+      if(!MmxViewWorldEncounter(desc[0]&15,desc[3])) continue;
+      int x=(desc[5]|desc[6]<<8)&0x1fff,y=(desc[1]|desc[2]<<8)&0x1fff;
+      if(MmxCoopViewSeatContains(g_ram,coop,coop->anchor,x,y,0,256,32,256,0)) continue;
+      if(MmxCoopViewSeatContains(g_ram,coop,other,x,y,0,256,32,256,0)) return (int)other;
+    }
+  }
+  return -1;
 }
 bool MmxCoopViewsSpawnAllowed(uint16_t dp) {
   unsigned flag=g_ram[dp+0x14]|g_ram[dp+0x15]<<8;

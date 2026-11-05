@@ -27,6 +27,10 @@ static uint16_t asset_palette[256], rush_palette[13][256];
 static unsigned cached_stage = ~0u, cached_section = ~0u;
 static MmxSpriteAsset *rush_assets[13][256];
 static uint8_t rush_ready[13][256];
+/* Independent co-op views: art for an animation outside the native
+ * camera's section (see other_section_sprite). */
+static MmxSpriteAsset *far_assets[13][256];
+static uint8_t far_ready[13][256];
 static MmxSpriteAsset rush_pose[128];
 static uint64_t rush_pose_key[128];
 static uint8_t *decoded_resources[256];
@@ -35,6 +39,11 @@ static unsigned bg_stage = ~0u;
 static uint8_t bg_phase[2][8192], bg_chr[16][65536];
 static bool bg_chr_valid[16][2048], bg_chr_ready[16], bg_palette_ready[16];
 static MmxBackgroundPalette bg_palette[16];
+/* Each phase lists only what it changes. Where a stage's phases only ever
+ * increase from left to right, the art and colors a phase leaves alone are
+ * those of the phases before it (see the *Earlier lookups). */
+static bool bg_monotonic[2], bg_layered_ready[16];
+static MmxBackgroundPalette bg_layered[16];
 static int rush_ceiling[64*24];
 static bool rush_ceiling_ready;
 static bool range(size_t a, size_t n) { return a <= rom_size && n <= rom_size - a; }
@@ -469,6 +478,44 @@ const MmxSpriteAsset *MmxRenderAssetsSprite(unsigned stage, unsigned section, un
   unsigned id = sprite < 256 ? sprite_resource[sprite] : 255;
   return id < 254 && ready[id] == 1 ? &assets[id] : NULL;
 }
+/* Enemy art for an animation the native camera's section does not load.
+ *
+ * A stage loads OBJ resources by section ($1F08), and the section follows
+ * the NATIVE camera -- the world actor's. With independent co-op views the
+ * partner can stand several sections ahead: his enemies run (they are
+ * spawned for his view) but their resource was never uploaded, and the
+ * current section's table has no entry for their animation, so they drew
+ * from whatever the VRAM held there -- nothing. A miniboss woken there
+ * (Bee Blader) was invisible until its death effects.
+ *
+ * Search the stage's other sections, nearest first and forward before
+ * backward (a partner ahead is the common case), and keep a private copy:
+ * stage_assets owns one section's tables at a time and is restored before
+ * returning, so pointers handed out for the current section stay valid. */
+static const MmxSpriteAsset *other_section_sprite(unsigned stage, unsigned section, unsigned sprite) {
+  if (stage >= 13 || sprite >= 256 || !rom) return NULL;
+  if (!far_ready[stage][sprite]) {
+    far_ready[stage][sprite] = 2;
+    unsigned start = word(0x32cee + stage * 2), end = word(0x32cee + stage * 2 + 2);
+    if (end >= start && end - start <= 128) {
+      int n = (int)(end - start) / 2;
+      for (int d = 1; d < n && far_ready[stage][sprite] == 2; ++d)
+        for (int sgn = 1; sgn >= -1 && far_ready[stage][sprite] == 2; sgn -= 2) {
+          int other = (int)section + sgn * d;
+          if (other < 0 || other >= n) continue;
+          const MmxSpriteAsset *a = MmxRenderAssetsSprite(stage, (unsigned)other, sprite);
+          if (!a) continue;
+          MmxSpriteAsset *copy = malloc(sizeof(*copy));
+          if (!copy) break;
+          *copy = *a; copy->current = copy->live_tiles = copy->live_colors = false;
+          copy->unbound = true;
+          far_assets[stage][sprite] = copy; far_ready[stage][sprite] = 1;
+        }
+      stage_assets(stage, section);
+    }
+  }
+  return far_ready[stage][sprite] == 1 ? far_assets[stage][sprite] : NULL;
+}
 const MmxSpriteAsset *MmxRenderAssetsResource(unsigned stage, unsigned section, unsigned resource) {
   stage_assets(stage, section);
   return resource < 256 && ready[resource] == 1 ? &assets[resource] : NULL;
@@ -720,6 +767,11 @@ const MmxSpriteAsset *MmxRenderAssetsObjectSprite(const uint8_t ram[0x20000],
     }
   }
   const MmxSpriteAsset *asset = MmxRenderAssetsSprite(ram[0x1f7a], ram[0x1f08], animation);
+  {
+    extern bool MmxCoopViewsOnline(void);
+    if (!asset && MmxCoopViewsOnline() && object >= 0xe68 && object < 0x1d08)
+      asset = other_section_sprite(ram[0x1f7a], ram[0x1f08], animation);
+  }
   /* Dr. Light ($88:A7BB) deliberately overrides the section's tile base
    * with $20 for both the hologram and dialogue portrait. Their current
    * VRAM is authoritative; treating that offset as stale replaces the
@@ -753,6 +805,13 @@ bool MmxRenderAssetsRideArmorPalettePending(const uint8_t ram[0x20000], const ui
 /* Kind-2 $17 records select background resources. Highway/Launch project
  * CHR horizontally; they, Sting, Mammoth and Chill also project palettes. Armadillo's shaft
  * continuation requests its destination palette explicitly. */
+static void background_order(void) {
+  for (unsigned k = 0; k < 2; ++k) {
+    bg_monotonic[k] = true;
+    for (unsigned x = 1; x < 8192 && bg_monotonic[k]; ++x)
+      if (bg_phase[k][x] < bg_phase[k][x - 1]) bg_monotonic[k] = false;
+  }
+}
 static bool prepare_background(const uint8_t *ram) {
   unsigned stage = ram[0x1f7a];
   if ((stage != 0 && stage != 1 && stage != 2 && stage != 3 && stage != 4 && stage != 8) || !range(0x32280, 2)) return false;
@@ -761,6 +820,8 @@ static bool prepare_background(const uint8_t *ram) {
   memset(bg_phase, 0, sizeof(bg_phase));
   memset(bg_chr_ready, 0, sizeof(bg_chr_ready));
   memset(bg_palette_ready, 0, sizeof(bg_palette_ready));
+  memset(bg_layered_ready, 0, sizeof(bg_layered_ready));
+  bg_monotonic[0] = bg_monotonic[1] = false;
   size_t pos = 0x28000 + (word(0x282c2 + stage * 2) & 0x7fff);
   if (!range(pos, 1)) return false;
   unsigned column = rom[pos++];
@@ -792,6 +853,7 @@ static bool prepare_background(const uint8_t *ram) {
     pos += 7;
     if (x & 0x8000) { if (rom[pos] == column) break; column = rom[pos++]; }
   }
+  background_order();
   return true;
 }
 static size_t background_list(size_t base, unsigned phase) {
@@ -799,12 +861,16 @@ static size_t background_list(size_t base, unsigned phase) {
   if (end < start || phase >= (end - start) / 2) return rom_size;
   return base + word(base + start + phase * 2);
 }
+static const uint8_t *background_chr(unsigned phase, unsigned vram_word);
 const uint8_t *MmxRenderAssetsBackgroundTile(const uint8_t ram[0x20000],
                                             int world_x, unsigned vram_word) {
   if (!ram || (ram[0x1f7a] != 0 && ram[0x1f7a] != 1) || world_x < 0 || world_x >= 8192 || vram_word >= 0x8000 || !prepare_background(ram)) return NULL;
   unsigned phase = bg_phase[0][world_x];
   /* RAM records the requested phase before DMA completes. Use private
    * resources even when it matches, so margin art cannot briefly regress. */
+  return background_chr(phase, vram_word);
+}
+static const uint8_t *background_chr(unsigned phase, unsigned vram_word) {
   if (!bg_chr_ready[phase]) {
     bg_chr_ready[phase] = true;
     memset(bg_chr_valid[phase], 0, sizeof(bg_chr_valid[phase]));
@@ -865,8 +931,52 @@ const MmxBackgroundPalette *MmxRenderAssetsBackgroundPalette(const uint8_t ram[0
   if (bg_stage == 4 && (ram[0x1f96] & 0x40)) phase += 5;
   return phase < 16 ? background_palette(phase) : NULL;
 }
+/* A view far from the native camera: the native camera's section owns live
+ * VRAM and CGRAM, so CHR or colors this column's phase does not reload come
+ * from the phases before it rather than from that other section. */
+const uint8_t *MmxRenderAssetsBackgroundTileEarlier(const uint8_t ram[0x20000],
+                                                   int world_x, unsigned vram_word) {
+  if (!ram || (ram[0x1f7a] != 0 && ram[0x1f7a] != 1) || world_x < 0 || world_x >= 8192 ||
+      vram_word >= 0x8000 || !prepare_background(ram) || !bg_monotonic[0]) return NULL;
+  for (int phase = (int)bg_phase[0][world_x]; phase >= 0; --phase) {
+    const uint8_t *tile = background_chr((unsigned)phase, vram_word);
+    if (tile) return tile;
+  }
+  return NULL;
+}
+const MmxBackgroundPalette *MmxRenderAssetsBackgroundPaletteEarlier(const uint8_t ram[0x20000],
+                                                                    int world_x) {
+  if (!ram || ram[0x1f7a] != 0 || world_x < 0 || world_x >= 8192 ||
+      !prepare_background(ram) || !bg_monotonic[1]) return NULL;
+  unsigned phase = bg_phase[1][world_x];
+  if (phase >= 16) return NULL;
+  if (!bg_layered_ready[phase]) {
+    bg_layered_ready[phase] = true;
+    memset(&bg_layered[phase], 0, sizeof(bg_layered[phase]));
+    for (unsigned p = 0; p <= phase; ++p) {
+      const MmxBackgroundPalette *layer = background_palette(p);
+      for (unsigned i = 0; i < 128; ++i) if (layer->valid[i]) {
+        bg_layered[phase].colors[i] = layer->colors[i];
+        bg_layered[phase].valid[i] = true;
+      }
+    }
+  }
+  return &bg_layered[phase];
+}
 const MmxBackgroundPalette *MmxRenderAssetsBackgroundPalettePhase(const uint8_t ram[0x20000], unsigned phase) {
   return ram && phase < 16 && prepare_background(ram) ? background_palette(phase) : NULL;
+}
+void MmxRenderAssetsPrepareConcurrentDraw(const uint8_t ram[0x20000]) {
+  /* Fill every lazily built resource the scanline composer can read, so the
+   * concurrent pass only reads. Each depends on the ROM and stage alone. */
+  if (ram && prepare_background(ram)) {
+    for (unsigned phase = 0; phase < 16; ++phase) {
+      background_chr(phase, 0);
+      background_palette(phase);
+    }
+    for (int x = 0; x < 8192; x += 8) MmxRenderAssetsBackgroundPaletteEarlier(ram, x);
+  }
+  MmxRenderAssetsRushCeilingPixel(0, 0);
 }
 uint16_t MmxRenderAssetsFadeColor(uint16_t color, unsigned amount) {
   unsigned result = 0;

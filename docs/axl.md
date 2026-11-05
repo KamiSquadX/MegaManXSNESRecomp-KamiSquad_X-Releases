@@ -46,8 +46,21 @@ that are added; the one the other option holds is greyed out too. Partner
 ## X / Zero / Axl Co-op 0.0.2
 
 Player 1 and Player 2 each choose X, Zero or Axl; a character one player
-holds is greyed out for the other. Axl is not playable in co-op yet: a team
-with Axl starts as X and Zero.
+holds is greyed out for the other. Axl takes either seat, beside X or Zero,
+in local co-op and netplay, with his whole moveset and his own health,
+weapons and armor ability bar. Select stays co-op's (join, leave, teleport):
+there is no CHANGE PLAYER in co-op.
+
+Axl plays on an X body, so X and Axl are two X bodies (`MmxCoopEnablePair`);
+the compact HUD then hangs P2's meter below P1's, as it does for Zero. Each
+seat that plays Axl keeps its own `MmxAxlState`: `state` in `mmx_axl.c` is the
+seat whose body is in WRAM (`MmxCoopCurrentSeat`), so the player hooks run
+for whichever seat co-op is updating. Input and the after-frame work run once
+per Axl seat with that seat projected (`MmxCoopSelect`); a partner seat's
+shots and GigaCrash use his own screen (`MmxCoopSeatCamera`), and the renderer
+draws a partner Axl from his projected RAM (`MmxAxlSeatFrame`). Save chunk v27
+stores both seats; in co-op the roster, not the save, decides which seat is
+Axl.
 
 ## Notes for this version
 
@@ -66,7 +79,7 @@ with Axl starts as X and Zero.
 - `src/mmx_axl.c`: the moveset. Input runs before the frame; hover, air dash
   and the GigaCrash stance run in the player hooks Zero's code already calls
   (`MmxZeroSetBodyHooks`); shots and animation after the frame. The state is
-  in save chunk v26.
+  in save chunk v26 (v27 adds co-op seat 2's).
 - `src/mods/mmx_axl_plugin.c`: the launcher plugins `megaman-x.axl` and
   `megaman-x.team`.
 - `src/mmx_renderer.c`: the Axl provider replaces X's body and armor pieces,
@@ -77,4 +90,7 @@ with Axl starts as X and Zero.
   Regenerate the manifest with
   `tools/axl/make_axl_manifest.py --x8 <X8 16-bit source>`.
 - Test: `MMX_AXL_TEST=1 mmx_state_tests.exe mmx.sfc` (ctest `mmx_axl`).
+  `MMX_COOP_AXL_TEST=1` with `MMX_ZERO_TEST_ASSETS=<x3-zero cache>` boots X +
+  Axl and Axl + Zero co-op: pistol, roll, hover, drawing in either seat and a
+  byte-exact snapshot replay.
   `MMX_AXL_ZERO_ASSETS=<x3-zero cache>` adds the Axl and Zero team checks.

@@ -37,10 +37,11 @@ extern int snes_frame_counter;
 static MmxCoopState state = {.players = {{.character = MMX_COOP_X}, {.character = MMX_COOP_ZERO}}};
 static bool configured_enabled;
 #define enabled (configured_enabled && MmxBossRushCoop())
-static unsigned starting_character;
+static unsigned starting_character, partner_character = 1;
 _Static_assert(sizeof(MmxCoopPlayer) == 2276, "Co-op player save ABI");
 _Static_assert(sizeof(MmxCoopState) == 4664, "Co-op save ABI");
 static bool join_tick(uint8_t *r);
+static void door_cross(uint8_t *r,unsigned d,bool vertical);
 /* Registers the item routine passed into $84:AB81/AB56; see platform_hook. */
 static struct {bool valid;uint16_t d,s,a,x,y;uint8_t p,db;} platform_entry;
 /* --coop-trace: observation only; see mmx_coop_trace.h. */
@@ -92,6 +93,10 @@ static void diagnostic_close(DiagnosticFile *t) {
 }
 static void diagnostic_shutdown(void) {
   diagnostic_close(&physics_file);diagnostic_close(&netplay_file);
+}
+static bool rule_select_teleport, rule_shared_death;
+void MmxCoopSetViewRules(bool select_teleport, bool shared_death) {
+  rule_select_teleport=select_teleport;rule_shared_death=shared_death;
 }
 void MmxCoopSetDiagnosticsEnabled(bool active) {
   diagnostic_shutdown();
@@ -324,7 +329,7 @@ void MmxCoopReset(void) {
   memset(&state, 0, sizeof(state));
   MmxWeaponsPartnerCombat(NULL);
   state.players[0].character = (uint8_t)starting_character;
-  state.players[1].character = (uint8_t)(starting_character ^ 1);
+  state.players[1].character = (uint8_t)partner_character;
   if (enabled) {
     MmxZeroState z = {0}; z.active_x = starting_character == MMX_COOP_X;
     MmxZeroSetState(z);
@@ -336,26 +341,27 @@ static bool ghost_active(void);
 static bool zero_seat_owns_extension(void) {
   return !enabled || !state.initialized || (!ghost_active() && MmxZeroActive());
 }
-bool MmxCoopEnable(unsigned character) {
-  if (character > MMX_COOP_ZERO || !MmxZeroEnabled()) return false;
-  starting_character = character; configured_enabled = true; MmxCoopReset();
+bool MmxCoopEnable(unsigned character) { return MmxCoopEnablePair(character, character ^ 1); }
+bool MmxCoopEnablePair(unsigned character, unsigned partner) {
+  if (character > MMX_COOP_ZERO || partner > MMX_COOP_ZERO || !MmxZeroEnabled()) return false;
+  starting_character = character; partner_character = partner; configured_enabled = true; MmxCoopReset();
   MmxZeroSetExtensionGate(zero_seat_owns_extension);
   return true;
 }
 void MmxCoopDisable(void) {
-  configured_enabled = false; starting_character = 0; MmxCoopReset();
+  configured_enabled = false; starting_character = 0; partner_character = 1; MmxCoopReset();
   MmxZeroSetExtensionGate(NULL);
 }
 MmxCoopState MmxCoopGetState(void) { return state; }
 bool MmxCoopValidState(const MmxCoopState *s) {
   if (!s || s->initialized > 1 || s->current > 1 || s->controller_pass > 2 ||
-      s->effect_return>2 || s->object_reserved || s->object_pass > 2 ||
+      s->effect_return>2 || (s->teleport_cycle&7)>4 || ((s->teleport_cycle>>4)&7)>4 || s->object_pass > 2 ||
       s->platform_riders > 3 || s->contact_pass > 2 || s->enrolled>1 ||
       s->select_hold>180 || s->select_armed>1 || s->stage_pending>2 || /* Accept older 3-second hold saves. */
       s->menu_owner>2 || s->menu_last>1 || s->p1_select_hold>90 || s->p1_select_armed>1 ||
-      s->pickup_pass>2 || s->pickup_reserved[0] || s->pickup_reserved[1] || s->pickup_reserved[2] ||
+      s->pickup_pass>2 || s->teleport_seat>2 ||
       s->anchor>1 || s->solo_death[0]>1 || s->solo_death[1]>1 || s->respawn_pending>3 ||
-      s->scene_owner>2 || s->scene_phase>3 || s->door_pass>2 || s->scene_reserved || s->slime_p2>255 ||
+      s->scene_owner>2 || s->scene_phase>3 || s->door_pass>2 || s->scene_stay>1 || s->slime_p2>255 ||
       (s->scene_phase && !s->scene_owner) ||
       (s->door_pass && s->door_entry!=0xe70d && s->door_entry!=0xec98 && s->door_entry!=0xc0ae)) return false;
   for(unsigned i=0;i<16;++i) if(s->pickup_owner[i]>2) return false;
@@ -374,7 +380,26 @@ bool MmxCoopValidState(const MmxCoopState *s) {
     if (s->initialized && p->zero.active_x != (p->character == MMX_COOP_X)) return false;
     for (unsigned n = 1; n < 16; n += 2) if (p->energy[n] > 28) return false;
   }
-  return s->players[0].character != s->players[1].character;
+  /* Two X bodies only when one of them plays Axl. */
+  return s->players[0].character != s->players[1].character ||
+      (s->players[0].character == MMX_COOP_X && starting_character == partner_character);
+}
+unsigned MmxCoopCurrentSeat(void) { return state.current; }
+void MmxCoopSeatCamera(unsigned seat,int *x,int *y) {
+  extern uint8_t g_ram[0x20000];
+  MmxCoopView v=MmxCoopViewForPlayer(g_ram,&state,seat&1);*x=v.x;*y=v.y;
+}
+bool MmxCoopSeatReady(unsigned seat) {
+  return enabled && state.initialized && seat < 2 && state.players[seat].status == MMX_COOP_ALIVE;
+}
+uint8_t MmxCoopSeatShotMask(unsigned seat) {
+  extern uint8_t g_ram[0x20000];
+  uint8_t mask = 0;
+  if (seat > 1) return 0;
+  const uint8_t *shots = enabled && state.initialized && seat != state.current ?
+      state.players[seat].shots : g_ram + 0x1228;
+  for (unsigned i = 0; i < 8; ++i) if (shots[i * 64]) mask |= (uint8_t)(1u << i);
+  return mask;
 }
 void MmxCoopSetState(const MmxCoopState *s) {
   platform_entry.valid=false;lift_reset();shot_ghost_reset();
@@ -429,11 +454,18 @@ bool MmxCoopSelect(uint8_t *r, unsigned player) {
  * co-op hook behind each seat switch (select-before rows, caller column). */
 #define MmxCoopSelect(r,player) (select_line=__LINE__,MmxCoopSelect((r),(player)))
 static void select_world_survivor(uint8_t *r) {
+  /* Shared death: the dying player keeps the world; the team restarts. */
+  if(rule_shared_death && MmxCoopViewsOnline()) return;
   unsigned other=state.anchor^1;
   if(state.current==state.anchor && !(r[0xbcf]&127) &&
       state.players[other].status==MMX_COOP_ALIVE && (state.players[other].body[0x27]&127)) {
     /* World scripts must see the living actor during the other seat's death
      * countdown, not only after its orbs have finished spawning. */
+    /* Independent views: he keeps his own screen. Left on the dead world
+     * actor's camera, its limits clamped him across the stage (X at the
+     * start was pushed to x=1288 above a pit when Zero fell in Kuwanger's
+     * shaft) and the team restarted. */
+    MmxCoopViewsAdoptSeatView(r,&state,other);
     state.anchor=(uint8_t)other;MmxCoopSelect(r,other);
   }
 }
@@ -479,6 +511,63 @@ void MmxCoopInitialize(uint8_t *r) {
   MmxWeaponsPartnerCombat(&partner->combat);
 }
 static void lift_close(void);
+static bool world_scripted(const uint8_t *r);
+static bool boss_fight(const uint8_t *r);
+static const uint8_t *seat_body(const uint8_t *r,unsigned seat);
+/* Independent views: a boss/miniboss encounter only spawns inside the world
+ * actor's view, because its intro seizes the native camera. When the partner
+ * reaches one first, the world (native camera, scripts) passes to him before
+ * it wakes, as a door does (door_hook), so the fight runs around the player
+ * who is actually there and the other keeps his own screen. */
+static void encounter_handoff(uint8_t *r) {
+  extern int MmxCoopViewsEncounterSeat(const MmxCoopState *);
+  if(!MmxCoopViewsOnline() || state.scene_owner || state.stage_pending || state.menu_owner ||
+      state.door_pass || r[0xd3]!=4 || r[0x1f0c] || r[0x1f19] || r[0x1f23] || r[0x1f48] ||
+      world_scripted(r) || boss_fight(r) || (r[0xe18] && (r[0xe22]&0x40))) return;
+  int seat=MmxCoopViewsEncounterSeat(&state);
+  if(seat<0 || (unsigned)seat==state.anchor) return;
+  const uint8_t *b=(unsigned)seat==state.current?r+0xba8:state.players[seat].body;
+  if(state.players[seat].status!=MMX_COOP_ALIVE || !(b[0x27]&127) || b[2]==12 || b[0x6e]) return;
+  if(!MmxCoopViewsAdoptPlayer(r,&state,(unsigned)seat)) return;
+  TRACE(DOOR,0,3,(unsigned)seat,NULL);
+  state.anchor=(uint8_t)seat;MmxCoopSelect(r,(unsigned)seat);
+}
+/* Independent views: objects whose script moves the NATIVE camera, which is
+ * the world actor's. Kuwanger's main elevator ($3D) sets the camera targets
+ * to its shaft as it starts. (Highway's airship wakes as an encounter:
+ * MmxViewWorldEncounter.) Reached by the partner alone, they dragged the world
+ * actor's screen across the stage: he fell out of his view and died, the
+ * elevator stalled, and the partner's screen went black. The world passes to
+ * the partner as he reaches one (before boarding sets those targets: handing
+ * over afterwards replaced them and stalled the lift), like an encounter
+ * (encounter_handoff). The other player keeps his own screen. */
+static const struct { uint8_t stage, kind; int16_t left, right, above, below; } camera_objects[]={
+  {7,0x3d,-96,96,96,16},     /* Kuwanger's main elevator: standing on or beside it. */
+};
+static void camera_object_handoff(uint8_t *r) {
+  if(!MmxCoopViewsOnline() || state.scene_owner || state.stage_pending || state.menu_owner ||
+      state.door_pass || r[0xd3]!=4 || boss_fight(r)) return;
+  unsigned other=state.anchor^1u;
+  const MmxCoopPlayer *p=&state.players[other];
+  const uint8_t *ob=seat_body(r,other),*ab=seat_body(r,state.anchor);
+  if(p->status!=MMX_COOP_ALIVE || !(ob[0x27]&127) || p->zero.swap_phase) return;
+  for(unsigned d=0xe68;d<0x1228;d+=64) if(r[d])
+    for(unsigned i=0;i<sizeof(camera_objects)/sizeof(camera_objects[0]);++i) {
+      if(camera_objects[i].stage!=r[0x1f7a] || camera_objects[i].kind!=r[d+10]) continue;
+      int ex=(int)word(r+d+5),ey=(int)word(r+d+8);
+      int pdx=(int)word(ob+5)-ex,pdy=ey-(int)word(ob+8);
+      int adx=(int)word(ab+5)-ex,ady=ey-(int)word(ab+8);
+      bool partner=pdx>camera_objects[i].left && pdx<camera_objects[i].right &&
+          pdy>-camera_objects[i].below && pdy<camera_objects[i].above;
+      /* The world actor counts as there anywhere near his screen. */
+      bool anchor=adx>camera_objects[i].left-64 && adx<camera_objects[i].right+64 &&
+          ady>-camera_objects[i].below-64 && ady<camera_objects[i].above+64;
+      if(!partner || anchor) continue;
+      if(!MmxCoopViewsAdoptPlayer(r,&state,other)) return;
+      TRACE(DOOR,0,4,other,NULL);
+      state.anchor=(uint8_t)other;MmxCoopSelect(r,other);return;
+    }
+}
 static bool input_previous_valid[2]; /* see MmxCoopApplyInput */
 static uint16_t input_previous[2];
 static bool lock_holder_alive(const uint8_t *r);
@@ -518,6 +607,8 @@ bool MmxCoopFrameTick(uint8_t *r) {
     memset(state.pickup_owner,0,sizeof(state.pickup_owner));state.pickup_pass=0;
     memset(state.solo_death,0,sizeof(state.solo_death));state.respawn_pending=0;
     state.scene_owner=state.scene_phase=state.door_pass=0;
+    state.scene_stay=state.teleport_seat=state.teleport_cycle=0;
+    state.select_long[0]=state.select_long[1]=0;
     MmxCoopPlayer *p=&state.players[1];p->status=MMX_COOP_ABSENT;
     /* Match native P1's buster reset, for X1 and imported selections alike.
      * Voluntary withdrawal and scene transport retain their own selection. */
@@ -584,6 +675,8 @@ bool MmxCoopFrameTick(uint8_t *r) {
   if (scene_tick(r)) return true;
   if (!state.scene_owner && join_tick(r)) return true;
   if (r[0x1f10]>=6) return false;
+  encounter_handoff(r);
+  camera_object_handoff(r);
   MmxCoopViewsUpdateBounds(r,&state);
   unsigned phases[2]={0,0};
   for (unsigned seat=0;seat<2;++seat) if (state.players[seat].status==MMX_COOP_ALIVE &&
@@ -779,6 +872,7 @@ static bool boss_fight(const uint8_t *r) {
   for(unsigned d=0xe68;d<0x1228;d+=64) {
     unsigned c=r[d+10];
     if(r[d] && (MmxWidePolicy_IsBossEncounter((uint8_t)c) || c==0x26 || c==0x67 ||
+        (c==0x32 && r[0x1f7a]==0) /* Highway Vile, ride armor */ ||
         c==0x69 || c==0x01 /* Sting Chameleon's miniboss, $83:AE81 */)) return true;
   }
   return false;
@@ -907,10 +1001,26 @@ static bool world_script_object(unsigned d) {
   }
   return false;
 }
+/* The partner is on (or just off) the world actor's screen. */
+static bool partner_near_anchor(const uint8_t *r) {
+  unsigned other=state.anchor^1;
+  const uint8_t *b=other==state.current?r+0xba8:state.players[other].body;
+  int dx=(int16_t)(word(b+5)-word(r+0x1e4d)),dy=(int16_t)(word(b+8)-word(r+0x1e50));
+  return dx>=-32 && dx<256+32 && dy>=-32 && dy<224+32;
+}
 static void begin_scene(uint8_t *r) {
   unsigned other=state.anchor^1;
   if(state.scene_owner || state.players[other].status!=MMX_COOP_ALIVE ||
       !(state.players[other].body[0x27]&127)) return;
+  if(MmxCoopViewsOnline() && !partner_near_anchor(r)) {
+    /* Independent views: a door, boss intro or other scene belongs to the
+     * player who is there. A partner elsewhere is not pulled into it; he
+     * waits where he stands, with his own camera, until it ends. */
+    MmxCoopCapture(r);
+    state.scene_owner=(uint8_t)(state.anchor+1);state.scene_phase=2;state.scene_stay=1;
+    TRACE(SCENE,0,4,state.scene_owner,NULL);
+    return;
+  }
   MmxCoopSelect(r,other);MmxZeroCancel(r);MmxWeaponsCancelShots(r);
   memset(r+0xc98,0,0x180);MmxCoopSelect(r,state.anchor);
   MmxZeroState *z=&state.players[other].zero;
@@ -985,7 +1095,7 @@ static bool scene_tick(uint8_t *r) {
   }
   if(!state.scene_owner) return false;
   MmxCoopPlayer *p=&state.players[state.anchor^1];
-  if(p->status!=MMX_COOP_ALIVE) {state.scene_owner=state.scene_phase=0;return false;}
+  if(p->status!=MMX_COOP_ALIVE) {state.scene_owner=state.scene_phase=state.scene_stay=0;return false;}
   if(state.scene_phase==1 || state.scene_phase==3) {
     if(teleport_tick(r,p)) {
       if(state.scene_phase==1) state.scene_phase=2;
@@ -995,6 +1105,12 @@ static bool scene_tick(uint8_t *r) {
     r[0xb9d]=r[0xba0]=0;return true;
   }
   if(!vile_capture(r) && !r[0x1f0c] && !r[0xc16] && !r[0x1f23] && !r[0x1f13] && !r[0x1f48] && r[0x1f10]<6 && r[0xd3]==4) {
+    if(state.scene_stay) {
+      /* He sat it out: carry on from where he stood. */
+      state.scene_owner=state.scene_phase=state.scene_stay=0;
+      state.select_armed=state.select_hold=state.p1_select_armed=state.p1_select_hold=0;
+      return false;
+    }
     uint16_t x,y;
     if(!MmxCoopFindLanding(r,&x,&y)) return false;
     place_other(r,x,y,true);p=&state.players[state.anchor^1];
@@ -1029,6 +1145,16 @@ static void door_hook(CpuState *cpu,uint32_t pc) {
   if(!state.door_pass || cpu->S!=state.door_s || cpu->D!=state.door_d) return;
   TRACE(DOOR,pc,state.door_pass,0,cpu);
   if(at==0xe725 || at==0xecc7) {
+    if(state.current!=state.anchor && MmxCoopViewsOnline() && !partner_near_anchor(g_ram)) {
+      /* Independent views: the partner opens a door only for himself. The
+       * world actor keeps the native door, camera and any fight beyond it;
+       * the partner steps through to the far side. A door never opens from
+       * the inside, as natively. */
+      door_cross(g_ram,state.door_d,at==0xecc7);
+      MmxCoopSelect(g_ram,state.anchor);state.door_pass=0;
+      interp_bridge_pre_opcode_redirect((pc&0xff0000)|(at-1));
+      return;
+    }
     MmxCoopViewsAdoptPlayer(g_ram,&state,state.current);
     state.anchor=state.current;state.door_pass=0;begin_scene(g_ram);return;
   }
@@ -1535,6 +1661,296 @@ static bool living_on_screen(const uint8_t *r,unsigned seat) {
   return p->status==MMX_COOP_ALIVE && (b[0x27]&127) && b[2]!=12 &&
       !p->zero.swap_phase && x+12>0 && x-12<256 && y+16>0 && y+16-height<224;
 }
+/* ---- Select teleport (Independent netplay cameras settings) -------------
+ * A tap of Select beams a player to the other player's screen, using the same
+ * beam as joining; the world pauses while it runs, so nothing can hurt him.
+ * Coming from off that screen he lands on the edge he came from; already on
+ * it, at the other player's ground level. Tapping again before moving cycles
+ * the landing: left edge, right edge, the other player's level, then his own
+ * footing. Every landing must be on the route: walkable to the other player
+ * without a wall taller than a plain jump (a pit behind a pillar is not).
+ * Holding Select for five seconds beams him to the stage's start instead. */
+enum { TP_LEFT, TP_RIGHT, TP_LEVEL, TP_ROUTE, TP_START, TP_CHOICES=4 };
+enum { TP_STEP_UP=32, TP_TAP=12, TP_HOLD=150 }; /* pixels; 2-frame units */
+static const uint8_t *seat_body(const uint8_t *r,unsigned seat) {
+  return seat==state.current?r+0xba8:state.players[seat].body;
+}
+static int body_height(unsigned seat) { return state.players[seat].character==MMX_COOP_ZERO?44:36; }
+static bool ground_type(unsigned type) {
+  return type==0x13 || (type>=1 && type<=12) || (type>=0x34 && type<=0x38) || (type>=0x3b && type<=0x3d);
+}
+/* Terrain-only standing test: solid ground whose surface is `floor`, with
+ * room above it for the body. */
+static bool ground_at(const uint8_t *r,int x,int floor,int height) {
+  int surface=0;
+  if(!ground_type(MmxWeaponsTerrainClass(r,x,floor)) ||
+      !MmxWeaponsTerrainSolid(r,x,floor,true,&surface) || surface!=floor) return false;
+  for(int y=floor-height;y<floor;y+=4) for(int dx=-10;dx<=10;dx+=5) {
+    unsigned t=MmxWeaponsTerrainClass(r,x+dx,y);
+    if((t>=0x33 && t!=0x39 && t!=0x3a) || MmxWeaponsTerrainSolid(r,x+dx,y,true,NULL)) return false;
+  }
+  return true;
+}
+/* A standing place for a body `height` tall at column x, with its feet at
+ * row `feet` or as near it as the window [top,bottom) allows: the terrain
+ * rules of MmxCoopFindLanding, away from any enemy. */
+static bool stand_at(const uint8_t *r,int x,int feet,int top,int bottom,int height,int *out) {
+  for(int k=0;k<=2*(bottom-top);++k) {
+    int floor=feet+((k&1)?(k+1)/2:-(k/2));
+    if(floor-height<top || floor>=bottom) {
+      if(feet-(k+1)/2<top && feet+(k+1)/2>=bottom) break;
+      continue;
+    }
+    if(!ground_at(r,x,floor,height)) continue;
+    bool clear=true;
+    for(unsigned d=0xe18;d<0x1228 && clear;d+=(d==0xe18?0x50:64)) if(r[d]) {
+      int dx=(int)word(r+d+5)-x,dy=(int)word(r+d+8)-(floor-16);
+      if(dx>-28 && dx<28 && dy>-40 && dy<32) clear=false;
+    }
+    if(clear) {*out=floor;return true;}
+  }
+  return false;
+}
+/* Walk from (x,floor) to the column tx: level ground, a step up no taller
+ * than a plain jump, or a drop onto ground within the screen. Reaching tx
+ * within a jump of `tfloor` puts the place on the route. */
+static bool on_route(const uint8_t *r,int x,int floor,int tx,int tfloor,int height,MmxCoopView v) {
+  int step=tx>x?4:-4;
+  while(step>0?x<tx:x>tx) {
+    x+=step;if(step>0?x>tx:x<tx) x=tx;
+    int next=-1;
+    for(int f=floor;f>=floor-TP_STEP_UP && next<0;--f) if(ground_at(r,x,f,height)) next=f;
+    if(next<0) {
+      /* Nothing at or just above: fall to the first ground below. */
+      for(int y=floor+1;y<v.y+224+32 && next<0;y+=8) {
+        int surface=0;
+        if(MmxWeaponsTerrainSolid(r,x,y,true,&surface) && surface>floor && surface<=y) {
+          if(!ground_at(r,x,surface,height)) return false;
+          next=surface;
+        }
+      }
+      if(next<0) return false;
+    }
+    floor=next;
+  }
+  return floor>=tfloor-TP_STEP_UP && floor<=tfloor+TP_STEP_UP;
+}
+/* A standing place at column x whose floor lies in [lo,hi] (and on the
+ * screen), on the route to the other player at (ox,ofeet). */
+static bool route_spot(const uint8_t *r,int x,int feet,int lo,int hi,int height,
+                       int ox,int ofeet,MmxCoopView v,int *floor) {
+  int top=lo-height,bottom=hi+1;
+  if(top<v.y) top=v.y;
+  if(bottom>v.y+224) bottom=v.y+224;
+  return stand_at(r,x,feet,top,bottom,height,floor) && on_route(r,x,*floor,ox,ofeet,height,v);
+}
+/* The landing for `choice` on the other player's screen. */
+static bool teleport_spot(const uint8_t *r,unsigned seat,unsigned choice,uint16_t *out_x,uint16_t *out_y) {
+  unsigned other=seat^1;
+  const uint8_t *ob=seat_body(r,other);
+  MmxCoopView v=MmxCoopViewForPlayer(r,&state,other);
+  int ox=(int)word(ob+5),feet=(int)word(ob+8)+16,height=body_height(seat),floor=0;
+  /* His footing: where he stands, or the ground under him when airborne. */
+  int ofeet=feet;
+  if(!(ob[0x2b]&4)) {
+    int f;
+    if(!stand_at(r,ox,feet,feet,v.y+224,height,&f)) {
+      if(choice==TP_ROUTE) return false;
+      f=feet;
+    }
+    ofeet=f;
+  }
+  switch(choice) {
+    case TP_LEFT: case TP_RIGHT: {
+      bool right=choice==TP_RIGHT;
+      int edge=right?v.x+256-20:v.x+20,step=right?-4:4;
+      /* His own level first, from the edge inward; then any ground. */
+      for(int pass=0;pass<2;++pass)
+        for(int x=edge;right?x>ox+24:x<ox-24;x+=step)
+          if(route_spot(r,x,ofeet,pass?v.y:ofeet-24,pass?v.y+224:ofeet+24,height,ox,ofeet,v,&floor)) {
+            *out_x=(uint16_t)x;*out_y=(uint16_t)(floor-16);return true;
+          }
+      return false;
+    }
+    case TP_LEVEL: {
+      /* Beside him at his own level, the nearer side first. */
+      int side=(int)word(seat_body(r,seat)+5)<ox?-1:1;
+      for(int n=32;n<=128;n+=4) for(int k=0;k<2;++k) {
+        int x=ox+(k?-side:side)*n;
+        if(x<v.x+16 || x>v.x+240) continue;
+        if(route_spot(r,x,ofeet,ofeet-8,ofeet+8,height,ox,ofeet,v,&floor)) {
+          *out_x=(uint16_t)x;*out_y=(uint16_t)(floor-16);return true;
+        }
+      }
+      return false;
+    }
+    case TP_ROUTE:
+      /* Wherever he stands is on the route, terrain or not (Bee Blader's
+       * wreck is an object, with no ground in the map beneath it). */
+      if(ob[0x2b]&4) {*out_x=(uint16_t)ox;*out_y=(uint16_t)word(ob+8);return true;}
+      if(!ground_at(r,ox,ofeet,height)) return false;
+      *out_x=(uint16_t)ox;*out_y=(uint16_t)(ofeet-16);return true;
+  }
+  return false;
+}
+/* The stage's own start, as entered from stage select (checkpoint 0). */
+static bool start_spot(const uint8_t *r,unsigned seat,uint16_t *out_x,uint16_t *out_y,int limits[4]) {
+  int x,y;
+  if(!MmxCoopViewsStageStart(r[0x1f7a],&x,&y,limits)) return false;
+  int floor;
+  if(!stand_at(r,x,y,y,limits[3]+224,body_height(seat),&floor)) return false;
+  *out_x=(uint16_t)x;*out_y=(uint16_t)(floor-16);return true;
+}
+static unsigned cycle_get(unsigned seat) { return (state.teleport_cycle>>(seat*4))&15; }
+static void cycle_set(unsigned seat,unsigned v) {
+  state.teleport_cycle=(uint8_t)((state.teleport_cycle&~(15u<<(seat*4)))|(v&15)<<(seat*4));
+}
+static bool teleport_ready(const uint8_t *r,unsigned seat,bool start) {
+  if(!rule_select_teleport || !MmxCoopViewsOnline() || MmxBossRushActive() || state.teleport_seat ||
+      refill_paused(r)) return false;
+  unsigned other=seat^1;
+  const MmxCoopPlayer *p=&state.players[seat],*o=&state.players[other];
+  if(p->status!=MMX_COOP_ALIVE || p->zero.swap_phase || o->zero.swap_phase) return false;
+  const uint8_t *b=seat_body(r,seat),*ob=seat_body(r,other);
+  bool partner=o->status==MMX_COOP_ALIVE && (ob[0x27]&127) && ob[2]!=12;
+  if(!(b[0x27]&127) || (!start && !partner)) return false;
+  /* Standing or walking on the ground: not jumping, dashing, hurt ($0E),
+   * collecting ($18), dead, piloting, held by a script or recoiling. */
+  if(!(b[0x2b]&4) || (b[2]!=0 && b[2]!=2 && b[2]!=4) || b[0x30] || b[0x6e]) return false;
+  /* Not attacking: no shot/saber button held and no saber swing running. */
+  if((p->input&2) || p->zero.slash || p->zero.burst) return false;
+  /* Not in a fight or held by its walls: the world actor drives any boss
+   * fight, and a partner inside the arena (on its screen) is in it too. */
+  return !boss_fight(r) || (seat!=state.anchor && !partner_near_anchor(r));
+}
+static bool on_partner_screen(const uint8_t *r,unsigned seat) {
+  const uint8_t *b=seat_body(r,seat);
+  MmxCoopView v=MmxCoopViewForPlayer(r,&state,seat^1);
+  int dx=(int)word(b+5)-v.x,dy=(int)word(b+8)-v.y;
+  return dx>=0 && dx<256 && dy>=0 && dy<224;
+}
+/* Pick this tap's landing: the next in the cycle when he has not moved since
+ * the last one, else by where he stands. Unavailable choices are skipped; a
+ * first tap with no level spot takes the other player's own footing. */
+static bool teleport_choose(const uint8_t *r,unsigned seat,unsigned *choice) {
+  unsigned c=cycle_get(seat);
+  uint16_t x,y;
+  unsigned order[TP_CHOICES];
+  if((c&8) && (c&7)<TP_CHOICES) {
+    for(unsigned n=0;n<TP_CHOICES;++n) order[n]=((c&7)+1+n)%TP_CHOICES;
+  } else if(on_partner_screen(r,seat)) {
+    order[0]=TP_LEVEL;order[1]=TP_ROUTE;order[2]=TP_LEFT;order[3]=TP_RIGHT;
+  } else {
+    bool right=(int)word(seat_body(r,seat)+5)>(int)word(seat_body(r,seat^1)+5);
+    order[0]=right?TP_RIGHT:TP_LEFT;order[1]=TP_LEVEL;order[2]=TP_ROUTE;order[3]=right?TP_LEFT:TP_RIGHT;
+  }
+  for(unsigned n=0;n<TP_CHOICES;++n)
+    if(teleport_spot(r,seat,order[n],&x,&y)) {*choice=order[n];return true;}
+  return false;
+}
+static void teleport_begin(uint8_t *r,unsigned seat,unsigned choice) {
+  MmxCoopPlayer *p=&state.players[seat];
+  if(seat==state.anchor && choice!=TP_START) {state.anchor=(uint8_t)(seat^1);MmxCoopSelect(r,state.anchor);}
+  clear_player_combat(r,seat);
+  cycle_set(seat,choice);
+  state.teleport_seat=(uint8_t)(seat+1);
+  MmxZeroState *z=&p->zero;z->swap_phase=1;z->swap_tick=z->swap_fraction=0;z->swap_y=0;
+  state.select_armed=state.select_hold=state.p1_select_armed=state.p1_select_hold=0;
+  state.select_long[0]=state.select_long[1]=0;
+  sound(r,0x0f);r[0xb9d]=r[0xba0]=0;
+}
+static void teleport_flight(uint8_t *r,unsigned seat) {
+  MmxCoopPlayer *p=&state.players[seat];
+  MmxZeroState *z=&p->zero;
+  int camera_y=MmxCoopViewForPlayer(r,&state,seat).y;
+  switch(z->swap_phase) {
+    case 1: if(++z->swap_tick==7) {z->swap_phase=2;z->swap_tick=0;} return;
+    case 2: {
+      int fixed=z->swap_y*256+z->swap_fraction-0x0aa6;
+      z->swap_y=(int16_t)((fixed-255)/256);z->swap_fraction=(uint8_t)(fixed-z->swap_y*256);
+      uint8_t *b=seat==state.current?r+0xba8:p->body;
+      if((int)word(b+8)-camera_y+z->swap_y >= -40) return;
+      /* Off the top of his screen: come down at the chosen place. */
+      uint16_t x=(uint16_t)word(b+5),y=(uint16_t)word(b+8);
+      unsigned choice=cycle_get(seat)&7;
+      int limits[4];
+      bool start=choice==TP_START && start_spot(r,seat,&x,&y,limits);
+      if(!start && state.players[seat^1].status==MMX_COOP_ALIVE) {
+        if(choice==TP_START) choice=TP_ROUTE;
+        if(!teleport_spot(r,seat,choice,&x,&y) && !teleport_spot(r,seat,choice=TP_ROUTE,&x,&y)) {
+          const uint8_t *ob=seat_body(r,seat^1);x=(uint16_t)word(ob+5);y=(uint16_t)word(ob+8);
+        }
+      }
+      putword(b+5,x);putword(b+8,y);putword(b+0x22,x);putword(b+0x24,y);
+      b[4]=b[7]=0;memset(b+0x1a,0,6);b[0x2b]=4;
+      if(start) MmxCoopViewsSetSeatLimits(r,&state,seat,limits);
+      else if(state.players[seat^1].status==MMX_COOP_ALIVE) MmxCoopViewsCopyBounds(r,&state,seat,seat^1);
+      /* He stays in the cycle only while standing where it put him. */
+      cycle_set(seat,start || choice>=TP_CHOICES?0:(choice|8));
+      camera_y=MmxCoopViewForPlayer(r,&state,seat).y;
+      z->swap_phase=4;z->swap_y=(int16_t)(camera_y-(int)y-40);z->swap_tick=z->swap_fraction=0;
+      sound(r,0x0e);
+      return;
+    }
+    case 4: z->swap_y+=8;if(z->swap_y>=0) {z->swap_y=0;z->swap_phase=5;z->swap_tick=0;} return;
+    case 5: if(++z->swap_tick==7) {z->swap_phase=0;state.teleport_seat=0;} return;
+    default: z->swap_phase=0;state.teleport_seat=0;return;
+  }
+}
+/* Select under the teleport rule: a tap teleports, five seconds held beams
+ * him to the stage start. Holding Select to withdraw is not used then. */
+static bool teleport_select(uint8_t *r,unsigned seat) {
+  MmxCoopPlayer *p=&state.players[seat];
+  uint8_t *parity=seat?&state.select_hold:&state.p1_select_hold;
+  uint8_t *armed=seat?&state.select_armed:&state.p1_select_armed;
+  uint8_t *held=&state.select_long[seat];
+  unsigned c=cycle_get(seat);
+  const uint8_t *b=seat_body(r,seat);
+  /* Leaving the landing (moving, jumping, being knocked) ends the cycle. */
+  if((c&8) && ((p->pressed&~4u) || !(b[0x2b]&4) || b[2]>4)) cycle_set(seat,c&7);
+  if(p->input&4) {
+    if(!*armed || *held==255) return false;
+    *parity^=1;
+    if(!*parity && ++*held>=TP_HOLD) {
+      *held=255;
+      uint16_t x,y;int limits[4];
+      bool partner=state.players[seat^1].status==MMX_COOP_ALIVE;
+      if(teleport_ready(r,seat,true) && start_spot(r,seat,&x,&y,limits) &&
+          (seat!=state.anchor || !partner || MmxCoopViewsAdoptPlayer(r,&state,seat^1))) {
+        /* The other player keeps the world where he is. */
+        if(seat==state.anchor && partner) {state.anchor=(uint8_t)(seat^1);MmxCoopSelect(r,state.anchor);}
+        teleport_begin(r,seat,TP_START);return true;
+      }
+      sound(r,0x74); /* $00:F1E4 password rejection. */
+    }
+    return false;
+  }
+  unsigned frames=*held==255?255u:*held*2u+*parity;
+  *held=0;*parity=0;*armed=1;
+  if(!frames || frames>TP_TAP*2 || !teleport_ready(r,seat,false)) return false;
+  unsigned choice;
+  if(!teleport_choose(r,seat,&choice) ||
+      (seat==state.anchor && !MmxCoopViewsAdoptPlayer(r,&state,seat^1))) {
+    sound(r,0x74);return false;
+  }
+  teleport_begin(r,seat,choice);return true;
+}
+/* Partner-only door crossing (independent views): step through to the far
+ * side of the door actor at `d`, onto ground there when there is some. */
+static void door_cross(uint8_t *r,unsigned d,bool vertical) {
+  uint8_t *b=r+0xba8;
+  int x=(int)word(b+5),y=(int)word(b+8),dx=(int)word(r+d+5),dy=(int)word(r+d+8);
+  int height=state.players[state.current].character==MMX_COOP_ZERO?44:36,floor;
+  if(vertical) y=y>dy?dy-48:dy+48;
+  else {
+    int side=x<dx?1:-1;
+    x=dx+side*40;
+    for(int n=0;n<48;n+=4)
+      if(stand_at(r,dx+side*(40+n),y+16,y+16-32,y+16+32,height,&floor)) {x=dx+side*(40+n);y=floor-16;break;}
+  }
+  putword(b+5,(unsigned)x);putword(b+8,(unsigned)y);putword(b+0x22,(unsigned)x);putword(b+0x24,(unsigned)y);
+  b[4]=b[7]=0;memset(b+0x1a,0,6);
+}
 /* A fallen player's Select asks to return beside the partner for one of the
  * team's spare lives ($1F80: $80:9B43 spends one per checkpoint restart, the
  * 1-up adds one at $81:E4B3). Never during a boss or miniboss fight. The
@@ -1564,6 +1980,7 @@ static bool join_tick(uint8_t *r) {
   for(unsigned seat=0;seat<2;++seat) {
     MmxCoopPlayer *p=&state.players[seat];
     if (!p->zero.swap_phase) continue;
+    if (state.teleport_seat==seat+1u) {teleport_flight(r,seat);r[0xb9d]=r[0xba0]=0;return true;}
     unsigned phase=p->zero.swap_phase;
     if (teleport_tick(r,p)) {
       if(phase==2) p->status=MMX_COOP_ABSENT;
@@ -1586,6 +2003,12 @@ static bool join_tick(uint8_t *r) {
     MmxCoopPlayer *p=&state.players[seat];
     uint8_t *hold=seat ? &state.select_hold : &state.p1_select_hold;
     uint8_t *armed=seat ? &state.select_armed : &state.p1_select_armed;
+    /* Independent views with the teleport rule: Select teleports instead of
+     * withdrawing (a fallen player's Select still asks to respawn). */
+    if (p->status==MMX_COOP_ALIVE && rule_select_teleport && MmxCoopViewsOnline() && !MmxBossRushActive()) {
+      if (teleport_select(r,seat)) return true;
+      continue;
+    }
     if (!(p->input&4)) {*armed=1;*hold=0;}
     if (p->status==MMX_COOP_FALLEN) {*hold=0;if(respawn_tick(r,seat)) return true;continue;}
     if (!living_on_screen(r,seat^1)) {*hold=0;continue;}
@@ -1745,6 +2168,23 @@ static void pickup_hook(CpuState *cpu,uint32_t pc) {
     if(state.pickup_owner[slot]) {
       if(state.pickup_owner[slot]-1u!=state.current) TRACE(PICKUP,pc,5,slot,cpu);
       MmxCoopSelect(g_ram,state.pickup_owner[slot]-1);
+    } else if(g_ram[d] && g_ram[d+10]==0x09 && MmxCoopViewsOnline() && !state.scene_owner &&
+        !state.stage_pending && g_ram[0xd3]==4) {
+      /* Highway's crumbling road pieces (item $09) only test the projected
+       * body. With independent views the partner can be the one walking on
+       * them far from the world actor, so they update against the nearest
+       * living player (restored at $D2ED/$D31B, as for pickups). */
+      unsigned nearest=state.anchor;uint64_t best=UINT64_MAX;
+      int ex=word(g_ram+d+5),ey=word(g_ram+d+8);
+      for(unsigned seat=0;seat<2;++seat) {
+        const MmxCoopPlayer *p=&state.players[seat];
+        const uint8_t *b=seat==state.current?g_ram+0xba8:p->body;
+        if(p->status!=MMX_COOP_ALIVE || !(b[0x27]&127) || b[2]==12 || p->zero.swap_phase) continue;
+        int64_t dx=(int)word(b+5)-ex,dy=(int)word(b+8)-ey;
+        uint64_t distance=(uint64_t)(dx*dx+dy*dy);
+        if(distance<best) {best=distance;nearest=seat;}
+      }
+      if(nearest!=state.current) MmxCoopSelect(g_ram,nearest);
     }
     return;
   }
@@ -2101,7 +2541,11 @@ static void constrain_player(uint8_t *r) {
      * controller against the same authored room bounds before averaging.
      * Treat left-edge underflow as negative, not as a jump to $FFFF. */
     int limits[4];MmxCoopViewsPlayerLimits(r,&state,state.current,limits);
-    int x=(int16_t)word(r+0xbad),lo=limits[0]+8,hi=limits[1]+248;
+    /* Widescreen shows `margin` more pixels past each camera edge; the
+     * players may walk to the visible edge (see MmxWsPlayerEdgeHook). */
+    const int margin=MmxWsPlayerEdgeMargin();
+    int x=(int16_t)word(r+0xbad),lo=limits[0]+8-margin,hi=limits[1]+248+margin;
+    if(margin && lo<8) lo=8;
     if(hi<lo) return;
     int limited=x<lo?lo:x>hi?hi:x;
     if(x!=limited) {putword(r+0xbad,(unsigned)limited);r[0xbac]=0;putword(r+0xbc2,0);}
@@ -2116,7 +2560,9 @@ static void constrain_player(uint8_t *r) {
   if (!shared_screen()) return;
   const MmxCoopPlayer *other=&state.players[state.current^1];
   int x=word(r+0xbad),ox=word(other->body+5);
-  int limited=x<ox-224 ? ox-224 : x>ox+224 ? ox+224 : x;
+  /* Both players on one screen: 224 px apart in 4:3, plus both margins. */
+  const int apart=224+2*MmxWsPlayerEdgeMargin();
+  int limited=x<ox-apart ? ox-apart : x>ox+apart ? ox+apart : x;
   if (limited!=x) {putword(r+0xbad,(unsigned)limited);r[0xbac]=0;putword(r+0xbc2,0);}
 }
 static void camera_hook(CpuState *cpu,uint32_t pc) {
@@ -2194,6 +2640,7 @@ static void death_hook(CpuState *cpu,uint32_t pc) {
      * for P1 instead of projecting a stored corpse back over the cleared RAM. */
     state.current=state.anchor=0;state.stage_pending=1;
     state.scene_owner=state.scene_phase=state.door_pass=0;
+    state.scene_stay=state.teleport_seat=state.teleport_cycle=0;state.select_long[0]=state.select_long[1]=0;
     state.players[1].status=MMX_COOP_ABSENT;
     MmxZeroState z={0};z.active_x=state.players[0].character==MMX_COOP_X;
     MmxZeroSetState(z);MmxWeaponsSetState(state.players[0].weapons);
@@ -2204,7 +2651,8 @@ static void death_hook(CpuState *cpu,uint32_t pc) {
   if((pc&65535)==0x9ac7) {
     /* Main stage mode 6 assumes the whole team is dead and stops input/pause
      * polling. Keep mode 4 when another player still has HP. */
-    if(state.players[other].status==MMX_COOP_ALIVE && (state.players[other].body[0x27]&127)) {
+    if(state.players[other].status==MMX_COOP_ALIVE && (state.players[other].body[0x27]&127) &&
+        !(rule_shared_death && MmxCoopViewsOnline())) {
       TRACE(DEATH,pc,pc,seat,cpu);
       interp_bridge_pre_opcode_redirect((pc&0xff0000)|0x9ad9);
     }
@@ -2214,6 +2662,14 @@ static void death_hook(CpuState *cpu,uint32_t pc) {
   TRACE(DEATH,pc,pc,seat,cpu);
   switch(pc&65535) {
     case 0x8a5c:
+      if(rule_shared_death && MmxCoopViewsOnline() && state.players[other].status==MMX_COOP_ALIVE) {
+        /* Shared death: the team falls back to the checkpoint, as a single
+         * player's death does. The dying player drives that native death,
+         * so a partner's death takes the world (and its camera) first. */
+        state.solo_death[seat]=0;
+        if(seat!=state.anchor) {MmxCoopViewsAdoptSeatView(g_ram,&state,seat);state.anchor=(uint8_t)seat;}
+        break;
+      }
       state.solo_death[seat]=state.players[other].status==MMX_COOP_ALIVE &&
           ((state.players[other].body[0x27]&127)!=0 || seat!=state.anchor);
       if(state.solo_death[seat]) memcpy(state.death_flags[seat],g_ram+0x1f13,7);
@@ -2312,7 +2768,10 @@ static void controller_hook(CpuState *cpu, uint32_t pc) {
     state.return_a = cpu->A; state.return_x = cpu->X; state.return_y = cpu->Y;
     state.return_s = cpu->S; state.return_db = cpu->DB;
     cpu_mirrors_to_p(cpu); state.return_p = cpu->P;
-    if(!(g_ram[0xbcf]&127) && (state.players[other].body[0x27]&127)) state.anchor=(uint8_t)other;
+    if(!(g_ram[0xbcf]&127) && (state.players[other].body[0x27]&127) &&
+        !(rule_shared_death && MmxCoopViewsOnline())) {
+      MmxCoopViewsAdoptSeatView(g_ram,&state,other);state.anchor=(uint8_t)other;
+    }
     MmxCoopSelect(g_ram,other); MmxCoopApplyInput(g_ram);
     /* $00:D1F3..D206 prepares these outside the player routine. P2 needs
      * its own previous position and per-frame fire-command reset too. */

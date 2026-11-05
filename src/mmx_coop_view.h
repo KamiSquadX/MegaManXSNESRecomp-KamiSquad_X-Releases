@@ -22,7 +22,17 @@ void MmxCoopViewsSetBoundsState(const MmxCoopViewBoundsState *bounds);
 void MmxCoopViewsUpdateBounds(const uint8_t *ram, const MmxCoopState *state);
 /* Before a remote player takes a native door, transfer its authored view to
  * the shared script camera while both independent views still exist. */
-void MmxCoopViewsAdoptPlayer(uint8_t *ram, const MmxCoopState *state, unsigned seat);
+/* Like MmxCoopViewsAdoptPlayer, for a seat that is dying or beaming: the
+ * native camera and limits move to that seat's own view. */
+void MmxCoopViewsAdoptSeatView(uint8_t *r,const MmxCoopState *s,unsigned seat);
+/* A seat placed beside another takes that seat's camera limits at once. */
+/* Checkpoint 0 of `stage` ($80:E68E record, bank $86): the player's x, the
+ * beam's starting y and the room limits, as entering from stage select. */
+bool MmxCoopViewsStageStart(unsigned stage,int *x,int *y,int limits[4]);
+/* Give `seat` these room limits; the world actor's are written natively. */
+void MmxCoopViewsSetSeatLimits(uint8_t *r,const MmxCoopState *s,unsigned seat,const int limits[4]);
+void MmxCoopViewsCopyBounds(const uint8_t *r,const MmxCoopState *s,unsigned to,unsigned from);
+bool MmxCoopViewsAdoptPlayer(uint8_t *ram, const MmxCoopState *state, unsigned seat);
 void MmxCoopViewsPlayerLimits(const uint8_t *ram, const MmxCoopState *state,
                             unsigned seat, int limits[4]);
 MmxCoopView MmxCoopViewWithBounds(const uint8_t *ram, const MmxCoopState *state,
@@ -43,3 +53,6 @@ void MmxCoopViewsContactPlayer(unsigned player);
 MmxCoopView MmxCoopViewForPlayer(const uint8_t *ram, const MmxCoopState *state, unsigned seat);
 bool MmxCoopViewContains(const uint8_t *ram, const MmxCoopState *state,
                          int x, int y, int left, int right, int top, int bottom, int margin);
+/* The same test for one seat's view only (false for a seat not in play). */
+bool MmxCoopViewSeatContains(const uint8_t *ram, const MmxCoopState *state, unsigned seat,
+                             int x, int y, int left, int right, int top, int bottom, int margin);

@@ -67,6 +67,8 @@ static void zero_capture(const char *base, const char *suffix) {
 #include "mmx_magic_carpet_test.inc"
 #include "mmx_axl_test.inc"
 #include "mmx_zero_blocks_test.inc"
+#include "mmx_wide_edge_test.inc"
+#include "mmx_netplay_cost_test.inc"
 static void zero_motion_checks(const char *fixture) {
   const char *path = getenv("MMX_ZERO_MOTION_REFERENCE");
   if (!path) path = MMX_ZERO_MOTION_REFERENCE_DEFAULT;
@@ -1979,6 +1981,15 @@ int main(int argc, char **argv) {
   }
   if(getenv("MMX_MAGIC_CARPET_TEST")) {magic_carpet_checks(getenv("MMX_MAGIC_CARPET_TEST"),start,expected,actual,cap);return 0;}
   if(getenv("MMX_AXL_TEST")) {axl_checks();return 0;}
+  if(getenv("MMX_WIDE_EDGE_TEST")) {wide_edge_checks();return 0;}
+  if(getenv("MMX_NETPLAY_COST_TEST")) {
+    if(getenv("MMX_PERF_COOP")) {
+      check(MmxZeroLoad(getenv("MMX_ZERO_TEST_ASSETS")),"cost test loads original X3 Zero");
+      MmxZeroRegisterHooks();
+      check(MmxCoopEnable(MMX_COOP_X),"cost test enables X/Zero co-op");MmxCoopRegisterHooks();
+    }
+    netplay_cost_checks(start,expected,cap);return 0;
+  }
   if(getenv("MMX_BOSS_RUSH_TEST")) {rush_runtime_checks(start,expected,actual,cap);return 0;}
   if(getenv("MMX_ZERO_SABER_PERF_TEST")) {
     check(MmxZeroLoad(getenv("MMX_ZERO_TEST_ASSETS")),"performance test loads original X3 Zero");
@@ -1990,6 +2001,7 @@ int main(int argc, char **argv) {
     saber_perf_checks("campaign",start,expected,actual,cap);return 0;
   }
   const char *zero_assets = getenv("MMX_ZERO_TEST_ASSETS");
+  if(getenv("MMX_COOP_AXL_TEST")) {coop_axl_boot_checks(zero_assets,start,expected,actual,cap);return 0;}
   const char *zero_title = getenv("MMX_ZERO_TITLE_FIXTURE");
   if(getenv("MMX_COOP_SIGMA1_LADDER_FIXTURE")) {
     sigma1_ladder_checks(zero_assets,getenv("MMX_COOP_SIGMA1_LADDER_FIXTURE"),start,expected,actual,cap);return 0;

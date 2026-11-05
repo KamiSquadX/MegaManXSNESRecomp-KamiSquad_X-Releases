@@ -59,8 +59,9 @@ that bevel. Health and ammo cap thickness now matches.
 
 ## Layout option
 
-The Co-op mod exposes a HUD layout dropdown. Compact is the default when
-no preference is saved; Horizontal restores the original side-by-side meters.
+The Co-op mod exposes a HUD layout dropdown. X / Zero / Axl Co-op 0.0.2
+defaults to Horizontal (the original side-by-side meters) when no preference
+is saved; Compact stacks the players. X / Zero Co-op 0.0.1 keeps Compact.
 The choice is applied by the co-op plugin and survives save-state loads.
 Both choices were activated through the real launcher provider and rendered
 with full, partial, empty and absent ammo in 4:3 and 16:9.

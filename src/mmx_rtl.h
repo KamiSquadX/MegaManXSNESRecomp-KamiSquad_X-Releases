@@ -11,6 +11,12 @@ void MmxSchedulerTick(void);
 bool MmxGraphicsShouldYield(const CpuState *cpu);
 /* Match the generated widescreen comparisons when co-op enters the interpreter. */
 void MmxWsCullHook(CpuState *cpu, uint32_t pc);
+/* The player's screen-edge wall ($00:E0F9 / $00:E115 in the camera routine),
+ * widened to the visible widescreen edges; that margin (0 outside widescreen
+ * stages); and the interpreter-routing policy for $00:DE40. */
+void MmxWsPlayerEdgeHook(CpuState *cpu, uint32_t pc);
+int MmxWsPlayerEdgeMargin(void);
+bool MmxCameraRouteDE40(const CpuState *cpu);
 
 /* .sav v5 game chunk + post-load fiber rebuild (RtlGameInfo hooks). */
 struct SaveLoadInfo;

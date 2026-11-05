@@ -9,6 +9,7 @@
 #include "mmx_source_assets.h"
 #include "mmx_coop.h"
 #include "mmx_coop_view.h"
+#include "mmx_netplay.h"
 #if !MMX_VARIANT_JP
 #include "saber/mmx_saber_plugin.h"
 #endif
@@ -282,24 +283,36 @@ static void start_coop(const char *package) {
   MmxCoopViewsSetIndependent(!strcmp(cameras,"independent"));
   snes_mod_runtime_feature_option_value_c(package,"coop","hud",hud,sizeof(hud));
   MmxRendererSetCompactCoopHud(strcmp(hud,"horizontal")!=0);
-  /* Co-op seats are X and Zero. Axl takes a seat in the next co-op
-   * integration step; until then that seat plays its X or Zero. */
-  if(!strcmp(character,"axl") || !strcmp(partner,"axl") ||
-     (partner[0] && !strcmp(character,partner))) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,"Co-op",
-        "Axl in co-op is not playable yet in this test build. Starting as X and Zero.",NULL);
-    strcpy(character,"x");
+  /* Independent netplay cameras settings follows Netplay cameras =
+   * Independent; a package without it keeps every rule at Normal. */
+  bool teleport=false,shared=false;
+  if(snes_mod_runtime_feature_enabled_c(package,"views")) {
+    char value[32]={0};
+    snes_mod_runtime_feature_option_value_c(package,"views","select_teleport",value,sizeof(value));
+    teleport=!strcmp(value,"true") || !strcmp(value,"1");
+    value[0]=0;
+    snes_mod_runtime_feature_option_value_c(package,"views","death",value,sizeof(value));
+    shared=!strcmp(value,"shared");
   }
+  MmxCoopSetViewRules(teleport,shared);
+  /* Axl plays on an X body, in either seat, beside X or Zero. A partner
+   * left unset (older settings) is the other of X and Zero. */
+  unsigned axl=(!strcmp(character,"axl")?1u:0u)|(!strcmp(partner,"axl")?2u:0u);
   unsigned p1=!strcmp(character,"zero") ? MMX_COOP_ZERO : MMX_COOP_X;
+  unsigned p2=!partner[0] ? p1^1 : !strcmp(partner,"zero") ? MMX_COOP_ZERO : MMX_COOP_X;
+  if(axl==3 || (p1==p2 && !axl)) {axl=0;p2=p1^1;} /* one character twice */
   MmxZeroRegisterHooks();MmxCoopRegisterHooks();
-  if(!MmxCoopEnable(p1)) {
+  if(!MmxCoopEnablePair(p1,p2)) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Cannot enable co-op","Cannot initialize the selected characters.",NULL);
     return;
   }
 #if !MMX_VARIANT_JP
   if(!strcmp(behavior,"saber")) MmxSaberActivate(package,"coop",true);
 #endif
-  fprintf(stderr,"[mmx-coop] Co-op enabled; P1 is %s\n",p1==MMX_COOP_X?"X":"Zero");
+  {extern void MmxAxlCoopActivate(unsigned seats); MmxAxlCoopActivate(axl);}
+  static const char *const names[3]={"X","Zero","Axl"};
+  fprintf(stderr,"[mmx-coop] Co-op enabled; P1 is %s, P2 is %s\n",
+      names[axl&1?2:p1],names[axl&2?2:p2]);
 }
 /* Add Axl and Solo Team select claim the co-op plugins too, only so the
  * launcher keeps them apart; a co-op plugin starts only for its own feature. */

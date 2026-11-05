@@ -102,10 +102,14 @@ The default ladder is:
 | Priority | Classes |
 |----------|---------|
 | 1 | Air slash, wall slash, small charge, full charge |
-| 2 | Ground slash 1, max shot 1 |
-| 3 | Ground slash 2, max shot 2 |
-| 4 | Ground slash 3, X3 finisher |
-| 5 | Dash slash, Saber wave |
+| 2 | Max shot 1 |
+| 3 | Max shot 2 |
+| 4 | X3 finisher |
+| 5 | Saber wave |
+| 6 | Ground slash 1 |
+| 7 | Ground slash 2 |
+| 8 | Ground slash 3 |
+| 9 | Dash slash |
 
 The ladder is configurable through the priority options. This is a follow-up
 system, not a general “ignore all invincibility” switch.
@@ -137,9 +141,9 @@ finisher. Swing volume ranges from 0–200 in steps of 10.
 | Group | Options and defaults |
 |-------|----------------------|
 | Debug | `show_hitboxes=false` |
-| Normal damage | `slash1_damage=3`, `slash2_damage=3`, `slash3_damage=8`, `x3_finisher_damage=16`, `air_damage=3`, `wall_damage=3`, `dash_damage=3`, `wave_damage=6` |
-| Boss damage | `boss_slash1_damage=1`, `boss_slash2_damage=1`, `boss_slash3_damage=2`, `boss_air_damage=1`, `boss_wall_damage=1`, `boss_dash_damage=1`, `boss_x3_finisher_damage=6`, `boss_wave_damage=4` |
-| Priority | `slash1_priority=2`, `slash2_priority=3`, `slash3_priority=4`, `air_priority=1`, `wall_priority=1`, `dash_priority=5`, `charge_small_priority=1`, `charge_full_priority=1`, `max_shot1_priority=2`, `max_shot2_priority=3`, `x3_finisher_priority=4`, `wave_priority=5` |
+| Normal damage | `slash1_damage=3`, `slash2_damage=3`, `slash3_damage=8`, `x3_finisher_damage=16`, `air_damage=3`, `wall_damage=3`, `dash_damage=5`, `wave_damage=6` |
+| Boss damage | `boss_slash1_damage=1`, `boss_slash2_damage=1`, `boss_slash3_damage=2`, `boss_air_damage=1`, `boss_wall_damage=1`, `boss_dash_damage=2`, `boss_x3_finisher_damage=6`, `boss_wave_damage=4` |
+| Priority | `slash1_priority=6`, `slash2_priority=7`, `slash3_priority=8`, `air_priority=1`, `wall_priority=1`, `dash_priority=9`, `charge_small_priority=1`, `charge_full_priority=1`, `max_shot1_priority=2`, `max_shot2_priority=3`, `x3_finisher_priority=4`, `wave_priority=5` |
 | Windows/audio | `priority_window_frames=70`, `finisher_window_frames=27`, `saber_swing_volume=50` |
 
 ## Co-op, savestates and netplay

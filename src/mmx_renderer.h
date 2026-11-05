@@ -89,6 +89,10 @@ typedef struct MmxRenderAxlFrame {
 } MmxRenderAxlFrame;
 typedef bool (*MmxRendererAxlProvider)(const uint8_t *ram, MmxRenderAxlFrame *out);
 void MmxRendererSetAxlProvider(MmxRendererAxlProvider provider);
+/* A co-op partner seat that plays Axl: its frame, from RAM with that seat's
+ * body projected. Only body, sprites and hidden_slots are used. */
+typedef bool (*MmxRendererAxlSeatProvider)(unsigned seat, const uint8_t *ram, MmxRenderAxlFrame *out);
+void MmxRendererSetAxlSeatProvider(MmxRendererAxlSeatProvider provider);
 MmxRenderPlayerOverlay MmxRendererPlayerOverlaySnapshot(void);
 
 /* A presentation-only world sprite. The renderer owns camera projection,

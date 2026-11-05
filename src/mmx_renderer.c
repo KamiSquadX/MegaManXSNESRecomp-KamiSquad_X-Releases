@@ -43,8 +43,18 @@ static bool hardware_vram_tracking, hardware_vram_uncertain;
 #undef MMX_STAGE_TILE_REUSE
 #define MMX_STAGE_TILE_REUSE 0
 #endif
+#include "render_workers.h"
+#ifdef _MSC_VER
+#define MMX_DRAW_LOCAL __declspec(thread)
+#else
+#define MMX_DRAW_LOCAL _Thread_local
+#endif
+/* Scanlines are composed on several threads (see compose_rows). Each
+ * participant keeps its own stage-tile memo, indexed by its stable slot. */
+static MMX_DRAW_LOCAL unsigned draw_slot;
 #if MMX_STAGE_TILE_REUSE
-static struct { unsigned key; uint16_t entry; bool found; } stage_tile_cache[2];
+typedef struct StageTileMemo { unsigned key; uint16_t entry; bool found; } StageTileMemo;
+static StageTileMemo stage_tile_cache[SNES_RENDER_WORKERS_MAX][2];
 #endif
 static MmxBossRushState frame_rush;
 static MmxBossRushVisualState frame_rush_visual;
@@ -116,6 +126,8 @@ static MmxRenderPlayerOverlay frame_player_overlay;
 static MmxRenderPlayerOverlay frame_partner_overlay;
 static MmxRendererAxlProvider axl_provider;
 static MmxRenderAxlFrame frame_axl;
+static MmxRendererAxlSeatProvider axl_seat_provider;
+static MmxRenderAxlFrame frame_partner_axl;
 enum { MAX_WORLD_SPRITES = 8 };
 static MmxRendererWorldSpriteProvider world_sprite_provider;
 static MmxRenderWorldSprite frame_world_sprites[MAX_WORLD_SPRITES];
@@ -202,6 +214,10 @@ void MmxRendererSetRom(const uint8_t *bytes, size_t length) {
   rom = bytes; rom_size = length; MmxRenderAssetsSetRom(bytes, length);
   MmxCoopViewsSetRom(bytes,length);
   MmxRenderAssetsPreloadRush();
+}
+void MmxRendererSetAxlSeatProvider(MmxRendererAxlSeatProvider provider) {
+  axl_seat_provider = provider;
+  memset(&frame_partner_axl, 0, sizeof(frame_partner_axl));
 }
 void MmxRendererSetAxlProvider(MmxRendererAxlProvider provider) {
   axl_provider = provider;
@@ -540,6 +556,7 @@ void MmxRendererBeginFrame(const uint8_t ram[0x20000]) {
   frame_rush_visual=MmxBossRushVisualGetState();
   memset(&frame_coop,0,sizeof(frame_coop));
   memset(&frame_partner_overlay, 0, sizeof(frame_partner_overlay));
+  memset(&frame_partner_axl, 0, sizeof(frame_partner_axl));
   memset(&overlay, 0, sizeof(overlay));
   MmxZeroState live_zero = MmxZeroGetState();
   if (player_overlay_provider && player_overlay_provider(ram, &live_zero, &overlay))
@@ -881,6 +898,10 @@ void MmxRendererCoopFrame(const MmxCoopState *s) {
   memcpy(partner_ram+0x1228,s->players[s->current^1].shots,sizeof(s->players[s->current^1].shots));
   const MmxCoopPlayer *partner=&s->players[s->current^1];
   memset(&frame_partner_overlay,0,sizeof(frame_partner_overlay));
+  memset(&frame_partner_axl,0,sizeof(frame_partner_axl));
+  if (!menu && partner->character==MMX_COOP_X && axl_seat_provider &&
+      !axl_seat_provider((unsigned)(s->current^1),partner_ram,&frame_partner_axl))
+    memset(&frame_partner_axl,0,sizeof(frame_partner_axl));
   if (!menu && partner->character==MMX_COOP_ZERO && player_overlay_provider) {
     MmxRenderPlayerOverlay overlay;
     memset(&overlay,0,sizeof(overlay));
@@ -1016,13 +1037,13 @@ static bool stage_tile_for_draw(unsigned layer, int x, int y, uint16_t *entry) {
    * immutable during a draw; reset the keys at every Draw, including after
    * load, a view change or an edit to the external ROM. No live RAM cache. */
   unsigned key = ((unsigned)y >> 3) * 1024 + ((unsigned)x >> 3);
-  if (stage_tile_cache[layer].key != key) {
-    stage_tile_cache[layer].key = key;
-    stage_tile_cache[layer].found = MmxRendererStageTile(frame.ram, layer, x, y,
-        &stage_tile_cache[layer].entry);
+  StageTileMemo *cache = &stage_tile_cache[draw_slot][layer];
+  if (cache->key != key) {
+    cache->key = key;
+    cache->found = MmxRendererStageTile(frame.ram, layer, x, y, &cache->entry);
   }
-  if (stage_tile_cache[layer].found) *entry = stage_tile_cache[layer].entry;
-  return stage_tile_cache[layer].found;
+  if (cache->found) *entry = cache->entry;
+  return cache->found;
 #else
   return MmxRendererStageTile(frame.ram, layer, x, y, entry);
 #endif
@@ -1030,18 +1051,21 @@ static bool stage_tile_for_draw(unsigned layer, int x, int y, uint16_t *entry) {
 static bool door_body(int x, int y) {
   if (x < 0 || y < 0 || x >= 8192 || y >= 8192) return false;
   unsigned key = (y >> 4) * 512 + (x >> 4);
-  if (door_cache[key]) return door_cache[key] == 2;
-  door_cache[key] = 1;
+  uint8_t known = ((volatile uint8_t *)door_cache)[key];
+  if (known) return known == 2;
   x &= ~15; y &= ~15;
-  for (int row = 0; row < 3; ++row) {
+  bool door = false;
+  for (int row = 0; row < 3 && !door; ++row) {
     uint16_t entries[3][4];
     bool valid = true;
     for (int r = 0; r < 3; ++r) for (int q = 0; q < 4; ++q)
       valid &= MmxRendererStageTile(frame.ram, 0, x + (q & 1) * 8,
                                      y + (r - row) * 16 + (q >> 1) * 8, &entries[r][q]);
-    if (valid && MmxWidePolicy_IsBossDoorBody(entries, row)) { door_cache[key] = 2; return true; }
+    door = valid && MmxWidePolicy_IsBossDoorBody(entries, row);
   }
-  return false;
+  /* Concurrent composers may race here; all store the same answer. */
+  ((volatile uint8_t *)door_cache)[key] = door ? 2 : 1;
+  return door;
 }
 static unsigned tile_pixel(const uint16_t *vram, unsigned address, int x, int y, unsigned bpp) {
   unsigned a = (address + y) & 0x7fff, shift = 7 - x;
@@ -1213,8 +1237,12 @@ static uint16_t background(const Ppu *p, const Raster *r, unsigned layer, int x,
     if (icon >= 0) { *private_color = icon; return 0x8001; }
     tile = weapon_menu_tile(tx, ty, tile);
   }
+  /* Online independent views also rebuild the native view from the map:
+   * an encounter or door handoff moves the native camera across the stage
+   * in one frame, and the game only streams new tilemap columns at the
+   * screen edges as it scrolls, so circular VRAM keeps the old area. */
   if (stage && size == 8 && layer < 2 && !slime_surface &&
-      (x < 0 || x >= 256 || view_dx || view_dy || airport_upper_sky)) {
+      (x < 0 || x >= 256 || view_dx || view_dy || airport_upper_sky || MmxCoopViewsOnline())) {
     int wx, wy;
     if (layer == 0) {
       wx = MmxDisplay_ExpandStageScroll((uint16_t)word(frame.ram, 0x1e4d), p->hScroll[0]) + view_dx + x;
@@ -1246,9 +1274,10 @@ static uint16_t background(const Ppu *p, const Raster *r, unsigned layer, int x,
        * apply the exact half/full camera relation; actor/script modes stay
        * canonical while their shared scene owns both views. */
       unsigned mode=frame.ram[0x1e89];
-      int nx=word(frame.ram,0x1e4d),ny=word(frame.ram,0x1e50);
-      if(mode==2 || mode==14) wx+=((nx+view_dx)>>1)-(nx>>1);
-      else if(mode==4 || mode==16) wx+=view_dx;
+      int nx=word(frame.ram,0x1e4d),ny=word(frame.ram,0x1e50),shift_x=0;
+      if(mode==2 || mode==14) shift_x=((nx+view_dx)>>1)-(nx>>1);
+      else if(mode==4 || mode==16) shift_x=view_dx;
+      wx+=shift_x;
       if(mode==2 || mode==16) wy+=((ny+view_dy)>>1)-(ny>>1);
       else if(mode==4 || mode==14) wy+=view_dy;
       /* The boat's BG2 body occupies one source screen; surrounding map
@@ -1268,7 +1297,10 @@ static uint16_t background(const Ppu *p, const Raster *r, unsigned layer, int x,
       /* Highway's final arena switches to the sky plane at BG2 x=$A00.
        * Earlier columns are intentionally empty at this vertical scroll;
        * extend the arena's sky edge when a wide view reaches behind it. */
-      if (frame.ram[0x1f7a] == 0 && stream_x >= 0xa00 && wx < 0xa00) wx = 0xa00;
+      /* Judge that by this view's own BG2 origin: a partner far behind the
+       * native camera is still on the earlier city plane, and clamping his
+       * whole row to $A00 smeared one column across his screen. */
+      if (frame.ram[0x1f7a] == 0 && stream_x + shift_x >= 0xa00 && wx < 0xa00) wx = 0xa00;
       if (airport_upper_sky) {
         /* Source screen 3 is the seamless 256x256 cloud plane, repeated in
          * screens 4..6. Wrap both axes there instead of indexing unrelated
@@ -1341,6 +1373,10 @@ static uint16_t background(const Ppu *p, const Raster *r, unsigned layer, int x,
   unsigned address = (PPU_bgTileAdr(p, layer) + number * bpp * 4) & 0x7fff;
   const uint8_t *bits = stage && g_mmx_render_asset_repairs && bpp == 4 && !(frame.ram[0x1f7a] == 1 && layer == 1) ?
       MmxRenderAssetsBackgroundTile(frame.ram, asset_x, address) : NULL;
+  /* A distant view: live VRAM belongs to the native camera's section. */
+  bool distant = stage && g_mmx_render_asset_repairs && (view_dx || view_dy) && asset_x >= 0;
+  if (!bits && distant && bpp == 4 && !(frame.ram[0x1f7a] == 1 && layer == 1))
+    bits = MmxRenderAssetsBackgroundTileEarlier(frame.ram, asset_x, address);
   unsigned pixel;
   if (bits) {
     bits += (cy & 7) * 2;
@@ -1354,6 +1390,10 @@ static uint16_t background(const Ppu *p, const Raster *r, unsigned layer, int x,
       (armadillo_lower_shaft ? MmxRenderAssetsBackgroundPalettePhase(frame.ram, 1) :
        MmxRenderAssetsBackgroundPalette(frame.ram, asset_x)) : NULL;
   if (palette && palette->valid[index]) *private_color = palette->colors[index];
+  else if (distant && !armadillo_lower_shaft) {
+    const MmxBackgroundPalette *layered = MmxRenderAssetsBackgroundPaletteEarlier(frame.ram, asset_x);
+    if (layered && layered->valid[index]) *private_color = layered->colors[index];
+  }
   if(stage && layer==0 && frame.ram[0x1f7a]==4 && index>=0x50 && index<0x60 &&
       (frame_rush.mode==MMX_RUSH_PLAYING || frame_rush.mode==MMX_RUSH_PREPARING)) {
     int wy=y+view_camera(frame.ram,0x1e50)-(int)frame_rush.camera_y;
@@ -1790,15 +1830,32 @@ static void axl_row(int y, MmxRenderView view, uint16_t *objects, int *object_co
     }
   }
 }
+/* A partner seat that plays Axl: his shots and body, as axl_row draws the
+ * live seat's, at the partner's own position. */
+static void axl_partner_row(const uint8_t *ram,int y,MmxRenderView view,uint16_t *objects,int *colors) {
+  const MmxRenderAxlFrame *a=&frame_partner_axl;
+  unsigned z=((2*4+2)<<12)|0x680;
+  int cx=(int)view_camera(ram,0x1e4d),cy=(int)view_camera(ram,0x1e50);
+  for (unsigned i=0;i<a->sprite_count && i<MMX_RENDER_AXL_SPRITES;++i) {
+    const MmxRenderAxlSprite *s=&a->sprites[i];
+    player_overlay_plane_row(&s->plane,a->body.palette,a->body.palette_count,y,
+        (int)(s->x-cx),(int)(s->y-cy),s->facing_left,z,view,objects,colors);
+  }
+  if (a->body.active)
+    player_overlay_row(&a->body,y,(int16_t)(word(ram,0xbad)-cx),(int16_t)(word(ram,0xbb0)-cy)+1,
+        z,view,objects,colors);
+}
 static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,
                              uint16_t *objects,int *colors) {
   const MmxCoopPlayer *partner = &frame_coop.players[frame_coop.current^1];
-  if (!frame_coop.initialized || partner->status != MMX_COOP_ALIVE || frame_coop.scene_phase==2) return;
+  if (!frame_coop.initialized || partner->status != MMX_COOP_ALIVE ||
+      (frame_coop.scene_phase==2 && !frame_coop.scene_stay)) return;
   const uint8_t *ram = partner_ram;
   if (partner->zero.swap_phase) {
     teleport_actor_row(ram,&partner->zero,ppu,r,y,view,objects,colors);return;
   }
   bool zero = partner->character == MMX_COOP_ZERO;
+  bool axl = !zero && (frame_partner_axl.own_body || frame_partner_axl.body.active);
   const MmxWeaponShot *cast=NULL;
   for (unsigned i=0;i<8;++i) {
     const MmxWeaponShot *s=partner->combat.shots+i;
@@ -1876,6 +1933,9 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
         !ram[d] || !(armor ? ram[d+14] : ram[d+14]&128)) continue;
     if(d<0xc98 && !ram[0xbb6]) continue; /* Armor follows its owner's Sting blink. */
     if (zero && (d==0xba8 || d<0xc98 || MmxZeroNativeChargeObject(d,ram[d+10]))) continue;
+    /* Axl owns X's body and armor pieces; his own shots are drawn below. */
+    if (axl && (d==0xba8 || d==0xc38 || d==0xc58 || d==0xc78)) continue;
+    if (axl && d>=0x1228 && (frame_partner_axl.hidden_slots & (1u<<((d-0x1228)/64)))) continue;
     if (cast && d<0xc98) continue;
     if (d>=0x1228 && partner->combat.shots[(d-0x1228)/64].active) continue;
     unsigned group = ram[d+22];
@@ -1900,6 +1960,7 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
       sprite(ppu,zero?r:&partner_raster,s.x,s.y,s.attr,s.size,y,view,objects,false,asset,tile,colors,true,false,false);
     }
   }
+  if (axl) axl_partner_row(ram,y,view,objects,colors);
 }
 static void coop_meter_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,
                            uint16_t *objects,int *colors,int x,unsigned value,unsigned maximum,
@@ -1976,11 +2037,15 @@ static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view
   for(unsigned seat=0;seat<2;++seat) {
     const MmxCoopPlayer *player=&frame_coop.players[seat];
     if(seat && player->status==MMX_COOP_ABSENT) continue;
-    bool inverted=coop_hud_compact && player->character==MMX_COOP_ZERO;
+    /* Compact: Zero's meter hangs below X's; with two X bodies (an Axl
+     * seat) P2's does. */
+    bool inverted=coop_hud_compact && (player->character==MMX_COOP_ZERO ||
+        (seat && frame_coop.players[0].character==player->character));
     int x=8+(coop_hud_compact?0:(int)seat*32)-(anchored?view.extra:0),icon_y=inverted?100:80;
     unsigned hp=player->status==MMX_COOP_FALLEN?0:player->body[0x27]&127;
     coop_meter_row(ppu,r,y,view,objects,colors,x,hp,frame.ram[0x1f9a],2,NULL,icon_y,inverted);
-    if(inverted) coop_inverted_badge_row(ppu,r,y,view,objects,colors,x,icon_y,2,NULL,NULL,NULL,true);
+    if(inverted) coop_inverted_badge_row(ppu,r,y,view,objects,colors,x,icon_y,2,NULL,NULL,NULL,
+        player->character==MMX_COOP_ZERO);
     else sprite(ppu,r,x,icon_y,0x3486,16,y,view,objects,false,NULL,0,colors,true,
         player->character==MMX_COOP_ZERO,false);
     unsigned page=player->weapons.page;
@@ -2120,12 +2185,89 @@ static void rush_native_text(uint32_t *out,MmxRenderView view,int x,int y,const 
     }
   }
 }
+/* Per-scanline sprite planes, built serially by MmxRendererDraw and then
+ * read by compose_rows (one row per y; only the first view.width entries). */
+static uint16_t row_objects[224][MMX_RENDER_MAX_WIDTH];
+static int row_object_colors[224][MMX_RENDER_MAX_WIDTH];
+static bool row_compose[224];
+typedef struct ComposeJob {
+  uint32_t *out; MmxRenderView view; bool stage, menu;
+  unsigned palette_fade, beam_count; const LightBeam *beams; const int16_t *crystal_ripple;
+} ComposeJob;
+/* Backgrounds, windows and color math for rows [begin,end). Each row writes
+ * only its own output line and its own object_colors row. */
+static void compose_rows(void *context, size_t begin, size_t end, unsigned slot) {
+  const ComposeJob *job = context;
+  draw_slot = slot < SNES_RENDER_WORKERS_MAX ? slot : 0;
+  uint32_t *out = job->out; const MmxRenderView view = job->view;
+  const bool stage = job->stage, menu = job->menu;
+  const unsigned palette_fade = job->palette_fade, beam_count = job->beam_count;
+  const LightBeam *beams = job->beams; const int16_t *crystal_ripple = job->crystal_ripple;
+  for (size_t row = begin; row < end; ++row) {
+    const int y = (int)row;
+    if (!row_compose[y]) continue;
+    const Raster *r = &frame.lines[y]; Ppu p;
+    memcpy(&p, r->registers, PPU_SAVESTATE_REGS_SIZE);
+    if (beam_count) p.cgwsel = (p.cgwsel & 0xcf) | 0x20;
+    uint8_t brightness[32];
+    for (int c = 0; c < 32; ++c) brightness[c] = (uint8_t)(((c << 3) | (c >> 2)) * (p.inidisp & 15) / 15);
+    /* Dialogue masks BG1/BG2 for the panel and subtracts white from the
+     * exposed backdrop ($81:915E). That global subtraction also blacks out
+     * Storm's transparent sky between clouds in the newly exposed margins.
+     * Recognize the captured panel setup across stages; preserve its native
+     * window/text and every other color effect, including transition fades. */
+    bool dialogue_backdrop = g_mmx_render_asset_repairs && p.cgadsub == 0xa0 &&
+        p.cgwsel == 0x80 && p.fixedColor == 0x7fff && p.windowsel == 0x22 &&
+        p.screenWindowed[0] == 3 && (p.screenEnabled[0] & 7) == 7;
+    const uint16_t *objects = row_objects[y];
+    int *object_colors = row_object_colors[y];
+    for (int sx = 0; sx < view.width; ++sx) {
+      int x = sx - view.extra;
+      if (menu && (x < 0 || x >= 256)) { out[y * view.width + sx] = 0; continue; }
+      uint16_t screens[2] = {0x500, 0x500}, bg[3] = {0};
+      int bg_colors[3] = {-1, -1, -1};
+      for (int layer = 0; layer < 3; ++layer) if ((p.screenEnabled[0] | p.screenEnabled[1]) & (1 << layer)) {
+        int bx = x, by = y + 1;
+        if (stage && layer==0) by+=crystal_ripple[y];
+        if (p.mosaic & (1 << layer)) { int size = (p.mosaic >> 4) + 1;
+          bx -= ((bx % size) + size) % size; by -= by % size; }
+        bg[layer] = background(&p, r, layer, bx, by, stage, &bg_colors[layer]);
+      }
+      if (palette_fade) {
+        for (int layer = 0; layer < 3; ++layer) if (bg_colors[layer] >= 0)
+          bg_colors[layer] = MmxRenderAssetsFadeColor((uint16_t)bg_colors[layer], palette_fade);
+        if (object_colors[sx] >= 0)
+          object_colors[sx] = MmxRenderAssetsFadeColor((uint16_t)object_colors[sx], palette_fade)|(object_colors[sx]&0x8000);
+      }
+      uint16_t camouflage_bg=0x500;
+      for (int sub = 0; sub < 2; ++sub) {
+        for (int layer = 0; layer < 3; ++layer)
+          if ((p.screenEnabled[sub] & (1 << layer)) &&
+              (!(p.screenWindowed[sub] & (1 << layer)) || !window(&p, layer, x, view.extra)) && bg[layer] > screens[sub]) screens[sub] = bg[layer];
+        if(!sub) camouflage_bg=screens[0];
+        if ((p.screenEnabled[sub] & 16) && (!(p.screenWindowed[sub] & 16) || !window(&p, 4, x, view.extra)) &&
+            objects[sx] > screens[sub]) screens[sub] = objects[sx];
+      }
+      bool color_window = window(&p, 5, x, view.extra);
+      if (beam_count) {
+        color_window = false;
+        for (unsigned i = 0; i < beam_count; ++i)
+          color_window |= x >= beams[i].left[y] && x <= beams[i].right[y];
+      }
+      out[y * view.width + sx] = colour(&p, r->palette, brightness, screens[0], screens[1], color_window, object_colors[sx], bg_colors,
+                                       dialogue_backdrop && (x < 0 || x >= 256),camouflage_bg);
+      if (stage && (frame_axl.screen_dim || frame_axl.screen.pixels))
+        axl_giga_pixel(&out[y * view.width + sx], x, y, objects[sx] && screens[0] == objects[sx]);
+    }
+  }
+}
 bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
   if (!out || !frame.valid || view.width < 256 || view.width > MMX_RENDER_MAX_WIDTH ||
       view.extra != (view.width - 256) / 2 || (view.width & 1)) return false;
   memset(&stats, 0, sizeof(stats)); stats.pieces = frame.piece_count;
 #if MMX_STAGE_TILE_REUSE
-  stage_tile_cache[0].key = stage_tile_cache[1].key = ~0u;
+  for (unsigned i = 0; i < SNES_RENDER_WORKERS_MAX; ++i)
+    stage_tile_cache[i][0].key = stage_tile_cache[i][1].key = ~0u;
 #endif
   memset(door_cache, 0, sizeof(door_cache));
   memset(out, 0, (size_t)view.width * 224 * sizeof(*out));
@@ -2352,8 +2494,36 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
   if (frame_coop.initialized && MmxWeaponsTimePhase(&frame_coop.players[frame_coop.current^1].combat)==1 &&
       MmxWeaponsTimePhase(&frame_weapon_combat)!=1)
     MmxWeaponsTimeRipple(&frame_coop.players[frame_coop.current^1].combat,crystal_ripple);
+  /* Per-frame facts about each piece, hoisted out of the scanline loop: they
+   * depend on the piece and this frame's state only, yet were asked again on
+   * every one of the 224 lines (the frozen/moved-enemy queries alone were ~5%
+   * of a co-op frame). The OAM search below is cached per distinct OAM:
+   * lines share one OAM unless the game rewrote it mid-frame, and the search
+   * (112 slots per piece per line) was the largest single cost of a draw. */
+  static bool piece_frozen[MAX_PIECES];
+  static const MmxSpriteAsset *piece_coop_special[MAX_PIECES];
+  static unsigned piece_oam_version[MAX_PIECES];
+  static uint64_t piece_oam_slots[MAX_PIECES][2];
+  for (unsigned i = 0; i < piece_count; ++i) {
+    const Piece *s = &pieces[i];
+    piece_frozen[i] = stage && (MmxWeaponsFrozenEnemy(&frame_weapon_combat,s->object) ||
+        MmxWeaponsMovedEnemy(&frame_weapon_combat,s->object) || (frame_coop.initialized &&
+        (MmxWeaponsFrozenEnemy(&frame_coop.players[frame_coop.current^1].combat,s->object) ||
+         MmxWeaponsMovedEnemy(&frame_coop.players[frame_coop.current^1].combat,s->object))));
+    piece_coop_special[i] = stage && frame_coop.initialized &&
+        s->object>=0x1228 && s->object<0x1428 &&
+        !frame_weapon_combat.shots[(s->object-0x1228)/64].active ?
+        MmxRenderAssetsNativeShot(frame.ram,s->object,s->animation,piece_pose(s),frame_coop.current) : NULL;
+    piece_oam_version[i] = 0;
+  }
+  unsigned oam_version = 1;
+  const Raster *oam_previous = NULL;
   for (int y = 0; y < 224; ++y) {
     const Raster *r = &frame.lines[y]; Ppu p;
+    row_compose[y] = false;
+    if (oam_previous && (memcmp(oam_previous->oam, r->oam, sizeof(r->oam)) ||
+        memcmp(oam_previous->high_oam, r->high_oam, sizeof(r->high_oam)))) ++oam_version;
+    oam_previous = r;
     memcpy(&p, r->registers, PPU_SAVESTATE_REGS_SIZE);
     if (beam_count) p.cgwsel = (p.cgwsel & 0xcf) | 0x20;
     if ((p.bgmode & 7) != 1 || (!stage && !menu && !zero_title && !frame_axl.title && !frame_axl.menu && !frame_rush.menu && !options_screen)) {
@@ -2362,18 +2532,9 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
     }
     ++stats.custom_lines;
     if (p.inidisp & 128) continue;
-    uint8_t brightness[32];
-    for (int c = 0; c < 32; ++c) brightness[c] = (uint8_t)(((c << 3) | (c >> 2)) * (p.inidisp & 15) / 15);
-    /* Dialogue masks BG1/BG2 for the panel and subtracts white from the
-     * exposed backdrop ($81:915E). That global subtraction also blacks out
-     * Storm's transparent sky between clouds in the newly exposed margins.
-     * Recognize the captured panel setup across stages; preserve its native
-     * window/text and every other color effect, including transition fades. */
-    bool dialogue_backdrop = g_mmx_render_asset_repairs && p.cgadsub == 0xa0 &&
-        p.cgwsel == 0x80 && p.fixedColor == 0x7fff && p.windowsel == 0x22 &&
-        p.screenWindowed[0] == 3 && (p.screenEnabled[0] & 7) == 7;
-    uint16_t objects[MMX_RENDER_MAX_WIDTH] = {0};
-    int object_colors[MMX_RENDER_MAX_WIDTH];
+    uint16_t *objects = row_objects[y];
+    int *object_colors = row_object_colors[y];
+    memset(objects, 0, (size_t)view.width * sizeof(*objects));
     for (int x = 0; x < view.width; ++x) object_colors[x] = -1;
     for (int i = (int)storm_count - 1; i >= 0; --i) {
       Piece s = storm[i];
@@ -2403,14 +2564,11 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
         } else {objects[dx]=(uint16_t)(fs->z|pixel);object_colors[dx]=fs->colors[pixel];}
       }
     }
-    bool replaced[128] = {false};
+    uint64_t replaced[2] = {0, 0}; /* OAM slots a piece replaced on this line */
     bool zero_drawn[2] = {false,false};
     for (int i = (int)piece_count - 1; i >= 0; --i) {
       Piece s = pieces[i]; const MmxSpriteAsset *asset = piece_assets[i];
-      bool frozen_enemy=stage && (MmxWeaponsFrozenEnemy(&frame_weapon_combat,s.object) ||
-          MmxWeaponsMovedEnemy(&frame_weapon_combat,s.object) || (frame_coop.initialized &&
-          (MmxWeaponsFrozenEnemy(&frame_coop.players[frame_coop.current^1].combat,s.object) ||
-           MmxWeaponsMovedEnemy(&frame_coop.players[frame_coop.current^1].combat,s.object))));
+      bool frozen_enemy=piece_frozen[i];
       if (g_mmx_render_asset_repairs && fortress_sound_actor(s.object) &&
           (s.x >= 256 || s.x + s.size <= 0)) continue;
       /* Recorded pieces already obey the retail submission budget. Draw
@@ -2425,10 +2583,7 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
       bool coop_buster=stage && frame_coop.initialized && s.object>=0x1228 && s.object<0x1428 &&
           ((frame.ram[s.object+10]==3 && s.animation==0x9e) ||
            ((frame.ram[s.object+10]==1 || frame.ram[s.object+10]==2) && s.animation==0x0e));
-      const MmxSpriteAsset *coop_special=stage && frame_coop.initialized &&
-          s.object>=0x1228 && s.object<0x1428 &&
-          !frame_weapon_combat.shots[(s.object-0x1228)/64].active ?
-          MmxRenderAssetsNativeShot(frame.ram,s.object,s.animation,piece_pose(&s),frame_coop.current) : NULL;
+      const MmxSpriteAsset *coop_special=piece_coop_special[i];
       bool menu_body = s.object == 0x1988 && (s.animation == 0 || s.animation == 0x18);
       bool zero_body = zero && (s.object == 0xba8 || menu_body);
       bool triad_x_body=cast_body && !zero && s.object==0xba8;
@@ -2445,12 +2600,20 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
            (s.object >= 0x1228 && s.object < 0x1428 && !((s.object - 0x1228) & 63) &&
             (frame_axl.hidden_slots & (1u << ((s.object - 0x1228) / 64)))));
       bool oam_match = false;
-      if (g_mmx_render_asset_repairs || axl_part || coop_buster || coop_special || zero_body || zero_armor || zero_charge || swap_actor || red_ready || red_death || triad_x_body || triad_armor || frozen_enemy) for (int slot = 16; slot < 128; ++slot) {
-        unsigned pos = r->oam[slot * 2], hi = r->high_oam[slot / 4] >> (slot % 4 * 2);
-        int ox = (pos & 255) | ((hi & 1) << 8); if (ox >= 256) ox -= 512;
-        if (ox == s.x && (pos >> 8) == ((unsigned)s.y & 255) && r->oam[slot * 2 + 1] == s.attr) {
-          oam_match = true;
-          replaced[slot] = true; center = true;
+      if (g_mmx_render_asset_repairs || axl_part || coop_buster || coop_special || zero_body || zero_armor || zero_charge || swap_actor || red_ready || red_death || triad_x_body || triad_armor || frozen_enemy) {
+        if (piece_oam_version[i] != oam_version) {
+          piece_oam_version[i] = oam_version;
+          piece_oam_slots[i][0] = piece_oam_slots[i][1] = 0;
+          for (int slot = 16; slot < 128; ++slot) {
+            unsigned pos = r->oam[slot * 2], hi = r->high_oam[slot / 4] >> (slot % 4 * 2);
+            int ox = (pos & 255) | ((hi & 1) << 8); if (ox >= 256) ox -= 512;
+            if (ox == s.x && (pos >> 8) == ((unsigned)s.y & 255) && r->oam[slot * 2 + 1] == s.attr)
+              piece_oam_slots[i][slot >> 6] |= (uint64_t)1 << (slot & 63);
+          }
+        }
+        if (piece_oam_slots[i][0] | piece_oam_slots[i][1]) {
+          oam_match = true; center = true;
+          replaced[0] |= piece_oam_slots[i][0]; replaced[1] |= piece_oam_slots[i][1];
         }
       }
       if (axl_part) continue; /* drawn once below as Axl */
@@ -2482,6 +2645,17 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
        * the native priority as well as CHR/palette; retain authored flips. */
       if(asset && frame_rush.mode==MMX_RUSH_PLAYING && s.object>=0xe68 && s.object<0x1d08 &&
           frame_rush.owner[(s.object-0xe68)/32])
+        attr=(attr&~0x3000u)|((asset->attributes&0x30)<<8);
+      /* Independent co-op views: an actor in a section the native camera has
+       * not loaded never had its resource bound, so its live attribute byte
+       * (+$11) has no palette, page or priority -- and the priority-0 pieces
+       * sat behind the background. Every bound resource carries priority bit
+       * $20; the AI still sets the flip bits ($40/$80) of an unbound actor,
+       * as Highway's road attackers do when they turn. Draw it with the
+       * resource's own priority, as Boss Rush's cross-stage actors do. */
+      if(asset && stage && !(s.attr&0x3000) && (asset->unbound ||
+          (MmxCoopViewsOnline() && s.object>=0xe68 && s.object<0x1d08 &&
+           !(frame.ram[s.object+0x11]&0x3f))))
         attr=(attr&~0x3000u)|((asset->attributes&0x30)<<8);
       if (asset && asset->live_colors) attr = (attr & ~0x0e00u) | (s.attr & 0x0e00u);
       if (zero_armor || swap_actor || triad_armor || frozen_enemy) continue;
@@ -2610,7 +2784,7 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
     bool coop_hud=stage && frame_coop.initialized && r->oam[0]==0x5008 && r->oam[1]==0x3486;
     for (int slot = 127; slot >= 0; --slot) {
       if(coop_hud && slot<16) continue;
-      if (replaced[slot]) continue;
+      if ((replaced[slot >> 6] >> (slot & 63)) & 1) continue;
       unsigned pos = r->oam[slot * 2], attr = r->oam[slot * 2 + 1];
       /* Axl's title: X's cursor sprites at the left edge, also when this
        * frame recorded no pieces for them. */
@@ -2678,45 +2852,17 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
     if (swapping) teleport_actor_row(frame.ram,&frame_zero,&p,r,y,view,objects,object_colors);
     if(coop_hud) coop_hud_row(&p,r,y,view,hud,objects,object_colors);
     if(rush_hud) rush_hud_row(&p,r,y,view,objects,object_colors);
-    for (int sx = 0; sx < view.width; ++sx) {
-      int x = sx - view.extra;
-      if (menu && (x < 0 || x >= 256)) { out[y * view.width + sx] = 0; continue; }
-      uint16_t screens[2] = {0x500, 0x500}, bg[3] = {0};
-      int bg_colors[3] = {-1, -1, -1};
-      for (int layer = 0; layer < 3; ++layer) if ((p.screenEnabled[0] | p.screenEnabled[1]) & (1 << layer)) {
-        int bx = x, by = y + 1;
-        if (stage && layer==0) by+=crystal_ripple[y];
-        if (p.mosaic & (1 << layer)) { int size = (p.mosaic >> 4) + 1;
-          bx -= ((bx % size) + size) % size; by -= by % size; }
-        bg[layer] = background(&p, r, layer, bx, by, stage, &bg_colors[layer]);
-      }
-      if (palette_fade) {
-        for (int layer = 0; layer < 3; ++layer) if (bg_colors[layer] >= 0)
-          bg_colors[layer] = MmxRenderAssetsFadeColor((uint16_t)bg_colors[layer], palette_fade);
-        if (object_colors[sx] >= 0)
-          object_colors[sx] = MmxRenderAssetsFadeColor((uint16_t)object_colors[sx], palette_fade)|(object_colors[sx]&0x8000);
-      }
-      uint16_t camouflage_bg=0x500;
-      for (int sub = 0; sub < 2; ++sub) {
-        for (int layer = 0; layer < 3; ++layer)
-          if ((p.screenEnabled[sub] & (1 << layer)) &&
-              (!(p.screenWindowed[sub] & (1 << layer)) || !window(&p, layer, x, view.extra)) && bg[layer] > screens[sub]) screens[sub] = bg[layer];
-        if(!sub) camouflage_bg=screens[0];
-        if ((p.screenEnabled[sub] & 16) && (!(p.screenWindowed[sub] & 16) || !window(&p, 4, x, view.extra)) &&
-            objects[sx] > screens[sub]) screens[sub] = objects[sx];
-      }
-      bool color_window = window(&p, 5, x, view.extra);
-      if (beam_count) {
-        color_window = false;
-        for (unsigned i = 0; i < beam_count; ++i)
-          color_window |= x >= beams[i].left[y] && x <= beams[i].right[y];
-      }
-      out[y * view.width + sx] = colour(&p, r->palette, brightness, screens[0], screens[1], color_window, object_colors[sx], bg_colors,
-                                       dialogue_backdrop && (x < 0 || x >= 256),camouflage_bg);
-      if (stage && (frame_axl.screen_dim || frame_axl.screen.pixels))
-        axl_giga_pixel(&out[y * view.width + sx], x, y, objects[sx] && screens[0] == objects[sx]);
-    }
+    row_compose[y] = true;
   }
+  /* Sprites above stay on this thread: they consult lazily filled mod and
+   * asset caches. Everything below only reads this frame's immutable state
+   * (and prepared background resources), so scanlines run on all workers. */
+  if (stage && g_mmx_render_asset_repairs) MmxRenderAssetsPrepareConcurrentDraw(frame.ram);
+  ComposeJob job = {out, view, stage, menu, palette_fade, beam_count, beams, crystal_ripple};
+  static SnesRenderWorkers *workers;
+  static bool workers_tried;
+  if (!workers_tried) { workers_tried = true; workers = SnesRenderWorkersCreate(0); }
+  if (!SnesRenderWorkersRun(workers, 224, 8, compose_rows, &job)) compose_rows(&job, 0, 224, 0);
   if (!zero) axl_life_head(out, view);
   for (unsigned i = 0; i < frame_debug_rect_count; ++i)
     draw_debug_rect(out, view, &frame_debug_rects[i]);

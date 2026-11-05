@@ -152,7 +152,7 @@ static void classifier_checks(void) {
   test_attack = (MmxSaberAttackSnapshot){
       SABER_KIND_GROUND1, 0, SABER_PHASE_ACTIVE, 0, 0, 0, 0};
   make_projectile(slash, 3, 0x5301);
-  check_class(slash, MMX_SABER_PRIORITY_CLASS_SLASH1, 2,
+  check_class(slash, MMX_SABER_PRIORITY_CLASS_SLASH1, 6,
               "ground slash 1 classifies with tuned priority");
 
   MmxSaberPriorityReset();
@@ -231,7 +231,7 @@ static void response_checks(void) {
         "strictly higher Saber response arms the sentinel");
   check(MmxSaberPriorityConsumePending(ram, enemy, higher, &pending_class) &&
             pending_class.priority_class == MMX_SABER_PRIORITY_CLASS_SLASH2 &&
-            pending_class.priority == 3,
+            pending_class.priority == 7,
         "pending token retains the accepted classification");
   check(!MmxSaberPriorityConsumePending(ram, enemy, higher, NULL),
         "pending response token is consumed exactly once");

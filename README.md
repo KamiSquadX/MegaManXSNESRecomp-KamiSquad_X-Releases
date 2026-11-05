@@ -268,6 +268,13 @@ long session can be bisected segment by segment. The format preserves actual
 rollback executions and restored checkpoints, so do not deduplicate frame
 numbers as an input-only CSV route would.
 
+Two playback switches help with netplay captures:
+- `MMX_REPLAY_PEER_VIEW=0` or `1` shows that seat's independent camera view.
+  A capture records only the view of the machine that wrote it.
+- `MMX_REPLAY_CONTINUE=1` keeps feeding the recorded inputs after the first
+  divergence. Use it to watch what a deliberate behaviour change does with a
+  captured session. A run with this switch is never a passing replay.
+
 New recordings use format 2 with the original ROM's identity, independent of
 temporary character collision-table patches. The helper also accepts format 1;
 legacy ROM validation reconstructs known collision-table variants and still

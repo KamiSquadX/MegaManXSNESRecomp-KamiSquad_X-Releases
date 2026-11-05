@@ -222,6 +222,27 @@ static void axl_launcher_checks(const char *root) {
   check(p->feature_enable(p->ctx,coop,"coop",1),"Co-op 0.0.2 enables");
   check(!axl_feature_on(p,zero,"zero") && !axl_feature_on(p,axl,"axl") && !axl_feature_on(p,team,"team"),
       "Co-op turns off Add Zero, Add Axl and Solo Team select");
+  /* Independent netplay cameras settings follows Netplay cameras. */
+  check(!strcmp(axl_option_value(p,coop,"coop","hud"),"horizontal"),"the co-op HUD defaults to Horizontal");
+  check(p->feature_set_option(p->ctx,coop,"coop","cameras","unified") && !axl_feature_on(p,coop,"views"),
+      "Unified cameras leave the settings feature off");
+  p->feature_enable(p->ctx,coop,"views",1);
+  check(!axl_feature_on(p,coop,"views"),"the settings feature has no switch of its own");
+  check(p->feature_set_option(p->ctx,coop,"coop","cameras","independent") && axl_feature_on(p,coop,"views"),
+      "Independent cameras turn the settings feature on");
+  check(!strcmp(axl_option_value(p,coop,"views","select_teleport"),"false") &&
+      !strcmp(axl_option_value(p,coop,"views","death"),"normal") &&
+      !strcmp(axl_option_value(p,coop,"views","death_falls"),"normal"),"the settings default to off and Normal");
+  check(axl_choice_disabled(p,coop,"views","death","shared")==0 &&
+      axl_choice_disabled(p,coop,"views","death","respawn")==1 &&
+      axl_choice_disabled(p,coop,"views","death_falls","teleports")==1,"Respawn and Teleports are greyed out");
+  {
+    RecompLauncherCModChoice c;memset(&c,0,sizeof(c));
+    check(p->feature_choice_get(p->ctx,coop,"views","death",0,&c) &&
+        strstr(c.description,"other player continues"),"Normal explains itself on hover");
+  }
+  check(p->feature_set_option(p->ctx,coop,"coop","cameras","unified") && !axl_feature_on(p,coop,"views"),
+      "back to Unified turns it off again");
   puts("MMX AXL LAUNCHER CHECKS PASSED");
 }
 /* MMX_AXL_HIGHWAY: Game Start, then rapid fire through the intro stage's
@@ -847,4 +868,108 @@ static void axl_checks(void) {
     MmxAxlSetTeam(MMX_AXL_CHAR_AXL,MMX_AXL_CHAR_X);
   }
   puts("MMX AXL CHECKS PASSED");
+}
+/* Axl as a co-op seat on an X body: X + Axl (two X bodies) and Axl + Zero,
+ * booted from the title. Each Axl seat keeps its own state, shoots his
+ * pistol, rolls and hovers, is drawn as Axl in either seat, and a snapshot
+ * replays both seats byte for byte. */
+static unsigned coop_axl_shots(unsigned seat) {
+  MmxAxlState s=MmxAxlGetSeatState(seat);unsigned n=0;
+  for(unsigned i=0;i<MMX_AXL_SHOTS;++i) n+=s.shots[i].slot!=0;
+  return n;
+}
+static void coop_axl_boot_checks(const char *assets,uint8_t *start,uint8_t *expected,uint8_t *actual,size_t cap) {
+  extern void MmxAxlCoopActivate(unsigned seats);
+  check(assets && MmxZeroLoad(assets),"co-op Axl test loads owned X3 source");
+  MmxZeroRegisterHooks();MmxCoopRegisterHooks();
+  uint8_t *boot=malloc(cap);check(boot!=NULL,"power-on buffer");
+  size_t boot_n=RtlSaveSnapshotToMemory(boot,cap);check(boot_n,"power-on snapshot saves");
+  for(unsigned roster=0;roster<2;++roster) {
+    /* roster 0: P1 X, P2 Axl (two X bodies). roster 1: P1 Axl, P2 Zero. */
+    unsigned p2=roster?MMX_COOP_ZERO:MMX_COOP_X,axl_seat=roster?0:1;
+    if(roster) check(RtlLoadSnapshotFromMemory(boot,boot_n),"power-on restores");
+    check(MmxCoopEnablePair(MMX_COOP_X,p2),"co-op roster with an Axl seat enables");
+    MmxAxlCoopActivate(1u<<axl_seat);
+    check(MmxAxlEnabled() && MmxAxlCoopSeats()==(1u<<axl_seat),"Axl takes his co-op seat");
+    zero_replay(1400);
+    for(unsigned n=0;n<3;++n) {coop_frames(30,SNES_PAD_START,0);if(n<2) zero_replay(181);}
+    unsigned wait;
+    for(wait=0;wait<3600;++wait) {
+      MmxCoopState s=MmxCoopGetState();
+      if(g_ram[0xd1]==2 && g_ram[0xd2]==4 && g_ram[0xd3]==4 && s.initialized &&
+          s.players[1].status==MMX_COOP_ALIVE && !s.stage_pending && !MmxCoopTransitionActive()) break;
+      coop_frames(1,0,0);
+    }
+    check(wait<3600,"Highway starts with both seats");
+    MmxCoopState s=MmxCoopGetState();
+    check(s.players[0].character==MMX_COOP_X && s.players[1].character==p2,"seat bodies follow the roster");
+    zero_replay(60);
+    /* The Axl seat fires his pistol: rapid shots, steered by Axl. */
+    unsigned most=0,other=0;
+    for(unsigned t=0;t<90;++t) {
+      unsigned pad=SNES_PAD_Y|(t<45?SNES_PAD_UP:0);
+      coop_frames(1,axl_seat?0:pad,axl_seat?pad:0);
+      unsigned n=coop_axl_shots(axl_seat);if(n>most) most=n;
+      other+=coop_axl_shots(axl_seat^1);
+    }
+    fprintf(stderr,"co-op axl roster=%u seat=%u most shots=%u other=%u\n",roster,axl_seat,most,other);
+    check(most>=3,"the Axl seat's pistol fires Axl's rapid shots");
+    check(!other,"the other seat keeps its own character");
+    /* Down + Dash: the dodge roll. */
+    zero_replay(30);
+    bool rolled=false;
+    coop_frames(1,axl_seat?0:SNES_PAD_DOWN,axl_seat?SNES_PAD_DOWN:0);
+    for(unsigned t=0;t<8;++t) {
+      unsigned pad=SNES_PAD_DOWN|(t<2?SNES_PAD_A:0);
+      coop_frames(1,axl_seat?0:pad,axl_seat?pad:0);
+      rolled|=MmxAxlGetSeatState(axl_seat).roll!=0;
+    }
+    check(rolled,"the Axl seat rolls");
+    zero_replay(60);
+    /* Jump, then jump again and hold: the hover. */
+    bool hovered=false;
+    for(unsigned t=0;t<40;++t) {
+      unsigned pad=t<6 || t>=14 ? SNES_PAD_B : 0;
+      coop_frames(1,axl_seat?0:pad,axl_seat?pad:0);
+      hovered|=MmxAxlGetSeatState(axl_seat).hover!=0;
+    }
+    check(hovered,"the Axl seat hovers");
+    zero_replay(90);
+    /* The two players side by side, then Axl mid-shot, for a look. */
+    for(unsigned t=0;t<20;++t) coop_frames(1,axl_seat?SNES_PAD_RIGHT:0,axl_seat?0:SNES_PAD_RIGHT);
+    for(unsigned t=0;t<6;++t) coop_frames(1,axl_seat?0:SNES_PAD_Y,axl_seat?SNES_PAD_Y:0);
+    {MmxCoopState now=MmxCoopGetState();MmxRendererCoopFrame(&now);
+     modern_image(roster?"coop-axl-p1-zero-p2":"coop-x-p1-axl-p2");}
+    /* Drawn as Axl in either seat: as the live body and as the partner. */
+    for(unsigned live=0;live<2;++live) {
+      MmxCoopSelect(g_ram,live);
+      MmxRendererBeginFrame(g_ram);
+      MmxCoopState now=MmxCoopGetState();MmxRendererCoopFrame(&now);
+      MmxRenderAxlFrame f;
+      bool drawn=live==axl_seat ? MmxAxlFrame(g_ram,&f) && f.own_body :
+          MmxAxlSeatFrame(axl_seat,g_ram,&f) && 0;
+      if(live!=axl_seat) {
+        uint8_t partner[0x20000];memcpy(partner,g_ram,sizeof(partner));
+        memcpy(partner+0xba8,now.players[axl_seat].body,sizeof(now.players[axl_seat].body));
+        drawn=MmxAxlSeatFrame(axl_seat,partner,&f) && (f.own_body || f.body.active);
+      }
+      check(drawn,"Axl is drawn as Axl, as the live body and as the partner");
+      MmxRenderAxlFrame g;
+      if(live!=axl_seat) check(!MmxAxlFrame(g_ram,&g),"the live non-Axl seat keeps its own art");
+    }
+    MmxCoopSelect(g_ram,MmxCoopGetState().anchor);
+    /* Both seats' Axl state travels with snapshots (chunk v27). */
+    size_t n=RtlSaveSnapshotToMemory(start,cap);check(n,"co-op Axl snapshot saves");
+    for(unsigned t=0;t<40;++t) coop_frames(1,axl_seat?SNES_PAD_RIGHT:SNES_PAD_Y,axl_seat?SNES_PAD_Y:SNES_PAD_RIGHT);
+    size_t en=RtlSaveSnapshotToMemory(expected,cap);
+    MmxAxlState before=MmxAxlGetSeatState(axl_seat);
+    check(RtlLoadSnapshotFromMemory(start,n),"co-op Axl snapshot restores");
+    for(unsigned t=0;t<40;++t) coop_frames(1,axl_seat?SNES_PAD_RIGHT:SNES_PAD_Y,axl_seat?SNES_PAD_Y:SNES_PAD_RIGHT);
+    MmxAxlState after=MmxAxlGetSeatState(axl_seat);
+    same(expected,en,actual,RtlSaveSnapshotToMemory(actual,cap),"co-op Axl replays byte for byte");
+    check(!memcmp(&before,&after,sizeof(before)),"the Axl seat's own state replays");
+    MmxCoopDisable();
+  }
+  free(boot);
+  puts("MMX CO-OP AXL CHECKS PASSED");
 }

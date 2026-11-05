@@ -32,17 +32,24 @@ typedef struct MmxCoopState {
   uint8_t return_p, return_db;
   uint8_t time_tick, effect_return; /* Previous seat + 1 during a dash-effect update; formerly reserved. */
   uint16_t object_a, object_x, object_y, object_s, object_d, object_entry;
-  uint8_t object_p, object_db, object_pass, object_reserved;
+  /* teleport_cycle: one nibble per seat (seat 1 high): bits 0-2 the last
+   * Select-teleport landing choice, bit 3 set while he still stands where it
+   * put him; formerly reserved. */
+  uint8_t object_p, object_db, object_pass, teleport_cycle;
   uint16_t contact_a, contact_x, contact_y, contact_s, contact_d, contact_entry;
   uint8_t contact_p, contact_db, contact_pass, platform_riders; /* Pending .2C bits; formerly reserved. */
   uint8_t enrolled, select_hold, select_armed, stage_pending;
   uint8_t menu_owner, menu_last, p1_select_hold, p1_select_armed; /* Last two bytes were reserved. */
   uint8_t pickup_owner[16]; /* Native item slots $1628 + index*$30. */
   uint16_t pickup_s, pickup_d;
-  uint8_t pickup_pass, pickup_reserved[3];
+  uint8_t pickup_pass;
+  uint8_t teleport_seat; /* Select teleport in flight: seat + 1; formerly reserved. */
+  uint8_t select_long[2]; /* Select held, in 2-frame units (255 = spent); formerly reserved. */
   uint8_t anchor, solo_death[2], respawn_pending; /* Seat bits; formerly reserved. */
   uint8_t death_flags[2][8]; /* Native freeze flags around a partner's death. */
-  uint8_t scene_owner, scene_phase, door_pass, scene_reserved;
+  /* scene_stay: an independent-view partner away from the scene sits it out
+   * where he stands instead of being beamed to it; formerly reserved. */
+  uint8_t scene_owner, scene_phase, door_pass, scene_stay;
   uint16_t door_s, door_d, door_entry;
   uint16_t slime_p2; /* Capture owner bits for $1428 + slot*$40; formerly reserved. */
 } MmxCoopState;
@@ -67,6 +74,16 @@ static inline void MmxCoopImportLegacy(MmxCoopState *out, const uint8_t *bytes) 
 /* The trusted co-op plugin prepares the owner-supplied X3 ROM, then enables
  * the chosen roster. This mode excludes single-player character exchange. */
 bool MmxCoopEnable(unsigned p1_character);
+/* Both seats' bodies: X or Zero each. Two X bodies only with an Axl seat
+ * (Axl plays on X's body, mmx_axl.h). */
+bool MmxCoopEnablePair(unsigned p1_character, unsigned p2_character);
+/* The seat whose body is in WRAM; whether a seat is in play (alive). */
+unsigned MmxCoopCurrentSeat(void);
+bool MmxCoopSeatReady(unsigned seat);
+/* Live buster/weapon shot slots ($1228 + 64n) of a seat, stored or live. */
+uint8_t MmxCoopSeatShotMask(unsigned seat);
+/* The camera origin of a seat's own screen (the shared one offline). */
+void MmxCoopSeatCamera(unsigned seat, int *x, int *y);
 void MmxCoopDisable(void);
 bool MmxCoopEnabled(void);
 void MmxCoopReset(void);
@@ -78,6 +95,9 @@ void MmxCoopCapture(uint8_t ram[0x20000]);
 /* Developer mod opt-in; host-only logging, outside save/netplay state. */
 bool MmxCoopDiagnosticsEnabled(void);
 void MmxCoopSetDiagnosticsEnabled(bool active);
+/* Independent netplay cameras settings (co-op 0.0.2): Select teleports to the
+ * other player; Shared death sends the team to the checkpoint. */
+void MmxCoopSetViewRules(bool select_teleport, bool shared_death);
 void MmxCoopDiagnosticFrame(const uint8_t ram[0x20000]);
 bool MmxCoopSelect(uint8_t ram[0x20000], unsigned player);
 void MmxCoopPoll(uint16_t p1, uint16_t p2);

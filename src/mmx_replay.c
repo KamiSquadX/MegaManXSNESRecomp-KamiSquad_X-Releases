@@ -364,6 +364,9 @@ static uint32_t playback_begin(uint32_t inputs) {
   MmxCoopViewsSetIndependent((flags&16)!=0); MmxCoopViewsSetOnline((flags&64)!=0);
   if(flags&32) RtlEnableExtendedFrameTiming();
   if(!!(flags&32)!=rtl_apu_extended_frame_timing()) { error("frame timing mode differs"); return inputs; }
+  /* MMX_REPLAY_PEER_VIEW=0|1 shows the other seat's independent view: a
+   * capture records only the view of the machine that wrote it. */
+  {const char *e=getenv("MMX_REPLAY_PEER_VIEW");if(e && (*e=='0' || *e=='1') && (flags&64)) peer=*e-'0';}
   MmxRendererSetPeerView(peer); playback_width=width;
   RtlSetPadExt(0,(uint8_t)ext);RtlSetPadExt(1,(uint8_t)(ext>>8));
   MmxReplayViewport(&g_mmx_custom_view.width,&g_mmx_custom_view.extra);
@@ -462,19 +465,34 @@ void MmxReplayEnd(void) {
         after!=next_frame) {
       error("incomplete or invalid checkpoint after input (the recorded frame may have hung/crashed)");return;
     }
-    if((unsigned)snes_frame_counter!=next_frame || w!=expected_wram || c!=expected_coop || v!=expected_views || p!=expected_vram) {
+    /* MMX_REPLAY_CONTINUE=1 keeps feeding the recorded inputs after the first
+     * divergence: for watching what a deliberate behaviour change does with
+     * a captured session. Reported once; never a passing replay. */
+    static int keep_going=-1;
+    if(keep_going<0) {const char *e=getenv("MMX_REPLAY_CONTINUE");keep_going=e && *e=='1';}
+    static bool diverged;
+    bool mismatch=(unsigned)snes_frame_counter!=next_frame || w!=expected_wram || c!=expected_coop ||
+        v!=expected_views || p!=expected_vram;
+    if(mismatch && !(keep_going && diverged)) {
       fprintf(stderr,"[mmx-replay] FIRST DIVERGENCE frame=%u WRAM=%08x/%08x co-op=%08x/%08x views=%08x/%08x VRAM=%08x/%08x\n",
           next_frame-1,w,expected_wram,c,expected_coop,v,expected_views,p,expected_vram);
       if(RtlSaveSnapshot("replay-divergence.sav"))
         fprintf(stderr,"[mmx-replay] saved actual divergent machine to replay-divergence.sav\n");
-      error("checkpoint mismatch");
+      diverged=true;
+      if(!keep_going) error("checkpoint mismatch");
+    }
+    if(mismatch && !keep_going) {
     } else {
       ++playback_rows;
       watch_frame(next_frame-1);
       int next=fgetc(stream);
       if(next==EOF) {
         if(ferror(stream)) error("input read failed");
-        else { finished=true; MmxReplayClose(); fprintf(stderr,"[mmx-replay] all recorded checkpoints matched\n"); }
+        else {
+          finished=true; MmxReplayClose();
+          fprintf(stderr,diverged?"[mmx-replay] inputs exhausted after a divergence (MMX_REPLAY_CONTINUE)\n":
+                                  "[mmx-replay] all recorded checkpoints matched\n");
+        }
       } else ungetc(next,stream);
     }
   } else if(recording) {

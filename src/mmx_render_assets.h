@@ -8,6 +8,10 @@ typedef struct MmxSpriteAsset {
   uint16_t colors[16];
   uint8_t id, tile_base, attributes;
   bool current, live_tiles, live_colors;
+  /* Art for an actor whose resource the current section never bound (an
+   * independent co-op view ahead of the native camera): its live OBJ
+   * attributes carry no priority, so the resource supplies it. */
+  bool unbound;
 } MmxSpriteAsset;
 
 void MmxRenderAssetsSetRom(const uint8_t *rom, size_t size);
@@ -39,6 +43,8 @@ const MmxSpriteAsset *MmxRenderAssetsObjectSprite(const uint8_t ram[0x20000],
                                                 unsigned object, unsigned animation);
 bool MmxRenderAssetsRideArmorPalettePending(const uint8_t ram[0x20000], const uint16_t colors[16]);
 unsigned MmxRenderAssetsDeathPaletteFade(const uint8_t ram[0x20000], const uint16_t colors[256]);
+/* Before reading background resources from several threads at once. */
+void MmxRenderAssetsPrepareConcurrentDraw(const uint8_t ram[0x20000]);
 uint16_t MmxRenderAssetsFadeColor(uint16_t color, unsigned amount);
 typedef struct MmxBackgroundPalette {
   uint16_t colors[128];
@@ -51,3 +57,10 @@ const uint8_t *MmxRenderAssetsBackgroundTile(const uint8_t ram[0x20000],
 const MmxBackgroundPalette *MmxRenderAssetsBackgroundPalette(const uint8_t ram[0x20000],
                                                              int world_x);
 const MmxBackgroundPalette *MmxRenderAssetsBackgroundPalettePhase(const uint8_t ram[0x20000], unsigned phase);
+/* For a view away from the native camera: what the column's phase does not
+ * reload comes from the phases before it (stages whose phases run left to
+ * right only), instead of the native section's live VRAM/CGRAM. */
+const uint8_t *MmxRenderAssetsBackgroundTileEarlier(const uint8_t ram[0x20000],
+                                                   int world_x, unsigned vram_word);
+const MmxBackgroundPalette *MmxRenderAssetsBackgroundPaletteEarlier(const uint8_t ram[0x20000],
+                                                                    int world_x);

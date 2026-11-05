@@ -321,6 +321,7 @@ if(BUILD_TESTING)
         MMX_SABER_RENDER_CACHE_DIR="${_saber_cache_dir}"
         MMX_SABER_DRAW_ZERO_PATH="${CMAKE_CURRENT_BINARY_DIR}/tmp/saber-render-draw-zero.bin"
         MMX_SABER_DRAW_WEAPON_PATH="${CMAKE_CURRENT_BINARY_DIR}/tmp/saber-render-draw-weapon.bin")
+    snesrecomp_target_render_workers(mmx_saber_renderer_draw_test)
     add_test(NAME mmx_saber_renderer_draw COMMAND mmx_saber_renderer_draw_test)
     set_tests_properties(mmx_saber_renderer_draw PROPERTIES SKIP_RETURN_CODE 77)
     if(MSVC)

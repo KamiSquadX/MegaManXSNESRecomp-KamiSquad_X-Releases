@@ -30,7 +30,11 @@ OPTIONAL = {0x02d7d7}
 # $81:EC98 state crashes when interpreted during the Storm Eagle lift ride
 # (dispatch to $50:D2ED), so the doors enter the interpreter only when
 # door_hook can open its pass.
-POLICIES = {0x01e70d: 'MmxCoopDoorRouteE70D', 0x01ec98: 'MmxCoopDoorRouteEC98'}
+# $00:DE40 (camera, incl. the player's screen-edge wall) also goes through
+# the interpreter while widescreen has a margin, so the wall can follow the
+# visible widescreen edge (MmxWsPlayerEdgeHook) in solo play too.
+POLICIES = {0x01e70d: 'MmxCoopDoorRouteE70D', 0x01ec98: 'MmxCoopDoorRouteEC98',
+            0x00de40: 'MmxCameraRouteDE40'}
 
 
 def apply(text):

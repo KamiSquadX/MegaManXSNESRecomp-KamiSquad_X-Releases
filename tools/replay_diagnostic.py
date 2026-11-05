@@ -23,7 +23,7 @@ def inspect(path):
             raise ValueError("blank replay record")
         if fields[0] == "S" and len(fields) == 4 and not unfinished:
             checkpoints += 1
-        elif fields[0] == "I" and len(fields) == 6 and not unfinished:
+        elif fields[0] == "I" and len(fields) in (6, 7) and not unfinished:  # format 3 adds pad extensions
             unfinished = True
         elif fields[0] == "H" and len(fields) == 6 and unfinished:
             frames += 1
