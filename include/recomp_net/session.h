@@ -84,6 +84,15 @@ int rnet_session_adopt_ice_agent(RNetSession *s, RNetIceAgent *agent);
 void rnet_session_pump(RNetSession *s);
 
 /*
+ * Liveness only, for a host whose frame loop is blocked (a window being
+ * dragged or resized holds Windows' modal loop): receive what has arrived and
+ * send a HELLO at most every 250 ms, so neither peer reads the pause as a
+ * dropped connection. Sends no INPUT and advances nothing. Running sessions
+ * only.
+ */
+void rnet_session_keepalive(RNetSession *s);
+
+/*
  * Park until a LAN datagram may be readable (or timeout_ms). Prefer this over
  * Sleep/Delay in admit barriers. ICE falls back to sleep.
  * Returns 1 if the socket reported readable, 0 on timeout/unavailable.

@@ -151,6 +151,8 @@ typedef struct RNetLobbyMember {
  * runtime's own types: the lobby transports package identity and knows nothing
  * about what a package contains. */
 #define RNET_LOBBY_MAX_MODS      16
+#define RNET_LOBBY_MOD_SET_LEN   1536
+#define RNET_LOBBY_SERVER_MOD_SET_MAX 512
 #define RNET_LOBBY_MOD_ID_LEN    96
 #define RNET_LOBBY_MOD_VER_LEN   32
 #define RNET_LOBBY_MOD_NAME_LEN  64
@@ -297,8 +299,12 @@ typedef struct RNetLobbyMatchCaps {
      * because the two would simulate differently.
      *
      * Carried so a guest can match the host BEFORE launching rather than
-     * discovering the difference from a refused match. */
-    char mod_set[512];
+     * discovering the difference from a refused match.
+     *
+     * Sized for a LAN room's set (RNET_LAN_LOBBY_MOD_SET_MAX), which is copied
+     * in here; an online host still publishes at most
+     * RNET_LOBBY_SERVER_MOD_SET_MAX of it, what the lobby server accepts. */
+    char mod_set[RNET_LOBBY_MOD_SET_LEN];
     /* Which packages this match's AUTHORITY grants the presentation-only
      * exemption to: ';'-separated `id@version` or `id@version#sha256`.
      *

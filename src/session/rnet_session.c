@@ -302,8 +302,13 @@ struct RNetSession
      * the host then waited out its bound for a guest that had already
      * confirmed, and refused the match. */
     rnet_u8 peer_wire_version_mismatch; /* a HELLO of another wire version (0xFF = 0) */
-    char modset_text[RNET_MODSET_TEXT_MAX];
+    char modset_text[RNET_MODSET_FULL_MAX];
     rnet_u8 modset_pending;
+    /* A split set being reassembled: chunk i lands at i * CHUNK_BYTES. */
+    char modset_asm[RNET_MODSET_FULL_MAX];
+    rnet_u16 modset_asm_mask;  /* bit i = chunk i arrived */
+    rnet_u8 modset_asm_count;  /* chunks in the set being assembled */
+    rnet_u32 modset_asm_len;   /* total length, known once the last chunk is in */
     char modset_ack_reason[RNET_MAX_SLOTS][RNET_MODSET_REASON_MAX];
     rnet_u8 modset_ack_status[RNET_MAX_SLOTS];
     rnet_u32 modset_ack_pending; /* bit i = seat i's answer is waiting */
@@ -1225,9 +1230,38 @@ static void handle_decoded(RNetSession *s, const RNetDecodedPacket *pkt)
     case RNET_PKT_MODSET:
         if (pkt->local_slot != s->wire_slot)
         {
-            memcpy(s->modset_text, pkt->modset_text, sizeof(s->modset_text));
-            s->modset_text[sizeof(s->modset_text) - 1] = '\0';
-            s->modset_pending = 1u;
+            unsigned count = pkt->modset_status & 0x0Fu;
+            unsigned index = pkt->modset_status >> 4;
+            if (pkt->modset_status == 0u)
+            {
+                /* The whole set in one packet. */
+                memcpy(s->modset_text, pkt->modset_text, pkt->modset_len);
+                s->modset_text[pkt->modset_len] = '\0';
+                s->modset_pending = 1u;
+                s->modset_asm_mask = 0u;
+            }
+            else if ((count >= 2u) && (index < count) &&
+                     (pkt->modset_len <= RNET_MODSET_CHUNK_BYTES) &&
+                     ((index + 1u == count) || (pkt->modset_len == RNET_MODSET_CHUNK_BYTES)))
+            {
+                rnet_u32 at = (rnet_u32)index * RNET_MODSET_CHUNK_BYTES;
+                if (count != s->modset_asm_count)
+                {
+                    s->modset_asm_count = (rnet_u8)count;
+                    s->modset_asm_mask = 0u;
+                }
+                memcpy(s->modset_asm + at, pkt->modset_text, pkt->modset_len);
+                if (index + 1u == count)
+                    s->modset_asm_len = at + pkt->modset_len;
+                s->modset_asm_mask |= (rnet_u16)(1u << index);
+                if (s->modset_asm_mask == (rnet_u16)((1u << count) - 1u))
+                {
+                    memcpy(s->modset_text, s->modset_asm, s->modset_asm_len);
+                    s->modset_text[s->modset_asm_len] = '\0';
+                    s->modset_pending = 1u;
+                    s->modset_asm_mask = 0u;
+                }
+            }
         }
         break;
     case RNET_PKT_MODSET_ACK:
@@ -3252,6 +3286,37 @@ void rnet_session_pump(RNetSession *s)
     }
 }
 
+void rnet_session_keepalive(RNetSession *s)
+{
+    rnet_u64 now;
+    int i;
+    if (s == NULL || s->phase != RNET_PHASE_RUNNING)
+    {
+        return;
+    }
+    if (s->ice != NULL)
+    {
+        rnet_ice_agent_poll(s->ice);
+    }
+    for (i = 1; i < RNET_MAX_SLOTS; ++i)
+    {
+        if (s->ice_hub[i] != NULL)
+        {
+            rnet_ice_agent_poll(s->ice_hub[i]);
+        }
+    }
+    pump_recv(s);
+    now = session_now(s);
+    if (now - s->last_hello_ms >= 250ULL)
+    {
+        rnet_u8 buf[RNET_MAX_PACKET];
+        int len = rnet_proto_encode_hello(buf, sizeof(buf), s->cfg.protocol_magic, s->cfg.session_id,
+                                          s->wire_slot, s->cfg.slot_count, s->delay);
+        send_raw(s, buf, len);
+        s->last_hello_ms = now;
+    }
+}
+
 int rnet_session_wait_recv(RNetSession *s, int timeout_ms)
 {
     if (s == NULL)
@@ -5066,18 +5131,44 @@ int rnet_session_send_modset(RNetSession *s, const char *text)
 {
     rnet_u8 buf[RNET_MAX_PACKET];
     int n;
+    size_t len, count, i;
     if ((s == NULL) || (text == NULL) || (s->phase != RNET_PHASE_RUNNING))
     {
         return -1;
     }
-    n = rnet_proto_encode_modset(buf, sizeof(buf), s->cfg.protocol_magic,
-                                 s->cfg.session_id, (rnet_u8)s->wire_slot,
-                                 text);
-    if (n <= 0)
+    len = strlen(text);
+    if (len < RNET_MODSET_TEXT_MAX)
+    {
+        n = rnet_proto_encode_modset(buf, sizeof(buf), s->cfg.protocol_magic,
+                                     s->cfg.session_id, (rnet_u8)s->wire_slot,
+                                     text);
+        if (n <= 0)
+        {
+            return -1;
+        }
+        rnet_transport_send(&s->transport, buf, (size_t)n);
+        return 0;
+    }
+    /* Too large for one packet: send every chunk. The caller re-sends the
+     * whole set until it is answered, so a dropped chunk is simply resent. */
+    count = (len + RNET_MODSET_CHUNK_BYTES - 1u) / RNET_MODSET_CHUNK_BYTES;
+    if (count > RNET_MODSET_MAX_CHUNKS)
     {
         return -1;
     }
-    rnet_transport_send(&s->transport, buf, (size_t)n);
+    for (i = 0; i < count; ++i)
+    {
+        size_t at = i * RNET_MODSET_CHUNK_BYTES;
+        size_t part = (len - at) < RNET_MODSET_CHUNK_BYTES ? (len - at) : RNET_MODSET_CHUNK_BYTES;
+        n = rnet_proto_encode_modset_chunk(buf, sizeof(buf), s->cfg.protocol_magic,
+                                           s->cfg.session_id, (rnet_u8)s->wire_slot,
+                                           text + at, part, (unsigned)i, (unsigned)count);
+        if (n <= 0)
+        {
+            return -1;
+        }
+        rnet_transport_send(&s->transport, buf, (size_t)n);
+    }
     return 0;
 }
 

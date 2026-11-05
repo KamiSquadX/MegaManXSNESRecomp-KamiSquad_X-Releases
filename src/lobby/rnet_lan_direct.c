@@ -7,7 +7,8 @@
 #include <string.h>
 
 #define RNET_DJ_MAGIC "RNETDJ1"
-#define RNET_DJ_MAX_PKT 2048
+/* Room fields plus a mod set of up to RNET_LAN_LOBBY_MOD_SET_MAX. */
+#define RNET_DJ_MAX_PKT 3072
 
 /* Received chat, oldest at head. Sized so a burst between two pumps is kept
  * rather than dropped; when it does overflow the OLDEST goes, because losing

@@ -94,6 +94,8 @@ static int socket_would_block(void)
 #endif
 }
 
+#define RNET_LOBBY_WS_RX_MAX (65535u + 16u)
+
 typedef struct {
     int fd;
     int connected;
@@ -106,8 +108,12 @@ typedef struct {
     char url[256]; /* full WS URL passed to connect */
     char rx_http[4096];
     size_t rx_http_len;
-    /* Bytes that arrived with the HTTP 101 response after the header end. */
-    uint8_t ws_pending[4096];
+    /* Received WebSocket bytes awaiting a whole frame. Sized for the largest
+     * frame the server sends (16-bit length): a room update carries the match
+     * caps, every member's mod offer and the chat, and passes 4 KB once the
+     * host enables five or six mods. A full buffer used to read as a dead
+     * connection, which closed the room and sent the host back to the list. */
+    uint8_t ws_pending[RNET_LOBBY_WS_RX_MAX];
     size_t ws_pending_len;
     RNetLobbyRow list[RNET_LOBBY_MAX_LIST];
     int list_count;
@@ -2587,8 +2593,8 @@ static void drain_ws_pending(void)
         if (g_lc.ws_pending_len < i + plen) {
             return;
         }
-        if (opcode == 0x1 && plen + 1 < sizeof(g_lc.rx_http)) {
-            char text[4096];
+        if (opcode == 0x1 && plen + 1 < RNET_LOBBY_WS_RX_MAX) {
+            static char text[RNET_LOBBY_WS_RX_MAX];
             memcpy(text, g_lc.ws_pending + i, plen);
             text[plen] = '\0';
             handle_server_json(text);
@@ -3732,6 +3738,8 @@ void rnet_lobby_pump(void)
     for (;;) {
         size_t available = sizeof(g_lc.ws_pending) - g_lc.ws_pending_len;
         if (available == 0) {
+            fprintf(stderr, "rnet_lobby: a server frame is larger than %u bytes; "
+                            "disconnecting\n", (unsigned)sizeof(g_lc.ws_pending));
             rnet_lobby_disconnect();
             return;
         }

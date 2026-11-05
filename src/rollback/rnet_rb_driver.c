@@ -1273,7 +1273,9 @@ static void rb_modset_pump(RNetRbDriver *d)
 {
     RNetSession *s = rb_session(d);
     const int host = (rb_local_slot(d) == 0);
-    char text[1024];
+    /* Holds a whole reassembled set (the session splits large ones across
+     * packets, up to 15 x 960 bytes). Static: this runs every frame. */
+    static char text[16384];
     rnet_u8 status = 0;
     char reason[96];
 

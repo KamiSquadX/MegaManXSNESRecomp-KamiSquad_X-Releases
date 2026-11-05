@@ -46,13 +46,19 @@ extern "C" {
  * cannot reproduce the host's set is running a different game and must not be
  * allowed to start rather than be discovered desyncing later.
  *
- * One packet, not a chunked transfer: a realistic set is a few hundred bytes
- * against a 1200-byte MTU, and a set too large to fit is refused loudly rather
- * than silently truncated -- two different sets can share a prefix. */
+ * A set that fits one packet travels as one, exactly as it always has (status
+ * byte 0). A larger set -- every option of every enabled package is listed,
+ * and a single character mod can carry thirty -- is split into numbered
+ * chunks: the MODSET status byte carries (index << 4) | count, count 2..15,
+ * and the receiver hands the set over only once every chunk of it has
+ * arrived. It is never truncated: two different sets can share a prefix. */
 #define RNET_PKT_MODSET 26      /* host->peer: canonical effective mod set */
 #define RNET_PKT_MODSET_ACK 27  /* peer->host: can/cannot honour it, and why */
 
-#define RNET_MODSET_TEXT_MAX 1024u
+#define RNET_MODSET_TEXT_MAX 1024u   /* one packet's text (a chunk) */
+#define RNET_MODSET_CHUNK_BYTES 960u /* text per chunk of a split set */
+#define RNET_MODSET_MAX_CHUNKS 15u
+#define RNET_MODSET_FULL_MAX (RNET_MODSET_CHUNK_BYTES * RNET_MODSET_MAX_CHUNKS + 1u)
 #define RNET_MODSET_REASON_MAX 96u
 
 /* MODSET_ACK status */
@@ -194,6 +200,11 @@ int rnet_proto_encode_rb_frame_commit(rnet_u8 *out, size_t cap, rnet_u32 magic, 
 int rnet_proto_encode_modset(rnet_u8 *out, size_t cap, rnet_u32 magic,
                              rnet_u32 session_id, rnet_u8 local_slot,
                              const char *text);
+/* One chunk of a split set: len bytes of text, chunk index of count. */
+int rnet_proto_encode_modset_chunk(rnet_u8 *out, size_t cap, rnet_u32 magic,
+                                   rnet_u32 session_id, rnet_u8 local_slot,
+                                   const char *text, size_t len,
+                                   unsigned index, unsigned count);
 int rnet_proto_encode_modset_ack(rnet_u8 *out, size_t cap, rnet_u32 magic,
                                  rnet_u32 session_id, rnet_u8 local_slot,
                                  rnet_u8 status, const char *reason);

@@ -588,6 +588,29 @@ int rnet_proto_encode_modset(rnet_u8 *out, size_t cap, rnet_u32 magic,
     return finish_packet(out, c, cap);
 }
 
+int rnet_proto_encode_modset_chunk(rnet_u8 *out, size_t cap, rnet_u32 magic,
+                                   rnet_u32 session_id, rnet_u8 local_slot,
+                                   const char *text, size_t len,
+                                   unsigned index, unsigned count)
+{
+    rnet_u8 *c = out;
+    if ((text == NULL) || (len == 0u) || (len >= RNET_MODSET_TEXT_MAX) ||
+        (count < 2u) || (count > RNET_MODSET_MAX_CHUNKS) || (index >= count) ||
+        (cap < (18 + len)))
+    {
+        return -1;
+    }
+    write_u32(&c, magic);
+    write_u16(&c, RNET_PKT_MODSET);
+    write_u32(&c, session_id);
+    *c++ = local_slot;
+    *c++ = (rnet_u8)((index << 4) | count);
+    write_u16(&c, (rnet_u16)len);
+    memcpy(c, text, len);
+    c += len;
+    return finish_packet(out, c, cap);
+}
+
 int rnet_proto_encode_modset_ack(rnet_u8 *out, size_t cap, rnet_u32 magic,
                                  rnet_u32 session_id, rnet_u8 local_slot,
                                  rnet_u8 status, const char *reason)

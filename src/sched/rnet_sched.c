@@ -1288,6 +1288,24 @@ static void np_scorecard_sample(uint32_t now, rnet_u32 sim, rnet_u32 wire,
     }
 }
 
+/* A raise that bought nothing. When rows keep arriving just as late after D
+ * went up, the lateness is not transit: the peer is producing ticks slower
+ * than real time (CPU-bound -- heavy mods, a slow machine), and no cushion
+ * catches up with a peer that is behind on RATE. Every raise then adds input
+ * latency for nothing; a playtest on a 5 ms LAN climbed 4 -> 16 (270 ms of
+ * input lag) in a minute this way. np_auto_delay_tick sets this ceiling after
+ * such a raise and reverts it; both raise paths respect it until it lapses.
+ * 0 = no ceiling. */
+static int      g_ad_ceiling;
+static uint32_t g_ad_ceiling_until_ms;
+
+static int np_delay_ceiling(uint32_t now)
+{
+    if (g_ad_ceiling && (int32_t)(now - g_ad_ceiling_until_ms) >= 0)
+        g_ad_ceiling = 0;
+    return g_ad_ceiling;
+}
+
 static void np_adapt_delay_on_pcap_enter(uint32_t now)
 {
     const char *e;
@@ -1321,6 +1339,8 @@ static void np_adapt_delay_on_pcap_enter(uint32_t now)
         return;
     if (sched_delay() >= RB_ADAPT_DELAY_MAX)
         return;
+    if (np_delay_ceiling(now) && sched_delay() >= np_delay_ceiling(now))
+        return; /* raising was shown not to help (see g_ad_ceiling) */
 
     {
         int old_d = sched_delay();
@@ -1418,6 +1438,14 @@ static void np_auto_delay_tick(uint32_t now)
     static uint32_t s_last_change_ms;
     static uint32_t s_agree_streak;
     static int      s_last_target = -1;
+    /* The raise under test: D before it and the window that asked for it. */
+    static RNetSession *s_owner;
+    static int      s_probe_from = -1;
+    static uint32_t s_probe_miss, s_probe_late;
+    static uint32_t s_ineffective;
+    static uint32_t s_probe_waits;
+    static int      s_chain_from = -1;
+    static uint32_t s_chain_miss, s_chain_ms, s_chain_late;
     RNetSession *s = sched_session();
     uint32_t tick_ms = g_ts_tick_ema_ms ? g_ts_tick_ema_ms : 17u;
     uint32_t ticks, miss, late_n, late_sum, late_max;
@@ -1489,6 +1517,53 @@ static void np_auto_delay_tick(uint32_t now)
         return; /* host proposes; guests follow DELAY_SYNC */
 
     miss_per_mille = (uint32_t)(((uint64_t)miss * 1000u) / ticks);
+
+    if (s != s_owner) {
+        s_owner = s;
+        s_probe_from = -1;
+        s_ineffective = 0u;
+        g_ad_ceiling = 0;
+        s_chain_from = -1;
+    }
+    /* Judge the last raise on the first window after it took effect. It
+     * worked if late rows fell by a quarter or more (fewer misses, or the
+     * ones left arrive sooner); otherwise put D back and stop raising. */
+    if (s_probe_from >= 0 && d > s_probe_from) {
+        const uint32_t late_avg = late_n ? (late_sum / late_n) : 0u;
+        const int helped = miss_per_mille * 4u < s_probe_miss * 3u ||
+                           late_avg * 4u < s_probe_late * 3u;
+        const int back = s_probe_from;
+        s_probe_from = -1;
+        if (!helped) {
+            uint32_t hold = 60000u << (s_ineffective < 3u ? s_ineffective : 3u);
+            s_ineffective++;
+            g_ad_ceiling = back;
+            g_ad_ceiling_until_ms = now + hold;
+            if (rnet_session_request_delay_change(s, (rnet_u8)back)) {
+                s_last_change_ms = now ? now : 1u;
+                s_agree_streak = 0u;
+                s_last_target = back;
+                fprintf(stderr,
+                        "rbe: auto delay %d -> %d: the raise did not reduce late "
+                        "rows (miss %u -> %u per mille, late %u -> %u ms); the "
+                        "peer is running below full speed, not waiting on the "
+                        "network -- holding D at %d for %u s\n",
+                        d, back, (unsigned)s_probe_miss,
+                        (unsigned)miss_per_mille, (unsigned)s_probe_late,
+                        (unsigned)late_avg, back, (unsigned)(hold / 1000u));
+                fflush(stderr);
+            }
+            return;
+        }
+    } else if (s_probe_from >= 0 && d <= s_probe_from) {
+        /* A requested change commits at a later tick, so the first window
+         * after the request can still run at the old D: wait for it, but
+         * only two windows, and never past a lower. */
+        if (d < s_probe_from || ++s_probe_waits > 2u)
+            s_probe_from = -1;
+        if (s_probe_from >= 0)
+            return; /* judge this raise before proposing another */
+    }
     /* §105: raise only on waited-out arrival pressure (late_n>0). Invent-only
      * miss storms (session-149 lead_avg≈-2, late_n=1, miss=993‰) must not
      * ratchet D — raising delay does not stop tip invent. */
@@ -1525,6 +1600,42 @@ static void np_auto_delay_tick(uint32_t now)
     }
     if (target > RB_ADAPT_DELAY_MAX)
         target = RB_ADAPT_DELAY_MAX;
+    if (target > d && np_delay_ceiling(now)) {
+        const int ceiling = np_delay_ceiling(now);
+        target = ceiling > d ? ceiling : d;
+    }
+    /* The steadier half of the same test: a window holds only a handful of
+     * late rows, so the first one after a raise can look clean by chance. A
+     * raise that is followed within 30 s by a call for ANOTHER, on about as
+     * many late rows as the first, did not help either -- put it back. */
+    if (target > d && s_chain_from >= 0 && d > s_chain_from &&
+        (uint32_t)(now - s_chain_ms) < 30000u &&
+        miss_per_mille * 4u >= s_chain_miss * 3u &&
+        /* Transit trouble arrives many ticks late and is what raising is
+         * for; a peer short on speed runs about a tick behind. */
+        s_chain_late < 2u * tick_ms) {
+        uint32_t hold = 60000u << (s_ineffective < 3u ? s_ineffective : 3u);
+        const int back = s_chain_from;
+        s_ineffective++;
+        s_chain_from = -1;
+        s_probe_from = -1;
+        g_ad_ceiling = back;
+        g_ad_ceiling_until_ms = now + hold;
+        if (rnet_session_request_delay_change(s, (rnet_u8)back)) {
+            s_last_change_ms = now ? now : 1u;
+            s_agree_streak = 0u;
+            s_last_target = back;
+            fprintf(stderr,
+                    "rbe: auto delay %d -> %d: rows stayed late after the last "
+                    "raise (miss %u -> %u per mille); the peer is running below "
+                    "full speed, not waiting on the network -- holding D at %d "
+                    "for %u s\n",
+                    d, back, (unsigned)s_chain_miss, (unsigned)miss_per_mille,
+                    back, (unsigned)(hold / 1000u));
+            fflush(stderr);
+        }
+        return;
+    }
 
     if (target == d) {
         s_agree_streak = 0u;
@@ -1571,6 +1682,16 @@ static void np_auto_delay_tick(uint32_t now)
         return; /* prediction was needed at current D — don't shrink cushion */
 
     if (rnet_session_request_delay_change(s, (rnet_u8)target)) {
+        if (target > d) {
+            s_probe_from = d;
+            s_probe_waits = 0u;
+            s_chain_from = d;
+            s_chain_miss = miss_per_mille;
+            s_chain_ms = now;
+            s_chain_late = late_n ? (late_sum / late_n) : 0u;
+            s_probe_miss = miss_per_mille;
+            s_probe_late = late_n ? (late_sum / late_n) : 0u;
+        }
         s_last_change_ms = now ? now : 1u;
         s_agree_streak = 0u;
         fprintf(stderr,
