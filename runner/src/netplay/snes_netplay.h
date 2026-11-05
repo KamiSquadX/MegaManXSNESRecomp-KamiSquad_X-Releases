@@ -176,6 +176,13 @@ int  snes_netplay_peer_disconnected(uint32_t timeout_ms);
 void snes_netplay_pump(void);
 
 /*
+ * Keep the connection alive while the frame loop is blocked (window drag or
+ * resize on Windows): receive, and send a HELLO every 250 ms. No inputs, no
+ * simulation. Safe to call from an SDL event watch.
+ */
+void snes_netplay_keepalive(void);
+
+/*
  * Pump + try_admit. On success, published pads are ready via
  * snes_netplay_published_inputs(). Returns 1 if admitted, 0 if stall.
  * Also applies the optional slot-0 game sync bytes before simulation.

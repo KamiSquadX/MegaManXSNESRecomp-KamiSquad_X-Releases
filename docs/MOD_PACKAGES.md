@@ -104,8 +104,13 @@ its group.
 
 `follows_any = "package:feature package:feature"` makes a feature enabled
 exactly while any of the listed features is; the launcher shows its checkbox
-locked. A choice may carry `requires = "package:feature"`: it is offered
-only while that feature is enabled, greyed out otherwise.
+locked. An item may also be `package:feature:option=value`: that feature is
+enabled and its option currently holds the value (a settings feature that
+follows one choice of another feature). A choice may carry
+`requires = "package:feature"`: it is offered only while that feature is
+enabled, greyed out otherwise; naming a feature that does not exist keeps a
+listed choice greyed out. A choice's `description` is shown when the pointer
+rests on it.
 
 Options use the same feature-oriented concepts exposed by recomp-ui:
 

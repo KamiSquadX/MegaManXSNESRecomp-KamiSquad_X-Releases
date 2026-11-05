@@ -469,7 +469,7 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       /* The generated default was 10000 raw units for years, which the
        * launcher shows as 30% -- far past where any stick rests, so the first
        * third of every throw was dead and the pad felt unresponsive. The
-       * default is 10% now. A file still carrying the old generated number is
+       * default is 40% now. A file still carrying the old generated number is
        * read as the new one and rewritten once, the same treatment the volume
        * keys got; a deliberate 30% survives as any other value near it, e.g.
        * 9999 or 10001. */

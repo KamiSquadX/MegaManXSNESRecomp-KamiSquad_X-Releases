@@ -143,13 +143,18 @@ static int m_plan_rows(void *ctx, RNetLobbyModPkg *out, int max)
                            out, max);
 }
 
+/* Every installed package, not just the first SNES_LOBBY_MAX_MODS: the
+ * offer is chosen from this list (the room's plan packages first), and a
+ * cut here dropped whatever sorted last -- the X2/X3 weapon packs of an
+ * 18-package install -- so the host read "Needs mods" for mods the guest had. */
+#define SNES_LOBBY_INSTALLED_SCAN_MAX 128
 static int m_installed_rows(void *ctx, RNetLobbyModPkg *out, int max)
 {
-  SnesModPkgRow rows[SNES_LOBBY_MAX_MODS];
+  static SnesModPkgRow rows[SNES_LOBBY_INSTALLED_SCAN_MAX];
   (void)ctx;
-  return rows_from_runtime(
-      rows, snes_mod_runtime_installed_rows_c(rows, SNES_LOBBY_MAX_MODS), out,
-      max);
+  if (max > SNES_LOBBY_INSTALLED_SCAN_MAX) max = SNES_LOBBY_INSTALLED_SCAN_MAX;
+  return rows_from_runtime(rows, snes_mod_runtime_installed_rows_c(rows, max),
+                           out, max);
 }
 
 static int m_effective_set(void *ctx, char *out, uint32_t cap)

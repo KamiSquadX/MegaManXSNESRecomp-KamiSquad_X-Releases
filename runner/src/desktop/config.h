@@ -315,10 +315,11 @@ static inline int ConfigSeatForExtControl(int cmd) {
  * file says about rewind exactly as it found it. */
 void ConfigEnableRewindKeys(void);
 
-/* Analog stick deadzone, in raw axis units of a 32767 full scale. 10% is the
- * default because it clears a resting stick on the pads players actually own
- * without eating a third of the throw, which 10000 (30%) did. */
-#define SNES_CONFIG_DEFAULT_DEADZONE 3277
+/* Analog stick deadzone, in raw axis units of a 32767 full scale. 40% is the
+ * default: the stick drives a D-pad here (eight 45-degree segments), and a
+ * wide deadzone keeps a light or drifting touch from registering as a
+ * direction -- the launcher's Deadzone slider starts at the same 40%. */
+#define SNES_CONFIG_DEFAULT_DEADZONE 13107
 #define SNES_CONFIG_LEGACY_DEADZONE  10000
 // Persist the launcher-editable settings back into `filename` (or config.ini)
 // with a surgical, comment-preserving in-place update. Called after the GUI

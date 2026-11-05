@@ -1,7 +1,7 @@
 [submodule "lib/recomp-net"]
 	path = lib/recomp-net
-	url = https://github.com/RetroPortingToolKit/recomp-net.git
-	branch = main
+	url = https://github.com/KamiSquadX/MegaManXSNESRecomp.git
+	branch = components/recomp-net
 
 [submodule "lib/retcomm-rbengine"]
 	path = lib/retcomm-rbengine

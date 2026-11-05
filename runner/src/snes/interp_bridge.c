@@ -421,13 +421,37 @@ static void sync_interp_to_cpu(const Interp816 *in, CpuState *c) {
  * changes to CpuState are copied back into the interpreter before the opcode
  * runs. */
 /* MW widescreen + H2H vert-widen registers ~125 unique PCs. MMX co-op,
- * weapon hooks and Boss Rush together need more than the former 192 slots. */
-enum { kInterpPreOpcodeHookSlots = 256 };
+ * weapon hooks, Saber Zero and Boss Rush with imported bosses together
+ * passed 256: the overflow was dropped silently, so whichever module
+ * registered last lost hooks (co-op independent views lost the sprite
+ * capture of interpreted object updates, leaving live enemies undrawn).
+ *
+ * The table is scanned before every interpreted opcode, so its size is
+ * hidden behind a filter on the low 16 PC bits: an opcode whose bank offset
+ * no hook uses skips the scan entirely. */
+enum { kInterpPreOpcodeHookSlots = 1024 };
 static struct {
     uint32_t pc24;
     InterpPreOpcodeHook hook;
 } s_pre_opcode_hooks[kInterpPreOpcodeHookSlots];
 static int s_pre_opcode_hook_count;
+static uint8_t s_pre_opcode_hook_filter[0x10000 / 8];
+static void pre_opcode_filter_mark(uint32_t key) {
+    s_pre_opcode_hook_filter[(key & 0xFFFFu) >> 3] |= (uint8_t)(1u << (key & 7u));
+}
+static int pre_opcode_filter_hit(uint32_t key) {
+    return (s_pre_opcode_hook_filter[(key & 0xFFFFu) >> 3] >> (key & 7u)) & 1;
+}
+static void pre_opcode_table_full(uint32_t pc24) {
+    static int warned;
+    if (!warned) {
+        warned = 1;
+        fprintf(stderr,
+                "[interp_bridge] pre-opcode hook table full (%d); "
+                "pc=$%06X ignored\n",
+                kInterpPreOpcodeHookSlots, (unsigned)pc24);
+    }
+}
 static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
 
@@ -437,10 +461,14 @@ bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) 
     for (int i=0;i<s_pre_opcode_hook_count;++i)
         if (s_pre_opcode_hooks[i].pc24==key && s_pre_opcode_hooks[i].hook==hook)
             return true;
-    if (s_pre_opcode_hook_count>=kInterpPreOpcodeHookSlots) return false;
+    if (s_pre_opcode_hook_count>=kInterpPreOpcodeHookSlots) {
+        pre_opcode_table_full(pc24);
+        return false;
+    }
     s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24=key;
     s_pre_opcode_hooks[s_pre_opcode_hook_count].hook=hook;
     ++s_pre_opcode_hook_count;
+    pre_opcode_filter_mark(key);
     return true;
 }
 
@@ -448,6 +476,7 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
                                        InterpPreOpcodeHook hook) {
     if (!hook) {
         s_pre_opcode_hook_count = 0;
+        memset(s_pre_opcode_hook_filter, 0, sizeof(s_pre_opcode_hook_filter));
         return;
     }
     const uint32_t key = pc24 & 0x7FFFFFu;
@@ -461,15 +490,9 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
         s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24 = key;
         s_pre_opcode_hooks[s_pre_opcode_hook_count].hook = hook;
         s_pre_opcode_hook_count++;
+        pre_opcode_filter_mark(key);
     } else {
-        static int warned;
-        if (!warned) {
-            warned = 1;
-            fprintf(stderr,
-                    "[interp_bridge] pre-opcode hook table full (%d); "
-                    "pc=$%06X ignored\n",
-                    kInterpPreOpcodeHookSlots, (unsigned)pc24);
-        }
+        pre_opcode_table_full(pc24);
     }
 }
 
@@ -1974,7 +1997,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             }
             qring[steps & 63]=now;
         }
-        if (s_pre_opcode_hook_count > 0) {
+        if (s_pre_opcode_hook_count > 0 &&
+            pre_opcode_filter_hit(pc_before & 0x7FFFFFu)) {
             const uint32_t key = pc_before & 0x7FFFFFu;
             bool redirected = false;
             for (int hi = 0; hi < s_pre_opcode_hook_count; hi++) {

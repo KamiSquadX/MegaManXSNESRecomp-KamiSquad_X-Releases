@@ -65,6 +65,8 @@ struct Choice {
     /* "package:feature": the choice is offered only while that feature is
      * enabled (greyed out otherwise). */
     std::string requires;
+    /* Shown when the pointer rests on this choice in the launcher. */
+    std::string description;
 };
 
 struct Option {
@@ -753,6 +755,7 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 else if (key == "value") parsed = string_field(choice->value);
                 else if (key == "label") parsed = string_field(choice->label);
                 else if (key == "requires") parsed = string_field(choice->requires);
+                else if (key == "description") parsed = string_field(choice->description);
                 else known = false;
                 break;
             case Section::Plugin:
@@ -996,12 +999,32 @@ bool feature_enabled(Runtime& runtime, const Package& package,
     }
     return selection.enabled;
 }
+std::string option_value(Runtime& runtime, const Package& package,
+                         const Feature& feature, const Option& option);
+/* "package:feature", or "package:feature:option=value": that feature is
+ * enabled and its option currently holds the value. The second form lets a
+ * settings feature follow one choice of another feature (Independent
+ * netplay cameras settings follows Netplay cameras = Independent). */
 bool feature_enabled_ref(Runtime& runtime, const std::string& ref) {
     const size_t colon = ref.find(':');
     if (colon == std::string::npos) return false;
+    std::string feature_id = ref.substr(colon + 1), option_id, wanted;
+    const size_t second = feature_id.find(':');
+    if (second != std::string::npos) {
+        const std::string condition = feature_id.substr(second + 1);
+        feature_id.resize(second);
+        const size_t equals = condition.find('=');
+        if (equals == std::string::npos) return false;
+        option_id = condition.substr(0, equals);
+        wanted = condition.substr(equals + 1);
+    }
     const Package* package = selected_package(runtime, ref.substr(0, colon).c_str());
-    const Feature* feature = package ? find_feature(*package, ref.substr(colon + 1)) : nullptr;
-    return feature && feature->follows_any.empty() && feature_enabled(runtime, *package, *feature);
+    const Feature* feature = package ? find_feature(*package, feature_id) : nullptr;
+    if (!feature || !feature->follows_any.empty() || !feature_enabled(runtime, *package, *feature))
+        return false;
+    if (option_id.empty()) return true;
+    const Option* option = find_option(*package, feature_id, option_id);
+    return option && option_value(runtime, *package, *feature, *option) == wanted;
 }
 
 /* Features claiming the same trusted plugin cannot run together (validate
@@ -2808,6 +2831,7 @@ int provider_feature_choice_get(
     std::memset(out, 0, sizeof(*out));
     copy_text(out->value, option->choices[(size_t)index].value);
     copy_text(out->label, option->choices[(size_t)index].label);
+    copy_text(out->description, option->choices[(size_t)index].description);
     const Feature* feature = find_feature(*package, feature_id);
     const Option* other = option->distinct_from.empty() ? nullptr :
         find_option(*package, feature_id, option->distinct_from.c_str());
@@ -3576,12 +3600,20 @@ extern "C" int snes_mod_runtime_effective_set_c(char* out, uint32_t cap) {
                 /* Options are listed under the package, not the feature, so
                  * filter — emitting another feature's options here would make
                  * the line depend on manifest ordering. */
+                /* Only options away from their manifest default are named: a
+                 * peer adopting the set resets every option of an enabled
+                 * feature to its default before applying these. Listing all of
+                 * them made one character mod with thirty tuning options
+                 * outgrow the LAN room (512 bytes) and the netplay packet. */
                 std::map<std::string, std::string> opts;
                 for (const SNESRecomp::Option& option : package->options) {
                     if (option.feature_id != feature.id)
                         continue;
-                    opts[option.id] =
+                    std::string value =
                         SNESRecomp::option_value(runtime, *package, feature, option);
+                    if (value == option.default_value)
+                        continue;
+                    opts[option.id] = std::move(value);
                 }
                 for (const auto& o : opts) {
                     text += ' ';
@@ -4153,18 +4185,24 @@ extern "C" int snes_mod_runtime_adopt_set_c(const char* want, char* reason,
             say("could not enable " + pkg_id + "/" + feature_id);
             return SNES_MODSET_OPTION;
         }
+        /* The set names only options away from their default, so every
+         * option of this feature starts from its default here. Cleared
+         * rather than set one by one: a stored value falls back to the
+         * manifest default, and two choices that must differ (player1 and
+         * player2) would refuse an intermediate state that names one twice. */
+        runtime.selections[pkg_id].features[feature_id].values.clear();
         std::istringstream toks{sp == std::string::npos ? std::string()
                                                         : rest.substr(sp + 1)};
         std::string tok;
         while (toks >> tok) {
             const std::size_t eq = tok.find('=');
             if (eq == std::string::npos) continue;
-            if (!SNESRecomp::provider_feature_set_option(
-                    nullptr, pkg_id.c_str(), feature_id.c_str(),
-                    tok.substr(0, eq).c_str(), tok.substr(eq + 1).c_str())) {
-                say("could not set " + tok);
-                return SNES_MODSET_OPTION;
-            }
+            /* check_set above already proved every name and value legal
+             * here. Stored directly: setting them one at a time through the
+             * provider can trip distinct_from on an intermediate state
+             * (player1=zero while player2 still holds its default zero). */
+            runtime.selections[pkg_id].features[feature_id]
+                .values[tok.substr(0, eq)] = tok.substr(eq + 1);
         }
     }
     /* Persist, or the claim is a lie.

@@ -178,6 +178,7 @@ int  snes_netplay_peer_disconnected(uint32_t timeout_ms)
 }
 int  snes_netplay_poll_admit(void) { return 1; }
 void snes_netplay_pump(void) {}
+void snes_netplay_keepalive(void) {}
 void snes_netplay_apply_host_sync(void) {}
 void snes_netplay_finish_frame(void) {}
 int  snes_netplay_remote_lead(void) { return 0; }
@@ -2640,7 +2641,10 @@ void snes_netplay_diag_tick(void)
         g_diag_file = fopen(pathbuf, "wb");
         if (!g_diag_file)
             return;
-        setvbuf(g_diag_file, NULL, _IOLBF, 0);
+        /* Fully buffered with an explicit size and flushed after each tick:
+         * MSVC's CRT rejects _IOLBF with size 0 as an invalid parameter and
+         * fast-fails the process (0xC0000409) as the first match starts. */
+        setvbuf(g_diag_file, NULL, _IOFBF, 4096);
         g_diag_file_session = g_np.diag_session;
         g_diag_summary_written = 0;
         fprintf(stderr, "snes_netplay: diag writing %s "
@@ -2690,6 +2694,7 @@ void snes_netplay_diag_tick(void)
                 (unsigned)st.state_op, (unsigned)st.packets_rx,
                 (unsigned)st.input_bundle_sends);
     }
+    fflush(g_diag_file);
 }
 
 static void np_pump_session(void)
@@ -2725,6 +2730,13 @@ void snes_netplay_pump(void)
         return;
     np_pump_session();
     snes_netplay_diag_tick();
+}
+
+void snes_netplay_keepalive(void)
+{
+    if (!snes_netplay_active() || !g_np.session)
+        return;
+    rnet_session_keepalive(g_np.session);
 }
 
 int snes_netplay_poll_admit(void)

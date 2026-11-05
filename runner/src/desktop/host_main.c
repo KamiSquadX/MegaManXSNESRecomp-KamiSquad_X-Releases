@@ -3149,6 +3149,21 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
 #endif
 }
 
+#if SNESRECOMP_SDL3 && defined(SNESRECOMP_NET_ROLLBACK)
+/* Dragging or resizing the window (or holding its title bar) runs Windows'
+ * modal size/move loop, which blocks this thread's frame loop for as long as
+ * the mouse is held. SDL keeps a timer running there and reports each tick as
+ * an EXPOSED event with data1 = 1 to event watches; keep the netplay link
+ * alive from it so the peer does not read the pause as a lost connection
+ * (1.5 s of silence ends the match). */
+static bool SDLCALL NetplayLiveResizeWatch(void *userdata, SDL_Event *event) {
+  (void)userdata;
+  if (event->type == SDL_EVENT_WINDOW_EXPOSED && event->window.data1 == 1)
+    snes_netplay_keepalive();
+  return true;
+}
+#endif
+
 int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **argv) {
   if (!game || !game->game_info || !game->display_name) {
     fprintf(stderr, "snesrecomp_desktop_main: descriptor needs display_name and game_info\n");
@@ -3317,7 +3332,7 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   }
   if (ConfigDeadzoneMigrated()) {
     host_report_breadcrumb("config: GamepadDeadzone moved from the former default "
-                           "10000 (30%%) to %d (10%%) (rewriting config.ini)",
+                           "10000 (30%%) to %d (40%%) (rewriting config.ini)",
                            SNES_CONFIG_DEFAULT_DEADZONE);
     WriteConfigFile(config_file);
   }
@@ -3692,7 +3707,8 @@ error_reading:;
      * the match may start; two peers on different sets cannot stay in
      * sync, so the netcode refuses with a reason instead of desyncing. */
     if (g_mods_ready) {
-      static char s_modset[2048];
+      /* recomp-net splits a set this large across packets (15 x 960 max). */
+      static char s_modset[14400];
       int need = snes_mod_runtime_effective_set_c(s_modset, sizeof(s_modset));
       if (need >= 0 && need < (int)sizeof(s_modset))
         snes_netplay_rb_set_modset(s_modset, &snes_mod_runtime_check_set_c,
@@ -3709,6 +3725,10 @@ error_reading:;
       fprintf(stderr, "netplay: snes_netplay_start failed (%d)\n", nrc);
       return 1;
     }
+#if SNESRECOMP_SDL3 && defined(SNESRECOMP_NET_ROLLBACK)
+    SDL_RemoveEventWatch(NetplayLiveResizeWatch, NULL);
+    (void)SDL_AddEventWatch(NetplayLiveResizeWatch, NULL);
+#endif
     g_netplay_pending = 0;
   }
 #endif
@@ -4123,10 +4143,24 @@ error_reading:;
         snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
         SDL_Delay(1);
       }
-      g_present_alpha = 1;
-      if (snes_savestate_menu_is_open()) PresentFrozenWithOverlay();
-      else DrawPpuFrameWithPerf();
-      ++presentations;
+      /* Present a new frame, or refresh an unchanged one at most once per
+       * display interval (menus, overlays, the waiting picture). Every pass
+       * through this loop used to redraw, so each ~1 ms wait for the peer's
+       * input cost a whole draw (8-12 ms with a widescreen custom renderer):
+       * a co-op session drew 7797 pictures for 4846 simulated frames and
+       * both peers fell to ~45 fps on a 5 ms LAN. */
+      {
+        static double s_np_last_present;
+        const double present_now = MonotonicSeconds();
+        if (admitted || snes_savestate_menu_is_open() ||
+            present_now - s_np_last_present >= 1.0 / 60.0) {
+          s_np_last_present = present_now;
+          g_present_alpha = 1;
+          if (snes_savestate_menu_is_open()) PresentFrozenWithOverlay();
+          else DrawPpuFrameWithPerf();
+          ++presentations;
+        }
+      }
       continue;
     }
 #endif /* SNES_HAS_LOBBY_CLIENT */
