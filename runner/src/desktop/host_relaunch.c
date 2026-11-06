@@ -50,10 +50,13 @@ static int AppendQuoted(char *out, size_t cap, size_t *len, const char *arg) {
 
 int snesrecomp_host_relaunch(int argc, const char *const *args) {
 #if defined(__ANDROID__)
-  /* An app is started by the system, not by itself (and posix_spawn needs
-   * API 28). The in-game launcher's restart is desktop-only. */
-  (void)argc; (void)args;
-  return 0;
+  /* An app is started by the system, not by itself. Leave the arguments in
+   * relaunch.args (one per line, in the working directory: the app's files
+   * folder); the app's activity restarts itself and passes them to SDL_main. */
+  FILE *f = fopen("relaunch.args", "w");
+  if (!f) return 0;
+  for (int i = 0; i < argc; ++i) fprintf(f, "%s\n", args[i]);
+  return fclose(f) == 0;
 #else
   char exe[1024];
   if (!snesrecomp_exe_path(exe, sizeof(exe))) {

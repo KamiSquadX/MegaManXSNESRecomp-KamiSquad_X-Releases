@@ -437,7 +437,7 @@ static bool ParseVSync(const char *value, uint8 *result) {
  * cannot carry this: it has no way to say "player 2 is on the keyboard". */
 static bool ParsePlayerSource(int player, const char *value) {
   long v = strtol(value, (char **)NULL, 10);
-  if (v < 0 || v > 2) return false;
+  if (v < 0 || v > 3) return false;
   g_config.player_src[player] = (int)v;
   s_player_src_seen[player] = true;
   return true;
@@ -504,6 +504,22 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
     } else if (StringStartsWithNoCase(key, "SourceP") && key[7] >= '1' &&
                key[7] < '1' + kSnesHostPadSeats && !key[8]) {
       return ParsePlayerSource(key[7] - '1', value);
+    } else if (StringEqualsNoCase(key, "TouchButtons")) {
+      g_config.touch_buttons = (unsigned)strtoul(value, (char **)NULL, 0) & 0x7fffu;
+      return true;
+    } else if (StringEqualsNoCase(key, "TouchSize")) {
+      long v = strtol(value, (char **)NULL, 10);
+      g_config.touch_size = v < 50 ? 50 : v > 200 ? 200 : (int)v;
+      return true;
+    } else if (StringEqualsNoCase(key, "TouchOpacity")) {
+      long v = strtol(value, (char **)NULL, 10);
+      g_config.touch_opacity = v < 10 ? 10 : v > 100 ? 100 : (int)v;
+      return true;
+    } else if (StringEqualsNoCase(key, "TouchLeftHanded")) {
+      bool b;
+      if (!ParseBool(value, &b)) return false;
+      g_config.touch_left_handed = b;
+      return true;
     }
     /* GuidPn / DeadzonePn are the launcher's business; accepted silently so
      * the runner does not report the launcher's own keys as unknown. */
@@ -699,8 +715,17 @@ void ParseConfigFile(const char *filename) {
    * the keyboard, player 2 silent until someone assigns it a device. Leaving
    * these zero would have read as "no slot uses the keyboard" and taken the
    * keyboard away from every existing install. */
+#ifdef __ANDROID__
+  g_config.player_src[0] = 3;   /* on-screen gamepad: a phone may have no pad */
+#else
   g_config.player_src[0] = 1;   /* keyboard */
+#endif
   g_config.player_src[1] = 0;   /* none */
+  /* On-screen gamepad: D-pad, A B X Y, L R, L2 R2 (RECOMP_LAUNCHER_TOUCH_DEFAULT). */
+  g_config.touch_buttons = 0x1ff;
+  g_config.touch_size = 100;
+  g_config.touch_opacity = 60;
+  g_config.touch_left_handed = 0;
   /* Multitap seats 3.. start with no device and no gamepad claim, so an
    * extra controller never lands on a seat nobody asked for. */
   for (int i = 2; i < kSnesHostPadSeats; ++i) {
@@ -923,6 +948,10 @@ void WriteConfigFile(const char *filename) {
     { "Sound",      "Volume" },
     { "Controller", "SourceP1" },
     { "Controller", "SourceP2" },
+    { "Controller", "TouchButtons" },
+    { "Controller", "TouchSize" },
+    { "Controller", "TouchOpacity" },
+    { "Controller", "TouchLeftHanded" },
     { "GamepadMap", "EnableGamepad3" }, { "Controller", "SourceP3" },
     { "GamepadMap", "EnableGamepad4" }, { "Controller", "SourceP4" },
     { "GamepadMap", "EnableGamepad5" }, { "Controller", "SourceP5" },
@@ -968,6 +997,10 @@ void WriteConfigFile(const char *filename) {
   CfgSet(kvs, N, "Sound", "Volume", "%d", g_config.volume);
   CfgSet(kvs, N, "Controller", "SourceP1", "%d", g_config.player_src[0]);
   CfgSet(kvs, N, "Controller", "SourceP2", "%d", g_config.player_src[1]);
+  CfgSet(kvs, N, "Controller", "TouchButtons", "0x%x", g_config.touch_buttons);
+  CfgSet(kvs, N, "Controller", "TouchSize", "%d", g_config.touch_size);
+  CfgSet(kvs, N, "Controller", "TouchOpacity", "%d", g_config.touch_opacity);
+  CfgSet(kvs, N, "Controller", "TouchLeftHanded", "%d", g_config.touch_left_handed ? 1 : 0);
   for (int seat = 2; seat < kSnesHostPadSeats; ++seat) {
     char gp[24], src[16];
     snprintf(gp, sizeof(gp), "EnableGamepad%d", seat + 1);

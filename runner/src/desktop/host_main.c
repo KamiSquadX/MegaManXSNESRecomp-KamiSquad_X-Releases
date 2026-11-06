@@ -17,6 +17,7 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <math.h>
 #include <signal.h>
 
 #include "debug_server.h"
@@ -162,6 +163,11 @@ static bool g_fullscreen_changed;
 static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value);
 static int RemapSdlButton(int button);
 static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
+/* On-screen gamepad (touch_gamepad.inc). */
+static bool TouchPadEvent(const SDL_Event *e);
+static void TouchPadDraw(void);
+static void TouchReset(void);
+static void TouchPadFrame(void);
 static void HandleInput(int keyCode, int keyMod, bool pressed);
 static void HandleCommand(uint32 j, bool pressed);
 static void PollKeyboardControls(const uint8_t *keys);
@@ -2297,6 +2303,7 @@ static void SdlRenderer_EndDraw(void) {
   /* SDL3's SDL_RenderTexture takes SDL_FRect, not SDL_Rect. */
   snesrecomp_sdl_render_texture(g_renderer, g_texture, &g_sdl_renderer_rect,
                                 &g_sdl_present_rect);
+  TouchPadDraw();
   SDL_RenderPresent(g_renderer);
 }
 
@@ -2765,8 +2772,17 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
    * seed when the file predates the Source keys -- deriving from it
    * unconditionally is what turned "player 2 on the keyboard" into
    * "player 2 unassigned" on every relaunch. */
+#ifdef __ANDROID__
+  /* A fresh install starts on the on-screen gamepad (mmx_config.c default). */
+  ls->player_src[0] = g_config.player_src[0];
+#else
   ls->player_src[0] = ConfigHasPlayerSource(0) ? g_config.player_src[0]
                                                : (g_config.enable_gamepad[0] ? 2 : 1);
+#endif
+  ls->touch_buttons = g_config.touch_buttons;
+  ls->touch_size = g_config.touch_size;
+  ls->touch_opacity = g_config.touch_opacity;
+  ls->touch_left_handed = g_config.touch_left_handed;
   ls->player_src[1] = ConfigHasPlayerSource(1) ? g_config.player_src[1]
                                                : (g_config.enable_gamepad[1] ? 2 : 0);
   for (int seat = 2; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
@@ -2913,6 +2929,10 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
     g_config.enable_gamepad[seat] = ls->player_src[seat] == 2;
   }
   g_config.gamepad_deadzone    = (ls->deadzone[0] * 32767 + 50) / 100;
+  g_config.touch_buttons       = ls->touch_buttons;
+  if (ls->touch_size)    g_config.touch_size = ls->touch_size;
+  if (ls->touch_opacity) g_config.touch_opacity = ls->touch_opacity;
+  g_config.touch_left_handed   = ls->touch_left_handed != 0;
   g_config.skip_launcher       = ls->skip_launcher != 0;
   g_config.frame_blend         = ls->frame_blend != 0;
   g_config.run_ahead           = ls->run_ahead;
@@ -3053,7 +3073,13 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
       ? ReadWholeFile(g_mod_state_path, &mods_before_len) : NULL;
   g_overlay_modal = true;
   SetAudioPaused(true);
+  TouchReset();   /* the launcher takes the screen: let go of every button */
+#ifdef __ANDROID__
+  /* One window only: the launcher draws into the game's. */
+  recomp_launcher_set_host_window(g_window);
+#else
   SDL_HideWindow(g_window);
+#endif
   /* This process keeps running after the launcher's window closes. */
   recomp_launcher_set_preserve_sdl(1);
   RecompLauncherCSettings ls;
@@ -3065,6 +3091,10 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
                                        g_rom_path[0] ? g_rom_path : NULL,
                                        rom, sizeof(rom));
   recomp_launcher_set_preserve_sdl(0);
+#ifdef __ANDROID__
+  recomp_launcher_set_host_window(NULL);
+#endif
+  TouchReset();   /* size, hand or source may have changed */
   host_report_breadcrumb("in-game launcher: action=%d rom=%s", act,
                          rom[0] ? rom : "(unchanged)");
   if (act != RECOMP_LAUNCHER_RESULT_UNAVAILABLE)
@@ -3637,6 +3667,11 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     g_config.audio_samples = kDefaultSamples;
 
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+#ifdef __ANDROID__
+  /* Back opens the in-game launcher (and steps back inside it) instead of
+   * closing the activity. */
+  SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+#endif
 
   // set up SDL
   SDL_SetMainReady();
@@ -3972,8 +4007,11 @@ error_reading:;
     host_report_crash_test_tick();
 
     double event_profile_start = ProfileStart();
+    TouchPadFrame();
     while (SDL_PollEvent(&event)) {
       if (HandleDeviceEvent(&event))
+        continue;
+      if (TouchPadEvent(&event))
         continue;
       switch (event.type) {
       case SDL_MOUSEWHEEL:
@@ -3998,6 +4036,12 @@ error_reading:;
         }
         if (g_netplay_session && SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE) {
           g_netplay_exit_requested = 1;
+          break;
+        }
+#endif
+#ifdef __ANDROID__
+        if (SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_AC_BACK) {
+          if (g_game->in_game_launcher) g_open_launcher_hotkey = 1;
           break;
         }
 #endif
@@ -4766,7 +4810,7 @@ static void RequestScreenshot(void) {
 
 static uint32 GetActiveControllers(void) {
   uint32 ctrl = g_script_controllers |
-                (g_config.player_src[0] == 1 ? 1u : 0u) |
+                (g_config.player_src[0] == 1 || g_config.player_src[0] == 3 ? 1u : 0u) |
                 (g_config.player_src[1] == 1 ? 2u : 0u);
   ctrl |= g_gamepad[0].joystick_id != -1 ? 1 : 0;
   ctrl |= g_gamepad[1].joystick_id != -1 ? 2 : 0;
@@ -4913,6 +4957,8 @@ static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed) {
   if (gi->last_cmd[button] != 0)
     SetPadButtonOrFallthrough(gi->last_cmd[button], pressed);
 }
+
+#include "desktop/touch_gamepad.inc"
 
 /* [Sound] Volume (0..100) -> the mixer. The launcher's slider, the keys and
  * config.ini all speak percent; only the mixer sees 0..128. */

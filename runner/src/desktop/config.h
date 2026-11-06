@@ -214,8 +214,12 @@ typedef struct Config {
    * 2 gamepad. Player 1 defaults to keyboard so a config without the section
    * behaves as it always did; player 2 defaults to none, because a second
    * keyboard player sharing one keyboard has to be asked for. */
-  int player_src[kSnesHostPadSeats];
+  int player_src[kSnesHostPadSeats];   /* 0 none, 1 keyboard, 2 gamepad, 3 on-screen */
   int gamepad_deadzone;
+  /* [Controller] On-screen gamepad (player source 3, Android): the controls
+   * shown (bits as RECOMP_LAUNCHER_TOUCH_*), size and opacity in percent. */
+  unsigned touch_buttons;
+  int touch_size, touch_opacity, touch_left_handed;
 
   // Which players have keyboard controls
   uint8 has_keyboard_controls;
