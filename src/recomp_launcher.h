@@ -1616,7 +1616,12 @@ struct RecompLauncherCSettings {
     int  touch_size;           /* 50..200 */
     int  touch_opacity;        /* 10..100 */
     int  touch_left_handed;
+    /* Bit per player: swap A<->B and X<->Y on that player's gamepad, for
+     * pads that report face buttons by printed letter instead of position
+     * (Android handhelds in Nintendo button mode). Appended additively. */
+    unsigned swap_face_buttons;
 };
+#define RECOMP_LAUNCHER_HAS_SWAP_FACE_BUTTONS 1
 #define RECOMP_LAUNCHER_HAS_ZAPPER_SETTINGS 1
 
 /* Input source 3: the on-screen gamepad (a virtual controller drawn over the

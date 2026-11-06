@@ -735,6 +735,13 @@ typedef struct {
     char      pad_binds[LNG_MAX_PLAYERS][LNG_MAX_BUTTONS][32];
     char      camera_binds[LNG_CAMERA_BIND_COUNT][32];
     char      hotkeys[LNG_HK_COUNT][32];    // [KeyMap] value strings, e.g. "Ctrl+R"
+    // Controller hotkeys (SNES: [GamepadMap] <Hotkey> = Back+R1 on player 1's
+    // pad). hk_pad: the running hotkey capture listens to the pad, not the
+    // keyboard; hk_pad_first is the first button held (+1, 0 = none yet),
+    // so a second press while it is held makes a combo.
+    bool      hk_pad;
+    int       hk_pad_first;
+    char      hotkeys_pad[LNG_HK_COUNT][32];
 } LauncherModel;
 
 // Build the model from the inbound C ABI structs. `initial_rom` may be NULL.
@@ -1300,6 +1307,7 @@ void launcher_model_reset_assist_bindings(LauncherModel* m);
 void launcher_model_cancel_capture(LauncherModel* m);
 // ---- hotkey capture ----
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h);
+void launcher_model_begin_hk_pad_capture(LauncherModel* m, LngHotkey h);
 void launcher_model_cancel_hk_capture(LauncherModel* m);
 
 // ---- display-string helpers (single source of truth across backends) ----

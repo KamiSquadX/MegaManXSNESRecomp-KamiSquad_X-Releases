@@ -637,6 +637,67 @@ static void snes_gamepad_label(const char* token, char* out, size_t cap) {
     copy_str(out, cap, token);
 }
 
+/* [GamepadMap] <Hotkey> lines: a button token, or "Mod+Button". */
+static void hotkey_pad_label(const char* value, char* out, size_t cap) {
+    if (!value || !value[0]) { copy_str(out, cap, "(unbound)"); return; }
+    out[0] = 0;
+    char tmp[64];
+    copy_str(tmp, sizeof(tmp), value);
+    char* save = NULL;
+    for (char* part = strtok_r(tmp, "+", &save); part; part = strtok_r(NULL, "+", &save)) {
+        char name[32];
+        snes_gamepad_label(trim_token(part), name, sizeof(name));
+        if (out[0]) strncat(out, " & ", cap - strlen(out) - 1);
+        strncat(out, name, cap - strlen(out) - 1);
+    }
+}
+
+static void reload_hotkey_pad_display(LauncherModel* m) {
+    static const char* const kNone[1] = { "" };
+    for (int h = 0; h < LNG_HK_COUNT; ++h) {
+        char v[1][48];
+        snes_gamepad_read_line(kHotkeyKey[h], 1, kNone, v);
+        hotkey_pad_label(v[0], m->hotkeys_pad[h], sizeof(m->hotkeys_pad[h]));
+    }
+}
+
+static const char* snes_gamepad_token_for_capture(int kind, int code, int axis_dir);
+
+/* One button of a controller hotkey, as [GamepadMap] spells it, already
+ * through player 1's Swap A/B and X/Y (the game swaps before it looks). */
+static const char* hotkey_pad_token(const LauncherModel* m, int button) {
+    if (button == LNG_HK_PAD_L2) return "L2";
+    if (button == LNG_HK_PAD_R2) return "R2";
+    const char* t = snes_gamepad_token_for_capture(LNG_PADBIND_BUTTON, button, 0);
+    if (t && (m->s.swap_face_buttons & 1u)) {
+        if (token_eq(t, "A")) t = "B";
+        else if (token_eq(t, "B")) t = "A";
+        else if (token_eq(t, "X")) t = "Y";
+        else if (token_eq(t, "Y")) t = "X";
+    }
+    return t;
+}
+
+void launcher_binds_set_hotkey_pad(LauncherModel* m, LngHotkey h,
+                                   int button, int combo_with) {
+    if (!m || h < 0 || h >= LNG_HK_COUNT) return;
+    char value[64] = "";
+    if (button >= 0) {
+        const char* a = hotkey_pad_token(m, button);
+        if (!a) return;
+        if (combo_with >= 0) {
+            /* The runner reads "Mod+Button": the held one is the modifier. */
+            const char* b = hotkey_pad_token(m, combo_with);
+            if (!b) return;
+            snprintf(value, sizeof(value), "%s+%s", a, b);
+        } else {
+            copy_str(value, sizeof(value), a);
+        }
+    }
+    launcher_ini_kv_write(config_path(), "GamepadMap", kHotkeyKey[h], value);
+    hotkey_pad_label(value, m->hotkeys_pad[h], sizeof(m->hotkeys_pad[h]));
+}
+
 static const char* snes_gamepad_token_for_capture(int kind, int code, int axis_dir) {
     if (kind == LNG_PADBIND_BUTTON) {
 #if defined(LNG_SDL3)
@@ -712,6 +773,14 @@ static int snes_gamepad_set_button(LauncherModel* m, int player, int b,
                             ? ""
                             : snes_gamepad_token_for_capture(kind, code, axis_dir);
     if (!token) return 0;
+    /* Swap A/B and X/Y: the game swaps this player's pad the same way before
+     * reading [GamepadMap], so the stored token is the button's position. */
+    if (kind == LNG_PADBIND_BUTTON && (m->s.swap_face_buttons >> player & 1u)) {
+        if (token_eq(token, "A")) token = "B";
+        else if (token_eq(token, "B")) token = "A";
+        else if (token_eq(token, "X")) token = "Y";
+        else if (token_eq(token, "Y")) token = "X";
+    }
 
     if (b >= LNG_SNES_PAD_BUTTON_COUNT) {
         char ext[LNG_SNES_EXT_COUNT][48];
@@ -1357,6 +1426,7 @@ loaded:
     launcher_binds_refresh(m);
     launcher_binds_refresh_camera(m);
     reload_hotkey_display(m);
+    reload_hotkey_pad_display(m);
 }
 
 void launcher_binds_refresh(LauncherModel* m) {
@@ -1949,4 +2019,24 @@ void launcher_binds_set_hotkey(LauncherModel* m, LngHotkey h, int keycode, int k
     // missing line keeps the default.
     keymap_write(kHotkeyKey[h], val[0] ? val : "None");
     copy_str(m->hotkeys[h], sizeof(m->hotkeys[h]), val[0] ? val : "(unbound)");
+}
+
+void launcher_binds_clear_hotkeys(LauncherModel* m, uint32_t mask, int pad) {
+    if (!m) return;
+    for (int h = 0; h < LNG_HK_COUNT; ++h) {
+        if (!(mask & (1u << h))) continue;
+        launcher_binds_set_hotkey(m, (LngHotkey)h, 0, 0);
+        if (pad) launcher_binds_set_hotkey_pad(m, (LngHotkey)h, -1, -1);
+    }
+}
+
+void launcher_binds_reset_hotkeys(LauncherModel* m, uint32_t mask, int pad) {
+    if (!m) return;
+    for (int h = 0; h < LNG_HK_COUNT; ++h) {
+        if (!(mask & (1u << h))) continue;
+        const char* def = kHotkeyDef[h];
+        keymap_write(kHotkeyKey[h], def[0] ? def : "None");
+        copy_str(m->hotkeys[h], sizeof(m->hotkeys[h]), def[0] ? def : "(unbound)");
+        if (pad) launcher_binds_set_hotkey_pad(m, (LngHotkey)h, -1, -1);
+    }
 }

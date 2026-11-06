@@ -5122,6 +5122,20 @@ void panel_solar_draw(LauncherModel* m, const LauncherTheme* th) {
     end_panel();
 }
 
+/* Keep the next item on the line of the last one when `w` more pixels fit
+ * before the window's right edge; otherwise let it start a new line. Rows of
+ * buttons built this way wrap on a small screen instead of overlapping. */
+static void flow_same_line(float w, float gap = -1.0f) {
+    const float g = gap < 0.0f ? ImGui::GetStyle().ItemSpacing.x : gap;
+    const float limit = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    if (ImGui::GetItemRectMax().x + g + w <= limit)
+        ImGui::SameLine(0.0f, g);
+}
+static float button_w(const char* label) {
+    return ImGui::CalcTextSize(label, NULL, true).x +
+           ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
 // Hotkeys module: the universal emulator-hotkeys catalog, opt-in per system
 // via SystemProfile.hotkeys_mask. SNES opts into LNG_HOTKEYS_ALL — the full
 // catalog, grid byte-identical to the original hardcoded panel. PSX opts into
@@ -5138,8 +5152,47 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
     // Likewise a host capability: only a host that reopens this launcher
     // mid-game has anything to bind.
     if (m->has_open_launcher_hotkey) mask |= 1u << LNG_HK_OPEN_LAUNCHER;
+    /* SNES hotkeys can also sit on player 1's controller ([GamepadMap]). */
+    const bool pad_col = prof && prof->id && !std::strcmp(prof->id, "snes");
+    {
+        static bool s_confirm_clear = false;
+        if (ImGui::Button(ui_text("Clear All"))) s_confirm_clear = true;
+        flow_same_line(button_w(ui_text("Reset to Default")));
+        if (ImGui::Button(ui_text("Reset to Default"))) {
+            launcher_model_cancel_hk_capture(m);
+            launcher_binds_reset_hotkeys(m, mask, pad_col ? 1 : 0);
+        }
+        if (pad_col) {
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+            ImGui::TextWrapped("%s", ui_text(
+                "Controller hotkeys use player 1's controller. Hold one button "
+                "and press another to bind the two together."));
+            ImGui::PopStyleColor();
+        }
+        if (s_confirm_clear) ImGui::OpenPopup("Clear All Hotkeys");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Clear All Hotkeys", &s_confirm_clear,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted(ui_text("Unbind every hotkey?"));
+            ImGui::Spacing();
+            if (ImGui::Button(ui_text("Cancel"), ImVec2(px(120), 0))) {
+                s_confirm_clear = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(ui_text("Clear All"), ImVec2(px(120), 0))) {
+                launcher_model_cancel_hk_capture(m);
+                launcher_binds_clear_hotkeys(m, mask, pad_col ? 1 : 0);
+                s_confirm_clear = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::Spacing();
+    }
     // Same responsive grid treatment as the bindings list.
-    const float cell_w = px(280.0f);
+    const float cell_w = px(pad_col ? 420.0f : 280.0f);
     int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
     cols = cols < 1 ? 1 : (cols > 3 ? 3 : cols);
     // Uniform label column: measure the widest bound hotkey name up front so
@@ -5166,13 +5219,33 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
             // SameLine() fights ImGui's per-cell cursor tracking and spills
             // buttons into the wrong column.
             ImGui::SameLine(0.0f, label_w - ImGui::CalcTextSize(hkname).x);
-            const bool cap = m->hk_capturing && m->capture_hk == (LngHotkey)h;
+            const bool cap = m->hk_capturing && !m->hk_pad &&
+                             m->capture_hk == (LngHotkey)h;
             const char* lbl = cap ? ui_text("[ press... ]")
                             : m->hotkeys[h][0] ? m->hotkeys[h] : ui_text("(unbound)");
             if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
             if (ImGui::Button(lbl, ImVec2(px(130), 0)))
                 launcher_model_begin_hk_capture(m, (LngHotkey)h);
             if (cap) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", ui_text("Keyboard. Backspace unbinds, Esc cancels."));
+            if (pad_col) {
+                ImGui::SameLine();
+                const bool pcap = m->hk_capturing && m->hk_pad &&
+                                  m->capture_hk == (LngHotkey)h;
+                const char* plbl = pcap ? ui_text("[ press... ]")
+                                 : m->hotkeys_pad[h][0] ? m->hotkeys_pad[h]
+                                                        : ui_text("(unbound)");
+                if (pcap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                char pid[96];
+                std::snprintf(pid, sizeof(pid), "%s##hkpad", plbl);
+                if (ImGui::Button(pid, ImVec2(px(130), 0)))
+                    launcher_model_begin_hk_pad_capture(m, (LngHotkey)h);
+                if (pcap) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", ui_text(
+                        "Controller. Backspace unbinds, Esc cancels."));
+            }
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -5828,7 +5901,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             char* const name_buf = s_prof_buf[pi];
             const int sel = launcher_binds_input_profile_find(name_buf);
 
-            ImGui::SameLine();
+            flow_same_line(button_w("Save Profile"));
             ImGui::BeginDisabled(name_buf[0] == '\0');
             if (ImGui::Button("Save Profile")) {
                 const int idx = launcher_binds_input_profile_save(m, p + 1, name_buf);
@@ -5845,7 +5918,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     ? "Save this player's input source, bindings and deadzone "
                       "under the name in the Profile box"
                     : "Type a name in the Profile box first");
-            ImGui::SameLine();
+            flow_same_line(button_w("Rename"));
             ImGui::BeginDisabled(sel < 0);
             if (ImGui::Button("Rename")) {
                 std::snprintf(s_prof_rename_buf, sizeof(s_prof_rename_buf), "%s",
@@ -5855,10 +5928,15 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             }
             ImGui::EndDisabled();
 
-            ImGui::SameLine(0.0f, px(14.0f));
+            /* "Profile", the name field and its arrow move as one piece. */
+            flow_same_line(ImGui::CalcTextSize("Profile").x +
+                               ImGui::GetStyle().ItemSpacing.x + px(180.0f) +
+                               ImGui::GetFrameHeight(),
+                           px(14.0f));
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(col(th.text_muted), "Profile");
             ImGui::SameLine();
+            float prof_right = 0.0f;   /* screen x where the arrow ends */
             {
                 const float arrow_w = ImGui::GetFrameHeight();
                 ImGui::SetNextItemWidth(px(180.0f));
@@ -5869,6 +5947,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SameLine(0.0f, 0.0f);
                 if (ImGui::ArrowButton("##snes_prof_arrow", ImGuiDir_Down))
                     ImGui::OpenPopup("##snes_prof_list");
+                prof_right = ImGui::GetItemRectMax().x;
                 ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y));
                 ImGui::SetNextWindowSizeConstraints(
                     ImVec2(field_max.x - field_min.x + arrow_w, 0.0f),
@@ -5895,12 +5974,16 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 }
             }
             {
-                const float del_w = px(130.0f);
-                const float right = ImGui::GetWindowContentRegionMax().x;
-                if (right - del_w > ImGui::GetCursorPosX() + px(200.0f))
-                    ImGui::SameLine(right - del_w);
-                else
-                    ImGui::SameLine();
+                /* Right-aligned when the line has room past the Profile box,
+                 * else straight after it, else on a line of its own. (The
+                 * popup above may have been the last item, so measure from
+                 * the arrow.) */
+                const float del_w = std::max(px(130.0f), button_w("Delete Profile"));
+                const float gap = ImGui::GetStyle().ItemSpacing.x;
+                const float win_x = ImGui::GetWindowPos().x;
+                const float right = win_x + ImGui::GetWindowContentRegionMax().x;
+                if (prof_right + gap + del_w <= right)
+                    ImGui::SameLine(right - del_w - win_x + ImGui::GetScrollX());
                 ImGui::BeginDisabled(sel < 0);
                 if (ImGui::Button("Delete Profile", ImVec2(del_w, 0))) {
                     std::snprintf(s_prof_delete_name, sizeof(s_prof_delete_name),
@@ -6134,6 +6217,21 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             if (ImGui::SliderInt("##dz", &dz, 0, hi, "%d%%",
                                  ImGuiSliderFlags_AlwaysClamp))
                 launcher_model_set_deadzone(m, p, dz);
+        }
+        /* Face buttons are named by position (bottom B, right A, left Y,
+         * top X). A pad that reports them by printed letter instead (AYN,
+         * Retroid and other handhelds in their Nintendo button mode) reads
+         * one seat off; this puts the positions back for this player. */
+        if (cfg_snes && m->s.player_src[p] == 2 && p < 8) {
+            bool swap = (m->s.swap_face_buttons >> p & 1u) != 0;
+            if (ImGui::Checkbox("Swap A/B and X/Y", &swap)) {
+                if (swap) m->s.swap_face_buttons |= 1u << p;
+                else      m->s.swap_face_buttons &= ~(1u << p);
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+            ImGui::TextWrapped("Turn on if pressing a face button shows a "
+                               "different letter than the one printed on it.");
+            ImGui::PopStyleColor();
         }
     } end_panel();
 
@@ -6780,6 +6878,10 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         const int side_count = vertical ? order_side : 0;
 
         int cols;
+        /* A declared grid on a screen too narrow for it even with narrowed
+         * chips (a phone or handheld): keep the reading order, but pour it
+         * into as many columns as fit, side rows included. */
+        bool reflow = false;
         if (vertical) {
             cols = order_cols;
             // A declared grid keeps its column count, so a window too narrow
@@ -6793,6 +6895,19 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 if (fit < chip_w) {
                     chip_w = fit;
                     cell_w = label_col_w + chip_w + px(16.0f);
+                }
+                if (cols * (cell_w + pad) > avail) {
+                    reflow = true;
+                    if (chip_w < px(130.0f)) chip_w = px(130.0f);
+                    cell_w = label_col_w + chip_w + px(16.0f);
+                    cols = (int)(avail / (cell_w + pad));
+                    if (cols < 1) {
+                        cols = 1;
+                        float one = avail - pad - label_col_w - px(16.0f);
+                        if (one < px(60.0f)) one = px(60.0f);
+                        chip_w = one;
+                        cell_w = label_col_w + chip_w + px(16.0f);
+                    }
                 }
             }
         } else {
@@ -6869,14 +6984,16 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::BeginTable("binds", cols, ImGuiTableFlags_SizingFixedFit)) {
             for (int c = 0; c < cols; ++c)
                 ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthFixed, cell_w);
-            const int cell_count = vertical ? (order_rows * order_cols) : nbtn;
+            const int cell_count = !vertical ? nbtn
+                : reflow ? (order_rows * order_cols + side_count)
+                         : (order_rows * order_cols);
             for (int cell = 0; cell < cell_count; ++cell) {
                 // Column-major: walk down column 0, then column 1, then 2. The
                 // table itself is filled left-to-right, so the index is
                 // transposed here rather than the table being reshaped.
-                const int b = vertical
-                    ? order[(cell % order_cols) * order_rows + (cell / order_cols)]
-                    : cell;
+                const int b = !vertical ? cell
+                    : reflow ? order[cell]
+                    : order[(cell % order_cols) * order_rows + (cell / order_cols)];
                 ImGui::TableNextColumn();
                 if (cell % cols == cols - 1)
                     last_col_x = ImGui::GetCursorScreenPos().x;
@@ -6984,7 +7101,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         } else if (m->capturing) {
             ImGui::TextColored(col(th.warn), "Listening... (Esc cancels, Backspace unbinds)");
         }
-        if (side_count > 0) {
+        if (side_count > 0 && !reflow) {
             /* The rows that follow the grid (a modern pad's right stick), one
              * under another in the grid's last column, level with Auto Map. */
             const ImVec2 after_buttons = ImGui::GetCursorScreenPos();
@@ -14956,7 +15073,10 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
             return true;
         }
         if (m->hk_capturing) {
-            launcher_binds_set_hotkey(m, m->capture_hk, 0, 0);
+            if (m->hk_pad)
+                launcher_binds_set_hotkey_pad(m, m->capture_hk, -1, -1);
+            else
+                launcher_binds_set_hotkey(m, m->capture_hk, 0, 0);
             launcher_model_cancel_hk_capture(m);
             return true;
         }
@@ -14992,6 +15112,48 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         launcher_binds_set_camera(
             m, m->capture_camera, (int)LNG_EVSCAN(ev));
         launcher_model_cancel_camera_capture(m);
+        return true;
+    }
+
+    // ---- Controller hotkey: the first button pressed binds on its release;
+    // a second press while it is still held binds the pair (held + pressed).
+    // The triggers count as buttons past half travel.
+    if (m->hk_capturing && m->hk_pad) {
+        int down = -1, up = -1;
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) down = (int)LNG_EVGBTN(ev);
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP)   up   = (int)LNG_EVGBTN(ev);
+        if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+            const int axis = (int)LNG_EVGAXIS(ev);
+            const int val  = (int)LNG_EVGAXISVAL(ev);
+#if defined(LNG_SDL3)
+            const bool lt = axis == (int)SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
+            const bool rt = axis == (int)SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+#else
+            const bool lt = axis == (int)SDL_CONTROLLER_AXIS_TRIGGERLEFT;
+            const bool rt = axis == (int)SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+#endif
+            if (lt || rt) {
+                static bool s_trig[2] = {};
+                const int i = lt ? 0 : 1;
+                const int id = lt ? LNG_HK_PAD_L2 : LNG_HK_PAD_R2;
+                if (!s_trig[i] && val >= 16000) { s_trig[i] = true;  down = id; }
+                if (s_trig[i] && val < 8000)    { s_trig[i] = false; up = id; }
+            }
+        }
+        if (down >= 0) {
+            if (!m->hk_pad_first) {
+                m->hk_pad_first = down + 1;
+            } else if (down != m->hk_pad_first - 1) {
+                launcher_binds_set_hotkey_pad(m, m->capture_hk,
+                                              m->hk_pad_first - 1, down);
+                launcher_model_cancel_hk_capture(m);
+            }
+        } else if (up >= 0 && m->hk_pad_first && up == m->hk_pad_first - 1) {
+            launcher_binds_set_hotkey_pad(m, m->capture_hk, up, -1);
+            launcher_model_cancel_hk_capture(m);
+        }
+        /* Keys other than Esc / Backspace (handled above) and every other
+         * event are swallowed while listening. */
         return true;
     }
 

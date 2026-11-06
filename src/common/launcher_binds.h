@@ -165,6 +165,20 @@ int launcher_binds_psx_name_is_custom(const char* guid);
 // and refreshes the model's display string.
 void launcher_binds_set_hotkey(LauncherModel* m, LngHotkey h, int keycode, int kmod);
 
+// Controller hotkeys (SNES): config.ini [GamepadMap] <Hotkey> on player 1's
+// pad. `button` / `combo_with` are SDL gamepad buttons, or
+// LNG_HK_PAD_L2 / LNG_HK_PAD_R2 for the triggers; combo_with < 0 binds the
+// one button, button < 0 unbinds.
+#define LNG_HK_PAD_L2 1000
+#define LNG_HK_PAD_R2 1001
+void launcher_binds_set_hotkey_pad(LauncherModel* m, LngHotkey h,
+                                   int button, int combo_with);
+// Every hotkey whose bit is set in `mask`: unbind (keyboard and controller),
+// or put back the built-in defaults (keyboard defaults; no controller
+// hotkeys by default). `pad`: also the controller column.
+void launcher_binds_clear_hotkeys(LauncherModel* m, uint32_t mask, int pad);
+void launcher_binds_reset_hotkeys(LauncherModel* m, uint32_t mask, int pad);
+
 // NES Zapper switches were toggled (mouse-as-gun / crosshair). Persists to
 // keybinds.ini [zapper] via the NES-native bridge's surgical writer; the
 // rest of the file is preserved. Meaningful only under an NES profile

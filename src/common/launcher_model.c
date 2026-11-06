@@ -4824,9 +4824,20 @@ void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h) {
     m->capturing    = false;
     m->camera_capturing = false;
     m->hk_capturing = true;
+    m->hk_pad       = false;
     m->capture_hk   = h;
 }
-void launcher_model_cancel_hk_capture(LauncherModel* m) { m->hk_capturing = false; }
+void launcher_model_begin_hk_pad_capture(LauncherModel* m, LngHotkey h) {
+    if (h < 0 || h >= LNG_HK_COUNT) return;
+    launcher_model_begin_hk_capture(m, h);
+    m->hk_pad       = true;
+    m->hk_pad_first = 0;
+}
+void launcher_model_cancel_hk_capture(LauncherModel* m) {
+    m->hk_capturing = false;
+    m->hk_pad = false;
+    m->hk_pad_first = 0;
+}
 
 void launcher_model_begin_camera_capture(LauncherModel* m, int action) {
     if (!m || action < 0 || action >= LNG_CAMERA_BIND_COUNT) return;
