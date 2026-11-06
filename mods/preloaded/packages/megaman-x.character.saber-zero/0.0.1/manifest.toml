@@ -3,7 +3,7 @@ id = "megaman-x.character.saber-zero"
 version = "0.0.1"
 name = "Saber Zero settings"
 author = "RaphaelAzev"
-description = "Tuning for Saber Zero by RaphaelAzev. Choose Saber Zero as the Zero behavior in Add Zero or Co-op to play it; these settings change its damage, hit priority, finisher window and sound. Saber sprites and sounds from the Zashiko Mod, for non-commercial use."
+description = "Saber Zero settings by RaphaelAzev for the Add Zero or Co-op Zero behavior, with X1 armor upgrades and Black Zero. Saber sprites and sounds from the Zashiko Mod, for non-commercial use."
 license = "PolyForm-Noncommercial-1.0.0"
 resolver = "declarative"
 save_compatibility = "requires-same-mods"
@@ -15,7 +15,7 @@ rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
 [[feature]]
 id = "saber-zero"
 name = "Saber Zero settings"
-description = "Applies when Zero behavior is Saber Zero in Add Zero or Co-op. Without these settings, Saber Zero uses the defaults shown here."
+description = "Applies when Zero behavior is Saber Zero in Add Zero or Co-op. Includes X1 armor upgrades and Black Zero; without these settings, Saber Zero uses the defaults shown here."
 group = "Characters"
 default_enabled = false
 
@@ -24,6 +24,14 @@ feature = "saber-zero"
 id = "show_hitboxes"
 label = "Show hitboxes"
 description = "Debug: outline enemy, Zero and Saber attack hitboxes (custom renderer only)"
+type = "boolean"
+default = false
+
+[[option]]
+feature = "saber-zero"
+id = "start_all_upgrades"
+label = "Start with all upgrades"
+description = "Gives all four armor parts at stage start; meant for testing and stored in the password like collected parts."
 type = "boolean"
 default = false
 

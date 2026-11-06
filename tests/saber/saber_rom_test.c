@@ -17,6 +17,8 @@
 #include "saber/mmx_saber_priority.h"
 #include "saber/mmx_saber_sfx.h"
 #include "saber/mmx_saber_tuning.h"
+#include "saber/mmx_saber_armor.h"
+#include "saber/mmx_saber_black_zero.h"
 #include "saber/mmx_saber_wave.h"
 #include "saber/mmx_saber_wave_runtime.h"
 #include "mmx_wide_policy.h"
@@ -40,11 +42,11 @@ enum {
   SABER_TIER_8_RELEASE_CLASS = 3,
   SABER_FULL_RELEASE_CLASS = 3,
   SABER_FULL_RELEASE_SHOTS = 2,
-  SABER_FIRE_WAVE_FRAMES = 90,
-  SABER_FIRE_WAVE_BIRTHS = 4,
-  SABER_FIRE_WAVE_LIVE_FRAMES = 41,
-  SABER_FIRE_WAVE_LIVE_SAMPLES = 85,
-  SABER_FIRE_WAVE_PEAK = 4,
+  SABER_CHAMELEON_STING_FRAMES = 90,
+  SABER_CHAMELEON_STING_BIRTHS = 4,
+  SABER_CHAMELEON_STING_LIVE_FRAMES = 41,
+  SABER_CHAMELEON_STING_LIVE_SAMPLES = 85,
+  SABER_CHAMELEON_STING_PEAK = 4,
   /* These are measured from the pure upstream X3 Zero group below. */
   X3_ZERO_FIRE_WAVE_BIRTHS = 4,
   X3_ZERO_FIRE_WAVE_LIVE_FRAMES = 39,
@@ -55,6 +57,7 @@ enum {
   X3_ZERO_STORM_TORNADO_PROJECTILES = 1,
   /* X1's native command-6 charged buster path publishes class 2. */
   SABER_X1_CHARGED_RELEASE_CLASS = 2,
+  SABER_ARMS_CHARGE_HOLD_FRAMES = 205,
   /* Independent oracle copied from oldsaber/saber-zero-variant:
    * src/mmx_saber.c:266-273. Keep these literals separate from the new table
    * so a timing-table mutation cannot make the test pass. */
@@ -1663,24 +1666,24 @@ static void x3_post_charge_checks(const char *fixture, unsigned button) {
 static void native_x1_checks(const char *fixture) {
   load_fixture(fixture);
   switch_to_x();
-  select_native_weapon(2); /* Fire Wave. */
+  select_native_weapon(2); /* Chameleon Sting. */
   unsigned char previous[8] = {0};
   unsigned births = 0, live_frames = 0, peak_live = 0, live_samples = 0;
-  for (unsigned i = 0; i < SABER_FIRE_WAVE_FRAMES; ++i) {
+  for (unsigned i = 0; i < SABER_CHAMELEON_STING_FRAMES; ++i) {
     frame(SNES_PAD_Y);
-    unsigned live = projectiles(8); /* X1 Fire Wave's native flame class. */
+    unsigned live = projectiles(8); /* X1 Chameleon Sting's native class. */
     births += new_projectiles(8, previous);
     live_frames += live != 0;
     live_samples += live;
     if (live > peak_live) peak_live = live;
   }
-  check(births == SABER_FIRE_WAVE_BIRTHS &&
-            live_frames == SABER_FIRE_WAVE_LIVE_FRAMES &&
-            live_samples == SABER_FIRE_WAVE_LIVE_SAMPLES &&
-            peak_live == SABER_FIRE_WAVE_PEAK,
-        "native X1 Fire Wave matches its 90-frame reference counts");
-  printf("reference: Fire Wave held %u frames births=%u live_frames=%u live_samples=%u peak=%u\n",
-         SABER_FIRE_WAVE_FRAMES, births, live_frames, live_samples, peak_live);
+  check(births == SABER_CHAMELEON_STING_BIRTHS &&
+            live_frames == SABER_CHAMELEON_STING_LIVE_FRAMES &&
+            live_samples == SABER_CHAMELEON_STING_LIVE_SAMPLES &&
+            peak_live == SABER_CHAMELEON_STING_PEAK,
+        "native X1 Chameleon Sting matches its 90-frame reference counts");
+  printf("reference: Chameleon Sting held %u frames births=%u live_frames=%u live_samples=%u peak=%u\n",
+         SABER_CHAMELEON_STING_FRAMES, births, live_frames, live_samples, peak_live);
 
   load_fixture(fixture);
   switch_to_x();
@@ -1700,6 +1703,178 @@ static void native_x1_checks(const char *fixture) {
   puts("ok: x1-native-weapons");
 }
 
+enum {
+  FIRE_WAVE_ROUTE_WEAPON = 4,
+  FIRE_WAVE_ROUTE_SELECTED = 0x08,
+  FIRE_WAVE_ROUTE_KIND = 0x0a,
+  FIRE_WAVE_ROUTE_ENERGY = 0x1f8d,
+  FIRE_WAVE_ROUTE_HOLD_FRAMES = 120,
+  FIRE_WAVE_ROUTE_LATE_FRAMES = 30
+};
+
+typedef struct FireWaveRouteProbe {
+  unsigned births;
+  unsigned peak_live;
+  unsigned late_live_frames;
+  unsigned late_live_samples;
+  unsigned late_live[FIRE_WAVE_ROUTE_LATE_FRAMES];
+  unsigned energy_before;
+  unsigned energy_after;
+  unsigned charge_max;
+} FireWaveRouteProbe;
+
+static void trace_real_fire_wave(const char *actor, uint8_t armor,
+                                 unsigned frame_number, unsigned live) {
+  printf("trace: real-fire-wave actor=%s armor=0x%02X frame=%u "
+         "selected=0x%02X "
+         "pad[0BDE/0BDF/0BE1/0BE2/0BE3]="
+         "%02X/%02X/%02X/%02X/%02X "
+         "repeat[0C20]=%02X water[0C18]=%02X "
+         "live_kind_0A=%u energy[1F8D]=0x%04X charge[0C00]=%u slots=",
+         actor, armor, frame_number, g_ram[0x0bdb],
+         g_ram[0x0bde], g_ram[0x0bdf], g_ram[0x0be1],
+         g_ram[0x0be2], g_ram[0x0be3],
+         g_ram[0x0c20], g_ram[0x0c18], live,
+         read_ram_word(g_ram, FIRE_WAVE_ROUTE_ENERGY),
+         g_ram[0x0c00]);
+
+  for (unsigned i = 0; i < 8; ++i) {
+    const unsigned d = 0x1228 + i * 0x40;
+    if (g_ram[d])
+      printf("%s%u:%02X/%02X", i ? "," : "", i,
+             g_ram[d + 0x0a], g_ram[d + 0x01]);
+    else
+      printf("%s%u:--/--", i ? "," : "", i);
+  }
+  putchar('\n');
+}
+
+static FireWaveRouteProbe measure_real_fire_wave_route(
+    const char *fixture, bool use_x, uint8_t armor, bool trace) {
+  FireWaveRouteProbe result = {0};
+  unsigned char previous[8] = {0};
+  const unsigned button = use_x ? SNES_PAD_Y : SNES_PAD_X;
+  const char *actor = use_x ? "X" : "SaberZero";
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  if (use_x) switch_to_x();
+
+  select_native_weapon(FIRE_WAVE_ROUTE_WEAPON);
+  check(g_ram[0x0bdb] == FIRE_WAVE_ROUTE_SELECTED,
+        "real Fire Wave selection is native command 0x08");
+
+  g_ram[0x1f99] = armor;
+  g_ram[FIRE_WAVE_ROUTE_ENERGY] = 0x00;
+  g_ram[FIRE_WAVE_ROUTE_ENERGY + 1] = 0xdc;
+  result.energy_before = read_ram_word(g_ram, FIRE_WAVE_ROUTE_ENERGY);
+  shot_presence(FIRE_WAVE_ROUTE_KIND, previous);
+
+  for (unsigned i = 0; i < FIRE_WAVE_ROUTE_HOLD_FRAMES; ++i) {
+    frame(button);
+
+    const unsigned live = projectiles(FIRE_WAVE_ROUTE_KIND);
+    result.births += new_projectiles(FIRE_WAVE_ROUTE_KIND, previous);
+    if (live > result.peak_live) result.peak_live = live;
+    if (g_ram[0x0c00] > result.charge_max)
+      result.charge_max = g_ram[0x0c00];
+
+    if (i >= FIRE_WAVE_ROUTE_HOLD_FRAMES - FIRE_WAVE_ROUTE_LATE_FRAMES) {
+      const unsigned late =
+          i - (FIRE_WAVE_ROUTE_HOLD_FRAMES - FIRE_WAVE_ROUTE_LATE_FRAMES);
+      result.late_live[late] = live;
+      result.late_live_frames += live != 0;
+      result.late_live_samples += live;
+    }
+
+    if (trace && (i + 1) % 10 == 0)
+      trace_real_fire_wave(actor, armor, i + 1, live);
+  }
+
+  result.energy_after = read_ram_word(g_ram, FIRE_WAVE_ROUTE_ENERGY);
+  return result;
+}
+
+static unsigned real_fire_wave_spent(const FireWaveRouteProbe *result) {
+  const unsigned before = result->energy_before & 0x3fff;
+  const unsigned after = result->energy_after & 0x3fff;
+  return before >= after ? before - after : 0;
+}
+
+static void print_real_fire_wave_result(
+    const char *actor, uint8_t armor, const FireWaveRouteProbe *result) {
+  printf("reference: real Fire Wave actor=%s armor=0x%02X "
+         "births=%u peak=%u late_live_frames=%u/%u spent=0x%04X "
+         "charge_max=%u\n",
+         actor, armor, result->births, result->peak_live,
+         result->late_live_frames, FIRE_WAVE_ROUTE_LATE_FRAMES,
+         real_fire_wave_spent(result), result->charge_max);
+}
+
+static void saber_fire_wave_armor_checks(const char *fixture) {
+  static const uint8_t armor[] = {0x00, 0x02, 0x0f};
+
+  for (unsigned i = 0; i < sizeof(armor) / sizeof(armor[0]); ++i) {
+    const FireWaveRouteProbe x =
+        measure_real_fire_wave_route(fixture, true, armor[i], false);
+    const FireWaveRouteProbe zero =
+        measure_real_fire_wave_route(fixture, false, armor[i], false);
+    const unsigned x_spent = real_fire_wave_spent(&x);
+    const unsigned zero_spent = real_fire_wave_spent(&zero);
+    bool failed =
+        x.late_live_frames != FIRE_WAVE_ROUTE_LATE_FRAMES ||
+        zero.late_live_frames != x.late_live_frames ||
+        zero.births != x.births ||
+        zero.peak_live != x.peak_live ||
+        zero.charge_max != x.charge_max;
+
+    if (armor[i] == 0x00 || armor[i] == 0x02)
+      failed |= zero_spent != x_spent;
+    else
+      failed |= zero_spent * 2 != x_spent;
+
+    print_real_fire_wave_result("X", armor[i], &x);
+    print_real_fire_wave_result("SaberZero", armor[i], &zero);
+    if (failed) {
+      (void)measure_real_fire_wave_route(fixture, true, armor[i], true);
+      (void)measure_real_fire_wave_route(fixture, false, armor[i], true);
+    }
+
+    char what[128];
+    snprintf(what, sizeof(what),
+             "Fire Wave late live frames match X and equal 30 (armor 0x%02X)",
+             armor[i]);
+    check(x.late_live_frames == FIRE_WAVE_ROUTE_LATE_FRAMES &&
+              zero.late_live_frames == x.late_live_frames,
+          what);
+
+    snprintf(what, sizeof(what),
+             "Saber Fire Wave births match X (armor 0x%02X)", armor[i]);
+    check(zero.births == x.births, what);
+
+    snprintf(what, sizeof(what),
+             "Saber Fire Wave peak matches X (armor 0x%02X)", armor[i]);
+    check(zero.peak_live == x.peak_live, what);
+
+    snprintf(what, sizeof(what),
+             "Saber Fire Wave charge max matches X (armor 0x%02X)", armor[i]);
+    check(zero.charge_max == x.charge_max, what);
+
+    if (armor[i] == 0x0f) {
+      snprintf(what, sizeof(what),
+               "Saber head part halves Fire Wave spend versus X (armor 0x%02X)",
+               armor[i]);
+      check(zero_spent * 2 == x_spent, what);
+    } else {
+      snprintf(what, sizeof(what),
+               "Saber Fire Wave spend matches X (armor 0x%02X)", armor[i]);
+      check(zero_spent == x_spent, what);
+    }
+  }
+
+  puts("ok: saber-fire-wave-armor");
+}
+
 static FireWaveCounts measure_fire_wave(const char *fixture, unsigned button) {
   FireWaveCounts counts = {0};
   unsigned char previous[8] = {0};
@@ -1707,7 +1882,7 @@ static FireWaveCounts measure_fire_wave(const char *fixture, unsigned button) {
   load_fixture(fixture);
   MmxSaberFrameReset();
   select_native_weapon(2); /* Fire Wave. */
-  for (unsigned i = 0; i < SABER_FIRE_WAVE_FRAMES; ++i) {
+  for (unsigned i = 0; i < SABER_CHAMELEON_STING_FRAMES; ++i) {
     frame(button);
     unsigned live = projectiles(8);
     counts.births += new_projectiles(8, previous);
@@ -1745,7 +1920,7 @@ static void print_special_reference(const char *label,
                                     const SpecialCounts *counts) {
   printf("reference: %s Fire Wave held %u frames births=%u live_frames=%u "
          "live_samples=%u peak=%u\n",
-         label, SABER_FIRE_WAVE_FRAMES, counts->fire_wave.births,
+         label, SABER_CHAMELEON_STING_FRAMES, counts->fire_wave.births,
          counts->fire_wave.live_frames, counts->fire_wave.live_samples,
          counts->fire_wave.peak);
   printf("reference: %s Storm Tornado one tap frames=%u projectiles=%u\n",
@@ -2902,6 +3077,253 @@ static unsigned record_jump_arc(const char *fixture, bool slash,
   return 0;
 }
 
+static void saber_legs_jump_case(const char *fixture, bool legs) {
+  unsigned before_y, after_y, before_vy, after_vy;
+  MmxZeroState state;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  g_ram[0x1f99] = legs ? MMX_SABER_ARMOR_LEGS_BIT : 0;
+  for (unsigned i = 0; i < 5; ++i) frame(SNES_PAD_B);
+  for (unsigned i = 0; i < 4; ++i) frame(0);
+  check(!saber_test_grounded(), legs ?
+        "Saber legs double-jump case reaches the air" :
+        "Saber no-legs double-jump case reaches the air");
+  before_y = read_ram_word(g_ram, 0x0bb0);
+  before_vy = read_ram_word(g_ram, 0x0bc4);
+  frame(SNES_PAD_B);
+  after_y = read_ram_word(g_ram, 0x0bb0);
+  after_vy = read_ram_word(g_ram, 0x0bc4);
+  state = MmxZeroGetState();
+  printf("reference: saber-legs double-jump legs=%s $1F99=0x%02X "
+         "y=%u->%u vy=0x%04X->0x%04X action=0x%02X jump_used=%u\n",
+         legs ? "yes" : "no", g_ram[0x1f99], before_y, after_y,
+         before_vy, after_vy, g_ram[0x0baa], state.modern.jump_used);
+  check(legs ? state.modern.jump_used && g_ram[0x0baa] == 6 &&
+                  before_y != after_y && before_vy != after_vy :
+              !state.modern.jump_used,
+        legs ? "Saber legs starts a second jump with changed vertical motion" :
+               "Saber without legs does not start a second jump");
+}
+
+static void saber_legs_dash_case(const char *fixture, bool legs) {
+  MmxZeroState state;
+  unsigned y_before, y_after;
+  int vx;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  g_ram[0x1f99] = legs ? MMX_SABER_ARMOR_LEGS_BIT : 0;
+  for (unsigned i = 0; i < 5; ++i) frame(SNES_PAD_B);
+  for (unsigned i = 0; i < 4; ++i) frame(0);
+  check(!saber_test_grounded(), legs ?
+        "Saber legs air-dash case reaches the air" :
+        "Saber no-legs air-dash case reaches the air");
+  y_before = read_ram_word(g_ram, 0x0bb0);
+  frame(SNES_PAD_A | SNES_PAD_RIGHT);
+  y_after = read_ram_word(g_ram, 0x0bb0);
+  state = MmxZeroGetState();
+  vx = (int)(int16_t)read_ram_word(g_ram, 0x0bc2);
+  printf("reference: saber-legs air-dash legs=%s $1F99=0x%02X "
+         "y=%u->%u vx=%d action=0x%02X dash_ticks=%u c06=0x%02X\n",
+         legs ? "yes" : "no", g_ram[0x1f99], y_before, y_after, vx,
+         g_ram[0x0baa], state.modern.dash_ticks, g_ram[0x0c06]);
+  check(legs ? state.modern.dash_ticks && abs(vx) == 0x0375 :
+              !state.modern.dash_ticks,
+        legs ? "Saber legs starts an air dash at 0x0375" :
+               "Saber without legs does not start an air dash");
+}
+
+static void saber_legs_charge_case(const char *fixture) {
+  unsigned char previous[8];
+  MmxZeroState state;
+  unsigned charge_before_jump;
+  unsigned charge_before_double_jump;
+  unsigned charge_after_double_jump;
+  unsigned charge_before_dash;
+  unsigned charge_after_dash;
+  unsigned charge_before_release;
+  unsigned charge_after_release;
+  unsigned jump_action;
+  unsigned jump_used;
+  unsigned dash_action;
+  unsigned dash_ticks;
+  unsigned dash_c06;
+  unsigned release_births;
+  unsigned charged_shots;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  g_ram[0x1f99] = MMX_SABER_ARMOR_LEGS_BIT;
+
+  hold_charge_button(SABER_CHARGE_TIER_1_FRAME, SNES_PAD_X);
+  charge_before_jump = MmxZeroGetState().charge;
+  for (unsigned i = 0; i < 5; ++i)
+    frame(SNES_PAD_X | SNES_PAD_B);
+  for (unsigned i = 0; i < 4; ++i)
+    frame(SNES_PAD_X);
+
+  charge_before_double_jump = MmxZeroGetState().charge;
+  frame(SNES_PAD_X | SNES_PAD_B);
+  state = MmxZeroGetState();
+  charge_after_double_jump = state.charge;
+  jump_action = g_ram[0x0baa];
+  jump_used = state.modern.jump_used;
+
+  hold_charge_button(4, SNES_PAD_X);
+  charge_before_dash = MmxZeroGetState().charge;
+  frame(SNES_PAD_X | SNES_PAD_A | SNES_PAD_RIGHT);
+  state = MmxZeroGetState();
+  charge_after_dash = state.charge;
+  dash_action = g_ram[0x0baa];
+  dash_ticks = state.modern.dash_ticks;
+  dash_c06 = g_ram[0x0c06];
+
+  hold_charge_button(4, SNES_PAD_X);
+  charge_before_release = MmxZeroGetState().charge;
+  memset(previous, 0, sizeof(previous));
+  (void)new_native_charged_projectiles(previous);
+  frame(0);
+  charge_after_release = MmxZeroGetState().charge;
+  release_births = new_native_charged_projectiles(previous);
+  charged_shots = release_births;
+  for (unsigned i = 0; i < 8 && charged_shots == 0; ++i) {
+    frame(0);
+    charged_shots += new_native_charged_projectiles(previous);
+  }
+
+  printf("reference: saber-legs-charge $1F99=0x%02X "
+         "charge_ground=%u charge_before_double=%u "
+         "charge_after_double=%u charge_before_dash=%u "
+         "charge_after_dash=%u charge_before_release=%u "
+         "charge_after_release=%u jump_action=0x%02X jump_used=%u "
+         "dash_action=0x%02X dash_ticks=%u c06=0x%02X "
+         "release_births=%u charged_shots=%u\n",
+         g_ram[0x1f99], charge_before_jump, charge_before_double_jump,
+         charge_after_double_jump, charge_before_dash, charge_after_dash,
+         charge_before_release, charge_after_release, jump_action, jump_used,
+         dash_action, dash_ticks, dash_c06, release_births, charged_shots);
+
+  check(jump_used == 1 && charge_before_double_jump >= charge_before_jump &&
+            charge_after_double_jump >= charge_before_double_jump,
+        "Saber legs preserves charge through jump and double jump");
+  check(dash_ticks != 0 && charge_after_dash >= charge_before_dash,
+        "Saber legs preserves charge through the air dash");
+  check(charged_shots >= 1,
+        "Saber legs release emits a new charged buster shot");
+}
+
+static void saber_legs_platform_case(const char *fixture) {
+  MmxZeroState state;
+  unsigned platform = 0;
+  unsigned observed_frame = 0;
+  unsigned observed_bd3 = 0;
+  unsigned observed_bd4 = 0;
+  unsigned observed_action = 0;
+  unsigned observed_x = 0;
+  unsigned observed_y = 0;
+  unsigned observed_platform_x = 0;
+  unsigned observed_platform_y = 0;
+  bool riding = false;
+
+  check(RtlLoadSnapshot(fixture), "log-platform.sav loads for Saber legs platform");
+  check(MmxZeroActive() && !MmxZeroModern(),
+        "log-platform.sav uses legacy Zero for Saber legs platform");
+  MmxZeroCancel(g_ram);
+  MmxSaberFrameReset();
+  g_ram[0x1f99] = MMX_SABER_ARMOR_LEGS_BIT;
+  state = MmxZeroGetState();
+  state.modern.jump_used = 0;
+  state.modern.dash_used = 0;
+  state.modern.dash_ticks = 0;
+  MmxZeroSetState(state);
+
+  for (unsigned frame_number = 0; frame_number <= 120; ++frame_number) {
+    platform = 0;
+    for (unsigned d = 0x0e68; d < 0x1228; d += 64) {
+      if (g_ram[d] && g_ram[d + 10] == 0x0b) {
+        platform = d;
+        break;
+      }
+    }
+    if ((g_ram[0xbd4] & 4) && !(g_ram[0xbd3] & 4)) {
+      riding = true;
+      observed_frame = frame_number;
+      observed_bd3 = g_ram[0xbd3];
+      observed_bd4 = g_ram[0xbd4];
+      observed_action = g_ram[0x0baa];
+      observed_x = read_ram_word(g_ram, 0x0bad);
+      observed_y = read_ram_word(g_ram, 0x0bb0);
+      if (platform) {
+        observed_platform_x = read_ram_word(g_ram, platform + 5);
+        observed_platform_y = read_ram_word(g_ram, platform + 8);
+      }
+      break;
+    }
+    if (frame_number != 120) frame(0);
+  }
+
+  if (!riding) {
+    unsigned object_id = platform ? g_ram[platform + 10] : 0;
+    printf("reference: saber-legs-platform not-riding object=0x%04X id=0x%02X "
+           "$0BD3=0x%02X $0BD4=0x%02X action=0x%02X "
+           "player=(%u,%u) platform=(%u,%u)\n",
+           platform, object_id, g_ram[0xbd3], g_ram[0xbd4], g_ram[0x0baa],
+           read_ram_word(g_ram, 0x0bad), read_ram_word(g_ram, 0x0bb0),
+           platform ? read_ram_word(g_ram, platform + 5) : 0,
+           platform ? read_ram_word(g_ram, platform + 8) : 0);
+    return;
+  }
+
+  printf("reference: saber-legs-platform riding object=0x%04X id=0x%02X "
+         "frame=%u $0BD3=0x%02X $0BD4=0x%02X action=0x%02X "
+         "player=(%u,%u) platform=(%u,%u)\n",
+         platform, platform ? g_ram[platform + 10] : 0, observed_frame,
+         observed_bd3, observed_bd4, observed_action, observed_x, observed_y,
+         observed_platform_x, observed_platform_y);
+
+  state = MmxZeroGetState();
+  state.modern.jump_used = 1;
+  state.modern.dash_used = 1;
+  MmxZeroSetState(state);
+  frame(0);
+  state = MmxZeroGetState();
+  check(!state.modern.jump_used && !state.modern.dash_used,
+        "Saber legs refreshes aerial moves on a moving platform");
+
+  for (unsigned i = 0; i < 5; ++i) frame(SNES_PAD_B);
+  for (unsigned i = 0; i < 4; ++i) frame(0);
+  check(!saber_test_grounded(),
+        "Saber legs jump leaves the moving platform before the second press");
+  frame(SNES_PAD_B);
+  state = MmxZeroGetState();
+  printf("reference: saber-legs-platform after-jump object=0x%04X id=0x%02X "
+         "$0BD3=0x%02X $0BD4=0x%02X action=0x%02X jump_used=%u "
+         "player=(%u,%u)\n",
+         platform, platform ? g_ram[platform + 10] : 0, g_ram[0xbd3],
+         g_ram[0xbd4], g_ram[0x0baa], state.modern.jump_used,
+         read_ram_word(g_ram, 0x0bad), read_ram_word(g_ram, 0x0bb0));
+  check(state.modern.jump_used == 1 && g_ram[0x0baa] == 6,
+        "Saber legs double jumps after leaving a moving platform");
+}
+
+static void saber_legs_checks(const char *fixture, const char *fixture_dir) {
+  check(MmxSaberEnabled() && !MmxZeroModern(),
+        "saber-legs runs with legacy Zero behavior and Saber enabled");
+  saber_legs_jump_case(fixture, false);
+  saber_legs_jump_case(fixture, true);
+  saber_legs_dash_case(fixture, false);
+  saber_legs_dash_case(fixture, true);
+  saber_legs_charge_case(fixture);
+  char platform_fixture[4096];
+  int written = snprintf(platform_fixture, sizeof(platform_fixture), "%s/%s",
+                         fixture_dir, kReferenceLogPlatform.name);
+  check(written >= 0 && written < (int)sizeof(platform_fixture),
+        "saber-legs platform fixture path fits");
+  saber_legs_platform_case(platform_fixture);
+  puts("ok: saber-legs");
+}
+
 static unsigned empty_enemy_slot(void) {
   for (unsigned d = 0xe68; d < 0x1228; d += 64)
     if (!g_ram[d]) return d;
@@ -3968,7 +4390,27 @@ static void saber_plain_after_probe(const char *label) {
   check(births == 1 && projectiles(0) == 1 && native_x1_charged == 0, label);
 }
 
+static void saber_charge_rate_checks(const char *fixture) {
+  char label[96];
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  frame(0);
+  const MmxZeroExtension *extension = MmxSaberFrameExtension();
+  check(extension->charge_rate != NULL,
+        "Saber extension exposes the generic charge-rate hook");
+  if (!extension->charge_rate) return;
+  for (unsigned upgrades = 0; upgrades <= MMX_SABER_ARMOR_MASK; ++upgrades) {
+    g_ram[MMX_SABER_ARMOR_RAM_OFFSET] = (uint8_t)upgrades;
+    snprintf(label, sizeof(label), "Saber charge rate armor 0x%02X is %s",
+             upgrades, upgrades & MMX_SABER_ARMOR_HEAD_BIT ? "0x180" : "0x100");
+    check(extension->charge_rate() ==
+              (upgrades & MMX_SABER_ARMOR_HEAD_BIT ? 0x180 : 0x100),
+          label);
+  }
+}
+
 static void saber_charge_cap_checks(const char *fixture) {
+  saber_charge_rate_checks(fixture);
   unsigned max_charge = 0;
   bool tier_exceeded = false;
   bool third_route = false;
@@ -4661,7 +5103,1051 @@ static void saber_finisher_checks(const char *fixture) {
   saber_finisher_no_emission_checks(fixture);
   puts("ok: saber-finisher");
 }
+static void saber_armor_checks(const char *fixture) {
+  const char *package = "megaman-x.character.saber-zero";
+  const char *feature = "saber-zero";
+  MmxSaberArmorFlags flags;
+  const uint16_t *native;
+  const uint16_t *replacement;
 
+  check(g_mod_provider->feature_set_option(
+            g_mod_provider->ctx, package, feature,
+            "start_all_upgrades", "false"),
+        "test catalog disables start_all_upgrades");
+  snes_mod_runtime_activate_plugins_c();
+  check(MmxSaberEnabled() && !MmxSaberTuningStartAllUpgrades(),
+        "start_all_upgrades off reactivation keeps Saber enabled");
+
+  load_fixture(fixture);
+  g_ram[0x1f99] = 0x80;
+  /* Exact stage/checkpoint seam used by hook $00:9DCA. */
+  MmxZeroHealthRespawn(g_ram);
+  frame(0);
+  printf("reference: start_all_upgrades=off stage upgrades=0x%02X\n",
+         g_ram[0x1f99]);
+  check(g_ram[0x1f99] == 0x80,
+        "start_all_upgrades off leaves $1F99 unchanged at stage start");
+  flags = MmxSaberArmorCurrent();
+  check(!flags.head && !flags.arms && !flags.body && !flags.legs &&
+            !flags.black,
+        "start_all_upgrades off exposes no armor flags");
+
+  check(g_mod_provider->feature_set_option(
+            g_mod_provider->ctx, package, feature,
+            "start_all_upgrades", "true"),
+        "test catalog enables start_all_upgrades");
+  snes_mod_runtime_activate_plugins_c();
+  check(MmxSaberEnabled() && MmxSaberTuningStartAllUpgrades(),
+        "start_all_upgrades on reactivation keeps Saber enabled");
+
+  load_fixture(fixture);
+  g_ram[0x1f99] = 0x80;
+  /* Exact stage/checkpoint seam used by hook $00:9DCA. */
+  MmxZeroHealthRespawn(g_ram);
+  frame(0);
+  printf("reference: start_all_upgrades=on stage upgrades=0x%02X\n",
+         g_ram[0x1f99]);
+  check(g_ram[0x1f99] == 0x8f,
+        "start_all_upgrades on ORs all four low armor bits at stage start");
+  flags = MmxSaberArmorCurrent();
+  check(flags.head && flags.arms && flags.body && flags.legs && flags.black,
+        "start_all_upgrades on exposes all armor flags and Black Zero");
+  frame(0);
+  check(g_ram[0x1f99] == 0x8f,
+        "stage armor write does not repeat or alter bits on next frame");
+
+  load_fixture(fixture);
+  g_ram[0x1f99] = 0x0f;
+  MmxZeroHealthRespawn(g_ram);
+  MmxSaberFrameReset();
+  native = MmxZeroColors();
+  frame(0);
+  replacement = MmxSaberBlackZeroNativeColorsHook(native);
+  check(replacement && replacement != native && replacement[23] == 0x2D6B,
+        "playable Zero frame caches Black Zero native colours");
+  g_ram[0xbcf] = 0;
+  frame(0);
+  replacement = MmxSaberBlackZeroNativeColorsHook(native);
+  check(replacement && replacement[23] == 0x2D6B,
+        "not-playable Zero frame keeps Black Zero native colours");
+  puts("ok: saber-armor");
+}
+
+static void saber_arms_charge_case(const char *fixture, bool arms) {
+  unsigned charge_timer_first = 0;
+  unsigned charge_timer_min = 0;
+  unsigned charge_state_initial;
+  unsigned charge_state_max;
+  unsigned full_frame = 0;
+  unsigned dispatch_frame = 0;
+  unsigned release_dispatch;
+  unsigned charged_projectiles;
+  bool charge_started = false;
+  bool charge_timer_decreased = false;
+  unsigned energy_held, energy_after;
+  unsigned spawned = 0;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  select_native_weapon(5); /* Storm Tornado. */
+  if (arms)
+    g_ram[0x1f99] |= 0x02;
+  else
+    g_ram[0x1f99] &= (uint8_t)~0x02;
+  charge_state_initial = g_ram[0x0c00];
+  charge_state_max = charge_state_initial;
+
+  for (unsigned frame_number = 1;
+       frame_number <= SABER_ARMS_CHARGE_HOLD_FRAMES; ++frame_number) {
+    frame(SNES_PAD_X);
+    if (g_ram[0x0bff]) {
+      if (!charge_started) {
+        charge_started = true;
+        charge_timer_first = g_ram[0x0bff];
+        charge_timer_min = charge_timer_first;
+      } else if (g_ram[0x0bff] < charge_timer_min) {
+        charge_timer_min = g_ram[0x0bff];
+      }
+      if (g_ram[0x0bff] < charge_timer_first)
+        charge_timer_decreased = true;
+    }
+    if (g_ram[0x0c00] > charge_state_max)
+      charge_state_max = g_ram[0x0c00];
+    if (!full_frame && g_ram[0x0c03] == 1)
+      full_frame = frame_number;
+    if (!dispatch_frame && g_ram[0x0c01] == 4)
+      dispatch_frame = frame_number;
+  }
+
+  energy_held = g_ram[0x1f90] & 0x3f;
+  {
+    const unsigned before = all_projectiles();
+    frame(0);
+    release_dispatch = g_ram[0x0c01];
+    if (all_projectiles() > before) spawned = all_projectiles() - before;
+  }
+  if (!dispatch_frame && release_dispatch == 4)
+    dispatch_frame = SABER_ARMS_CHARGE_HOLD_FRAMES + 1;
+  charged_projectiles = projectiles(SABER_X1_CHARGED_RELEASE_CLASS);
+  for (unsigned i = 0; i < 30 && !dispatch_frame && !charged_projectiles; ++i) {
+    frame(0);
+    if (g_ram[0x0c01] == 4)
+      dispatch_frame = SABER_ARMS_CHARGE_HOLD_FRAMES + 2 + i;
+    charged_projectiles = projectiles(SABER_X1_CHARGED_RELEASE_CLASS);
+  }
+  energy_after = g_ram[0x1f90] & 0x3f;
+  printf("reference: saber-arms-charge release energy %u->%u spawned=%u\n",
+         energy_held, energy_after, spawned);
+
+  printf("reference: saber-arms-charge arms=%s $1F99=0x%02X hold=%u "
+         "$0BFF=%02X->%02X decreased=%d $0C00=%02X->%02X "
+         "$0C03_full_frame=%u $0C01_release=%02X dispatch_frame=%u "
+         "charged_projectiles=%u\n",
+         arms ? "set" : "clear", g_ram[0x1f99],
+         SABER_ARMS_CHARGE_HOLD_FRAMES, charge_timer_first, charge_timer_min,
+         charge_timer_decreased, charge_state_initial, charge_state_max,
+         full_frame, release_dispatch, dispatch_frame, charged_projectiles);
+
+  if (arms) {
+    check(charge_started &&
+              (charge_timer_decreased || charge_state_max > charge_state_initial),
+          "Saber Storm Tornado native charge progresses with arms");
+    check(full_frame != 0,
+          "Saber Storm Tornado reaches full native charge with arms");
+    /* $0C01 == 4 is set and consumed inside one native frame, so prove the
+     * charged release by its effect: new weapon objects and extra energy. */
+    check(spawned != 0 && energy_held >= energy_after + 2,
+          "Saber Storm Tornado release fires its charged attack with arms");
+  } else {
+    check(full_frame == 0,
+          "Saber Storm Tornado never reaches full native charge without arms");
+    check(spawned == 0 && energy_after == energy_held,
+          "Saber Storm Tornado release fires nothing without arms");
+  }
+}
+
+static void saber_arms_slash_keeps_charge_case(const char *fixture) {
+  unsigned charge_frame = 0;
+  unsigned slash_frames = 0;
+  unsigned full_after_slash = 0;
+  unsigned charge_at_slash;
+  unsigned charge_min;
+  unsigned charge_after_slash;
+  unsigned energy_before_slash;
+  unsigned energy_after_slash;
+  unsigned energy_before_release;
+  unsigned energy_after_release;
+  unsigned objects_before_slash;
+  unsigned objects_after_slash;
+  unsigned objects_before_release;
+  unsigned objects_after_release;
+  bool release_spawned = false;
+  bool slash_started = false;
+  bool slash_ended = false;
+  bool slash_objects_ok = true;
+  bool slash_energy_ok = true;
+  bool slash_charge_ok = true;
+  MmxSaberAttackSnapshot snapshot;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  select_native_weapon(5); /* Storm Tornado. */
+  g_ram[0x1f99] |= 0x02; /* Arms. */
+  for (unsigned frame_number = 1;
+       frame_number <= SABER_ARMS_CHARGE_HOLD_FRAMES; ++frame_number) {
+    frame(SNES_PAD_X);
+    /* The X press fires an ordinary tornado first; slash once it is gone.
+     * Saber-tagged objects (the arms saber wave) are not weapon shots. */
+    if (g_ram[0x0c00] >= 2 && native_projectiles() == 0) {
+      charge_frame = frame_number;
+      break;
+    }
+  }
+  check(charge_frame != 0,
+        "Storm Tornado reaches special charge-in-progress before slash probe");
+  if (!charge_frame) return;
+
+  charge_at_slash = g_ram[0x0c00];
+  charge_min = charge_at_slash;
+  objects_before_slash = native_projectiles();
+  energy_before_slash = g_ram[0x1f90] & 0x3f;
+
+  frame(SNES_PAD_X | SNES_PAD_Y);
+  snapshot = MmxSaberAttackSnapshotGet();
+  if (snapshot.phase != SABER_PHASE_IDLE) {
+    slash_started = true;
+    slash_frames = 1;
+    if (native_projectiles() > objects_before_slash)
+      slash_objects_ok = false;
+    if ((g_ram[0x1f90] & 0x3f) != energy_before_slash)
+      slash_energy_ok = false;
+    if (g_ram[0x0c00] < 2)
+      slash_charge_ok = false;
+    if (g_ram[0x0c00] < charge_min)
+      charge_min = g_ram[0x0c00];
+  }
+
+  while (snapshot.phase != SABER_PHASE_IDLE &&
+         slash_frames < SABER_ARMS_CHARGE_HOLD_FRAMES) {
+    frame(SNES_PAD_X);
+    ++slash_frames;
+    snapshot = MmxSaberAttackSnapshotGet();
+    if (snapshot.phase != SABER_PHASE_IDLE) {
+      if (native_projectiles() > objects_before_slash)
+        slash_objects_ok = false;
+      if ((g_ram[0x1f90] & 0x3f) != energy_before_slash)
+        slash_energy_ok = false;
+      if (g_ram[0x0c00] < 2)
+        slash_charge_ok = false;
+      if (g_ram[0x0c00] < charge_min)
+        charge_min = g_ram[0x0c00];
+    }
+  }
+
+  slash_ended = slash_started && snapshot.phase == SABER_PHASE_IDLE;
+  charge_after_slash = g_ram[0x0c00];
+  energy_after_slash = g_ram[0x1f90] & 0x3f;
+  objects_after_slash = native_projectiles();
+  printf("reference: saber-arms-slash-charge hold_frame=%u slash_frames=%u "
+         "$0C00=%02X->%02X min=%02X "
+         "energy=%u->%u projectiles=%u->%u\n",
+         charge_frame, slash_frames, charge_at_slash, charge_after_slash,
+         charge_min, energy_before_slash, energy_after_slash,
+         objects_before_slash, objects_after_slash);
+
+  check(slash_started,
+        "holding X and pressing Y starts a Saber slash during Storm Tornado charge");
+  check(slash_ended,
+        "charge-preserving Storm Tornado slash ends within the bounded window");
+  check(slash_objects_ok && objects_after_slash == objects_before_slash,
+        "Storm Tornado slash creates no weapon objects");
+  check(slash_energy_ok && energy_after_slash == energy_before_slash,
+        "Storm Tornado slash spends no energy");
+  check(slash_charge_ok && charge_after_slash >= 2,
+        "Storm Tornado special charge remains active through the slash");
+
+  for (unsigned i = 1;
+       i <= SABER_ARMS_CHARGE_HOLD_FRAMES && g_ram[0x0c03] != 1; ++i) {
+    frame(SNES_PAD_X);
+    if (g_ram[0x0c03] == 1) full_after_slash = i;
+  }
+  check(g_ram[0x0c03] == 1,
+        "Storm Tornado reaches full charge after the slash while X stays held");
+
+  energy_before_release = g_ram[0x1f90] & 0x3f;
+  objects_before_release = native_projectiles();
+  frame(0);
+  objects_after_release = native_projectiles();
+  if (objects_after_release > objects_before_release)
+    release_spawned = true;
+  for (unsigned i = 0; i < 30 && !release_spawned; ++i) {
+    frame(0);
+    objects_after_release = native_projectiles();
+    if (objects_after_release > objects_before_release)
+      release_spawned = true;
+  }
+  energy_after_release = g_ram[0x1f90] & 0x3f;
+  printf("reference: saber-arms-slash-charge charged-release "
+         "full_after_slash=%u energy=%u->%u->%u "
+         "projectiles=%u->%u->%u\n",
+         full_after_slash, energy_before_slash, energy_after_slash,
+         energy_after_release, objects_before_slash, objects_after_slash,
+         objects_after_release);
+  check(release_spawned &&
+            objects_before_release == objects_before_slash &&
+            energy_before_release == energy_before_slash &&
+            energy_before_release >= energy_after_release + 2,
+        "releasing X after the charge-preserving slash fires charged Storm Tornado");
+
+  unsigned release_charge_frame = 0;
+  unsigned release_slash_frames = 0;
+  unsigned release_input_frame = 0;
+  unsigned release_charge_at_slash;
+  unsigned release_charge_min;
+  unsigned release_charge_after_slash;
+  unsigned release_energy_before_slash;
+  unsigned release_energy_after_slash;
+  unsigned release_energy_after;
+  unsigned release_objects_before_slash;
+  unsigned release_objects_at_slash_end;
+  unsigned release_objects_after;
+  unsigned release_previous_objects;
+  unsigned release_previous_energy;
+  bool release_slash_started = false;
+  bool release_slash_ended = false;
+  bool release_slash_objects_ok = true;
+  bool release_slash_energy_ok = true;
+  bool release_slash_charge_ok = true;
+  bool release_spawned_after_slash = false;
+  bool release_spent_after_slash = false;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  select_native_weapon(5); /* Storm Tornado. */
+  g_ram[0x1f99] |= 0x02; /* Arms. */
+  for (unsigned frame_number = 1;
+       frame_number <= SABER_ARMS_CHARGE_HOLD_FRAMES; ++frame_number) {
+    frame(SNES_PAD_X);
+    /* The X press fires an ordinary tornado first; slash once it is gone.
+     * Saber-tagged objects (the arms saber wave) are not weapon shots. */
+    if (g_ram[0x0c00] >= 2 && native_projectiles() == 0) {
+      release_charge_frame = frame_number;
+      break;
+    }
+  }
+  check(release_charge_frame != 0,
+        "Storm Tornado reaches charge-in-progress before release-during-slash probe");
+  if (!release_charge_frame) return;
+
+  release_charge_at_slash = g_ram[0x0c00];
+  release_charge_min = release_charge_at_slash;
+  release_objects_before_slash = native_projectiles();
+  release_energy_before_slash = g_ram[0x1f90] & 0x3f;
+  release_previous_objects = release_objects_before_slash;
+  release_previous_energy = release_energy_before_slash;
+
+  frame(SNES_PAD_X | SNES_PAD_Y);
+  snapshot = MmxSaberAttackSnapshotGet();
+  if (snapshot.phase != SABER_PHASE_IDLE) {
+    release_slash_started = true;
+    release_slash_frames = 1;
+    if (native_projectiles() > release_objects_before_slash)
+      release_slash_objects_ok = false;
+    if ((g_ram[0x1f90] & 0x3f) != release_energy_before_slash)
+      release_slash_energy_ok = false;
+    if (g_ram[0x0c00] < 2)
+      release_slash_charge_ok = false;
+    if (g_ram[0x0c00] < release_charge_min)
+      release_charge_min = g_ram[0x0c00];
+  }
+  release_previous_objects = native_projectiles();
+  release_previous_energy = g_ram[0x1f90] & 0x3f;
+
+  if (snapshot.phase != SABER_PHASE_IDLE) {
+    release_input_frame = release_slash_frames + 1;
+    frame(SNES_PAD_Y); /* Release X while the slash still owns the action. */
+    ++release_slash_frames;
+    snapshot = MmxSaberAttackSnapshotGet();
+    {
+      const unsigned objects_now = native_projectiles();
+      const unsigned energy_now = g_ram[0x1f90] & 0x3f;
+      if (snapshot.phase != SABER_PHASE_IDLE) {
+        if (objects_now > release_objects_before_slash)
+          release_slash_objects_ok = false;
+        if (energy_now != release_energy_before_slash)
+          release_slash_energy_ok = false;
+        if (g_ram[0x0c00] < 2)
+          release_slash_charge_ok = false;
+        if (g_ram[0x0c00] < release_charge_min)
+          release_charge_min = g_ram[0x0c00];
+      } else {
+        if (objects_now > release_previous_objects)
+          release_spawned_after_slash = true;
+        if (energy_now < release_previous_energy)
+          release_spent_after_slash = true;
+      }
+      release_previous_objects = objects_now;
+      release_previous_energy = energy_now;
+    }
+  }
+
+  while (snapshot.phase != SABER_PHASE_IDLE &&
+         release_slash_frames < SABER_ARMS_CHARGE_HOLD_FRAMES) {
+    frame(0);
+    ++release_slash_frames;
+    snapshot = MmxSaberAttackSnapshotGet();
+    {
+      const unsigned objects_now = native_projectiles();
+      const unsigned energy_now = g_ram[0x1f90] & 0x3f;
+      if (snapshot.phase != SABER_PHASE_IDLE) {
+        if (objects_now > release_objects_before_slash)
+          release_slash_objects_ok = false;
+        if (energy_now != release_energy_before_slash)
+          release_slash_energy_ok = false;
+        if (g_ram[0x0c00] < 2)
+          release_slash_charge_ok = false;
+        if (g_ram[0x0c00] < release_charge_min)
+          release_charge_min = g_ram[0x0c00];
+      } else {
+        if (objects_now > release_previous_objects)
+          release_spawned_after_slash = true;
+        if (energy_now < release_previous_energy)
+          release_spent_after_slash = true;
+      }
+      release_previous_objects = objects_now;
+      release_previous_energy = energy_now;
+    }
+  }
+
+  release_slash_ended =
+      release_slash_started && snapshot.phase == SABER_PHASE_IDLE;
+  release_charge_after_slash = g_ram[0x0c00];
+  release_energy_after_slash = g_ram[0x1f90] & 0x3f;
+  release_objects_at_slash_end = native_projectiles();
+
+  for (unsigned i = 0;
+       i < 30 && (!release_spawned_after_slash ||
+                  !release_spent_after_slash); ++i) {
+    frame(0);
+    snapshot = MmxSaberAttackSnapshotGet();
+    {
+      const unsigned objects_now = native_projectiles();
+      const unsigned energy_now = g_ram[0x1f90] & 0x3f;
+      if (snapshot.phase == SABER_PHASE_IDLE) {
+        if (objects_now > release_previous_objects)
+          release_spawned_after_slash = true;
+        if (energy_now < release_previous_energy)
+          release_spent_after_slash = true;
+      }
+      release_previous_objects = objects_now;
+      release_previous_energy = energy_now;
+    }
+  }
+  release_energy_after = g_ram[0x1f90] & 0x3f;
+  release_objects_after = native_projectiles();
+  printf("reference: saber-arms-slash-charge release-during-slash "
+         "hold_frame=%u release_frame=%u slash_frames=%u "
+         "$0C00=%02X->%02X min=%02X "
+         "energy=%u->%u->%u projectiles=%u->%u->%u\n",
+         release_charge_frame, release_input_frame, release_slash_frames,
+         release_charge_at_slash, release_charge_after_slash,
+         release_charge_min, release_energy_before_slash,
+         release_energy_after_slash, release_energy_after,
+         release_objects_before_slash, release_objects_at_slash_end,
+         release_objects_after);
+
+  check(release_slash_started,
+        "holding X and pressing Y starts the release-during-slash probe");
+  check(release_slash_ended,
+        "release-during-slash probe reaches idle within the bounded window");
+  check(release_slash_objects_ok,
+        "releasing X during the slash creates no weapon object during the slash");
+  check(release_slash_energy_ok,
+        "releasing X during the slash spends no energy during the slash");
+  check(release_slash_charge_ok,
+        "releasing X during the slash keeps Storm Tornado charging through the slash");
+  check(release_spawned_after_slash && release_spent_after_slash &&
+            release_energy_before_slash > release_energy_after,
+        "releasing X during the slash fires Storm Tornado only after the slash");
+}
+
+static void saber_special_release_save_state_case(const char *fixture) {
+  unsigned charge_frame = 0;
+  unsigned continuation_frames = 0;
+  unsigned uninterrupted_projectiles;
+  unsigned uninterrupted_special_charge;
+  unsigned uninterrupted_zero_charge;
+  unsigned uninterrupted_energy;
+  unsigned loaded_projectiles;
+  unsigned loaded_special_charge;
+  unsigned loaded_zero_charge;
+  unsigned loaded_energy;
+  unsigned char uninterrupted_kinds[8] = {0};
+  unsigned char loaded_kinds[8] = {0};
+  uint8_t extension_state[MMX_ZERO_EXTENSION_STATE_BYTES];
+  MmxSaberAttackSnapshot snapshot;
+  size_t capacity;
+  size_t size;
+  uint8_t *saved;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  select_native_weapon(5); /* Storm Tornado. */
+  g_ram[0x1f99] |= 0x02; /* Arms. */
+  for (unsigned frame_number = 1;
+       frame_number <= SABER_ARMS_CHARGE_HOLD_FRAMES; ++frame_number) {
+    frame(SNES_PAD_X);
+    if (g_ram[0x0c00] >= 2 && native_projectiles() == 0) {
+      charge_frame = frame_number;
+      break;
+    }
+  }
+  check(charge_frame != 0,
+        "save-state probe reaches Storm Tornado charge before slash");
+  if (!charge_frame) return;
+
+  frame(SNES_PAD_X | SNES_PAD_Y);
+  snapshot = MmxSaberAttackSnapshotGet();
+  check(snapshot.phase != SABER_PHASE_IDLE,
+        "save-state probe starts a live Saber slash during special charge");
+  if (snapshot.phase == SABER_PHASE_IDLE) return;
+  frame(SNES_PAD_Y); /* Release X while the slash still owns the action. */
+  snapshot = MmxSaberAttackSnapshotGet();
+  check(snapshot.phase != SABER_PHASE_IDLE && g_ram[0x0c00] >= 2,
+        "save-state probe reaches special-owned release latch during slash");
+  if (snapshot.phase == SABER_PHASE_IDLE) return;
+
+  MmxZeroExtSaveState(extension_state);
+  check(extension_state[4] == 2 && extension_state[5] == 0 &&
+            extension_state[6] == 0 && extension_state[7] == 0 &&
+            extension_state[8] && extension_state[9],
+        "save-state probe captures release_pending_from_special before snapshot");
+
+  capacity = RtlSaveSnapshotToMemory(NULL, 0);
+  saved = malloc(capacity);
+  check(capacity != 0 && saved != NULL,
+        "save-state probe allocates an in-memory snapshot buffer");
+  size = RtlSaveSnapshotToMemory(saved, capacity);
+  check(size != 0 && size <= capacity,
+        "save-state probe saves after special-charge release during slash");
+
+  g_ram[0x0bdb] = 0; /* Switch to the buster before the slash completes. */
+  while (MmxSaberAttackSnapshotGet().phase != SABER_PHASE_IDLE &&
+         continuation_frames < SABER_ARMS_CHARGE_HOLD_FRAMES) {
+    frame(0);
+    ++continuation_frames;
+  }
+  for (unsigned i = 0; i < 4; ++i) frame(0);
+  check(MmxSaberAttackSnapshotGet().phase == SABER_PHASE_IDLE,
+        "uninterrupted save-state branch reaches slash end plus four frames");
+  uninterrupted_projectiles = native_projectiles();
+  uninterrupted_special_charge = g_ram[0x0c00];
+  uninterrupted_zero_charge = MmxZeroGetState().charge;
+  uninterrupted_energy = g_ram[0x1f90] & 0x3f;
+  for (unsigned i = 0; i < 8; ++i) {
+    const unsigned d = 0x1228 + i * 64;
+    if (g_ram[d] && !saber_tagged_projectile(d))
+      uninterrupted_kinds[i] = g_ram[d + 10];
+  }
+
+  check(RtlLoadSnapshotFromMemory(saved, size),
+        "loaded save-state branch accepts the v2 special-release snapshot");
+  memset(extension_state, 0, sizeof(extension_state));
+  MmxZeroExtSaveState(extension_state);
+  check(extension_state[4] == 2 && extension_state[8] && extension_state[9],
+        "v2 save-state load restores the special-owned release latch");
+  MmxRendererBeginFrame(g_ram);
+  g_ram[0x0bdb] = 0; /* Same buster switch as uninterrupted branch. */
+  for (unsigned i = 0; i < continuation_frames; ++i) frame(0);
+  for (unsigned i = 0; i < 4; ++i) frame(0);
+  check(MmxSaberAttackSnapshotGet().phase == SABER_PHASE_IDLE,
+        "loaded save-state branch reaches slash end plus four frames");
+  loaded_projectiles = native_projectiles();
+  loaded_special_charge = g_ram[0x0c00];
+  loaded_zero_charge = MmxZeroGetState().charge;
+  loaded_energy = g_ram[0x1f90] & 0x3f;
+  for (unsigned i = 0; i < 8; ++i) {
+    const unsigned d = 0x1228 + i * 64;
+    if (g_ram[d] && !saber_tagged_projectile(d))
+      loaded_kinds[i] = g_ram[d + 10];
+  }
+  check(uninterrupted_projectiles == loaded_projectiles &&
+            !memcmp(uninterrupted_kinds, loaded_kinds, sizeof(uninterrupted_kinds)) &&
+            uninterrupted_special_charge == loaded_special_charge &&
+            uninterrupted_zero_charge == loaded_zero_charge &&
+            uninterrupted_energy == loaded_energy,
+        "v2 save-state load matches uninterrupted special-release behavior");
+  free(saved);
+}
+
+static void saber_version_one_rejection_case(const char *fixture) {
+  uint8_t state[MMX_ZERO_EXTENSION_STATE_BYTES];
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  MmxZeroExtSaveState(state);
+  state[4] = 1;
+  state[5] = 0;
+  state[6] = 0;
+  state[7] = 0;
+  check(!MmxZeroExtLoadState(state),
+        "version-1 Saber extension state is rejected");
+  frame(0);
+  check(MmxSaberAttackSnapshotGet().phase == SABER_PHASE_IDLE,
+        "version-1 rejection leaves the following frame runnable");
+}
+
+static void saber_arms_charge_checks(const char *fixture) {
+  saber_arms_charge_case(fixture, true);
+  saber_arms_charge_case(fixture, false);
+  saber_arms_slash_keeps_charge_case(fixture);
+  saber_special_release_save_state_case(fixture);
+  saber_version_one_rejection_case(fixture);
+  puts("ok: saber-arms-charge");
+}
+
+
+static unsigned saber_weapon_ammo_word(unsigned weapon) {
+  return read_ram_word(g_ram, 0x1f85 + weapon * 2) & 0x3fff;
+}
+
+static unsigned saber_frozen_penguin_boss(void) {
+  for (unsigned d = 0x0e68; d < 0x1228; d += 0x40) {
+    if (g_ram[d] && g_ram[d + 0x0e] && g_ram[d + 0x27] &&
+        g_ram[d + 0x0a] == 0x02 && !g_ram[d + 0x30])
+      return d;
+  }
+  return 0;
+}
+
+static unsigned saber_frozen_ice_actor(unsigned *counter) {
+  for (unsigned d = 0x1428; d <= 0x15e8; d += 0x40) {
+    /* Chill Penguin's ice pieces are attack objects $1A; the pieces that
+     * encase the player show the statue animation $68 (state 4, $C451). */
+    if (g_ram[d] && g_ram[d + 0x01] == 0x04 &&
+        g_ram[d + 0x0a] == 0x1a && g_ram[d + 0x16] == 0x68 &&
+        read_ram_word(g_ram, d + 0x20) == 0xc451) {
+      if (counter) *counter = read_ram_word(g_ram, d + 0x1a);
+      return d;
+    }
+  }
+  if (counter) *counter = 0;
+  return 0;
+}
+
+static void saber_frozen_checks(const char *fixture_dir) {
+  char path[4096];
+  int written;
+  unsigned ice = 0;
+  unsigned ice_counter = 0;
+  unsigned found_frame = 0;
+  size_t snapshot_capacity;
+  size_t snapshot_size;
+  uint8_t *snapshot;
+
+  check(fixture_dir && fixture_dir[0],
+        "saber-frozen receives a fixture directory");
+  written = snprintf(path, sizeof(path), "%s/%s", fixture_dir,
+                     "penguin-fight.sav");
+  check(written >= 0 && written < (int)sizeof(path),
+        "saber-frozen fixture path fits");
+  check(readable_file(path), "penguin-fight.sav exists for saber-frozen");
+  check(RtlLoadSnapshot(path), "penguin-fight.sav loads for saber-frozen");
+  check(MmxZeroActive() && !MmxZeroModern() && g_ram[0x1f7a] == 8,
+        "saber-frozen fixture is the Chill Penguin stage");
+  check(g_ram[0x0bdb] == 0,
+        "penguin-fight freeze route starts with the buster selected");
+  MmxZeroCancel(g_ram);
+  MmxSaberFrameReset();
+
+  for (unsigned frame_number = 0;
+       frame_number < 1800 && !ice; ++frame_number) {
+    unsigned input = 0;
+    const unsigned boss = saber_frozen_penguin_boss();
+    if (boss) {
+      const int dx = (int)read_ram_word(g_ram, boss + 5) -
+          (int)read_ram_word(g_ram, 0x0bad);
+      if (abs(dx) > 32)
+        input = dx >= 0 ? SNES_PAD_RIGHT : SNES_PAD_LEFT;
+    }
+    frame(input);
+    if (g_ram[0x0baa] == 0x1e) {
+      unsigned candidate_counter = 0;
+      const unsigned candidate = saber_frozen_ice_actor(&candidate_counter);
+      if (candidate) {
+        ice = candidate;
+        ice_counter = candidate_counter;
+        found_frame = frame_number + 1;
+      }
+    }
+  }
+
+  printf("reference: saber-frozen found=%u frame=%u actor=0x%04X counter=%u\n",
+         ice != 0, found_frame, ice, ice_counter);
+  check(ice != 0,
+        "saber-frozen reaches a real Chill Penguin freeze");
+  check(g_ram[0x0baa] == 0x1e,
+        "saber-frozen route holds native action $1E");
+
+  snapshot_capacity = RtlSaveSnapshotToMemory(NULL, 0);
+  snapshot = malloc(snapshot_capacity);
+  check(snapshot_capacity != 0 && snapshot != NULL,
+        "saber-frozen allocates a freeze snapshot");
+  snapshot_size = RtlSaveSnapshotToMemory(snapshot, snapshot_capacity);
+  check(snapshot_size != 0,
+        "saber-frozen saves the real freeze snapshot");
+
+  {
+    unsigned before_counter = 0;
+    unsigned after_counter = 0;
+    unsigned quiet_counter = 0;
+    unsigned char previous_native[8] = {0};
+    unsigned native_births;
+    const unsigned before_ice = saber_frozen_ice_actor(&before_counter);
+    const unsigned cues = MmxSaberAttackCueCount();
+    (void)new_native_projectiles(previous_native);
+    check(RtlLoadSnapshotFromMemory(snapshot, snapshot_size),
+          "saber-frozen restores the Saber probe snapshot");
+    frame(SNES_PAD_Y);
+    native_births = new_native_projectiles(previous_native);
+    const MmxSaberAttackSnapshot after =
+        MmxSaberAttackSnapshotGet();
+    const unsigned after_ice = saber_frozen_ice_actor(&after_counter);
+    check(before_ice != 0 && after_ice != 0 &&
+              after.phase == SABER_PHASE_IDLE &&
+              MmxSaberAttackCueCount() == cues &&
+              tagged_projectiles() == 0 && g_ram[0x0baa] == 0x1e,
+          "saber-frozen Y starts no Saber slash or Saber projectile");
+    check(native_births == 0,
+          "saber-frozen Y starts no native projectile");
+    (void)after_ice;
+    (void)quiet_counter;
+  }
+
+  {
+    /* Y is X1's fire button, and native ice counts any new press as a mash.
+     * Mashing Y must break the ice well before standing still does. */
+    unsigned idle_frames = 0;
+    unsigned mash_frames = 0;
+    check(RtlLoadSnapshotFromMemory(snapshot, snapshot_size),
+          "saber-frozen restores the idle mash-timing snapshot");
+    while (idle_frames < 90 && g_ram[0x0baa] == 0x1e) {
+      frame(0);
+      ++idle_frames;
+    }
+    check(RtlLoadSnapshotFromMemory(snapshot, snapshot_size),
+          "saber-frozen restores the Y mash-timing snapshot");
+    while (mash_frames < 90 && g_ram[0x0baa] == 0x1e) {
+      frame((mash_frames & 1) ? 0 : SNES_PAD_Y);
+      ++mash_frames;
+    }
+    printf("reference: saber-frozen idle=%u mash=%u action=0x%02X\n",
+           idle_frames, mash_frames, g_ram[0x0baa]);
+    check(idle_frames == 90 && mash_frames < 90 && g_ram[0x0baa] != 0x0e,
+          "saber-frozen mashing Y breaks the ice; standing still does not");
+  }
+
+  {
+    unsigned char previous_native[8] = {0};
+    unsigned native_births = 0;
+    bool stayed_frozen = true;
+    check(RtlLoadSnapshotFromMemory(snapshot, snapshot_size),
+          "saber-frozen restores the buster probe snapshot");
+    check(g_ram[0x0bdb] == 0,
+          "saber-frozen buster probe restores buster selection");
+    (void)new_native_projectiles(previous_native);
+    for (unsigned held = 0; held < 30; ++held) {
+      frame(SNES_PAD_X);
+      native_births += new_native_projectiles(previous_native);
+      if (g_ram[0x0baa] != 0x1e) stayed_frozen = false;
+    }
+    frame(0);
+    native_births += new_native_projectiles(previous_native);
+    if (g_ram[0x0baa] != 0x1e) stayed_frozen = false;
+    check(stayed_frozen,
+          "saber-frozen buster press and 30 held frames stay frozen");
+    check(native_births == 0 && tagged_projectiles() == 0,
+          "saber-frozen buster press fires no native or Saber projectile");
+  }
+
+  {
+    unsigned char previous_native[8] = {0};
+    unsigned native_births = 0;
+    bool stayed_frozen = true;
+    unsigned energy_before;
+    check(RtlLoadSnapshotFromMemory(snapshot, snapshot_size),
+          "saber-frozen restores the special probe snapshot");
+    select_native_weapon(5);
+    check(g_ram[0x0baa] == 0x1e,
+          "saber-frozen weapon selection stays inside the freeze");
+    energy_before = saber_weapon_ammo_word(5);
+    check(energy_before > 0,
+          "saber-frozen Storm Tornado has energy");
+    (void)new_native_projectiles(previous_native);
+    frame(SNES_PAD_X);
+    native_births += new_native_projectiles(previous_native);
+    if (g_ram[0x0baa] != 0x1e) stayed_frozen = false;
+    frame(0);
+    native_births += new_native_projectiles(previous_native);
+    if (g_ram[0x0baa] != 0x1e) stayed_frozen = false;
+    check(stayed_frozen,
+          "saber-frozen special press and release stay frozen");
+    check(native_births == 0 && tagged_projectiles() == 0,
+          "saber-frozen special press fires no native or Saber projectile");
+    check(saber_weapon_ammo_word(5) == energy_before,
+          "saber-frozen special press spends no weapon energy");
+  }
+
+  check(RtlLoadSnapshotFromMemory(snapshot, snapshot_size),
+        "saber-frozen restores the snapshot for mash release");
+  unsigned mash_frames = 0;
+  while (mash_frames < 600 && g_ram[0x0baa] == 0x1e) {
+    frame(SNES_PAD_Y);
+    ++mash_frames;
+    if (g_ram[0x0baa] != 0x1e) break;
+    frame(0);
+    ++mash_frames;
+  }
+  printf("reference: saber-frozen release frames=%u action=0x%02X "
+         "counter-actor=0x%04X\n",
+         mash_frames, g_ram[0x0baa],
+         saber_frozen_ice_actor(NULL));
+  check(g_ram[0x0baa] != 0x1e,
+        "saber-frozen mash reaches the native release");
+  for (unsigned settle = 0;
+       settle < 4 && (g_ram[0x0baa] || g_ram[0x0bab] || g_ram[0x0c16]);
+       ++settle)
+    frame(0);
+  check(g_ram[0x0baa] == 0 && g_ram[0x0bab] == 0 && g_ram[0x0c16] == 0,
+        "saber-frozen release restores native freeze bytes to zero");
+  /* The breath can encase Zero again right after he breaks free. Keep
+   * mashing out of every freeze and press Y on free frames until a slash
+   * starts outside the freeze. */
+  bool slash_started = false;
+  unsigned refreezes = 0;
+  unsigned resume_frames = 0;
+  bool was_frozen = false;
+  for (; resume_frames < 900 && !slash_started; ++resume_frames) {
+    const bool frozen = g_ram[0x0baa] == 0x1e;
+    if (frozen && !was_frozen) ++refreezes;
+    was_frozen = frozen;
+    frame((resume_frames & 1) ? 0 : SNES_PAD_Y);
+    if (g_ram[0x0baa] != 0x1e &&
+        MmxSaberAttackSnapshotGet().phase != SABER_PHASE_IDLE)
+      slash_started = true;
+  }
+  printf("reference: saber-frozen resume frames=%u refreezes=%u action=0x%02X\n",
+         resume_frames, refreezes, g_ram[0x0baa]);
+  check(slash_started,
+        "Saber resumes on Y after the real Chill Penguin freeze ends");
+  free(snapshot);
+  puts("ok: saber-frozen");
+}
+
+static void saber_capsule_checks(const char *fixture_dir) {
+  char path[4096];
+  int written;
+  unsigned capsule_x = 0;
+  unsigned last_px = 0;
+  unsigned stuck = 0;
+  unsigned celebration_frames = 0;
+  unsigned min_pixels = 0xffff;
+  unsigned celebration_pose = 0xffff;
+  unsigned grant_frame = 0;
+  unsigned return_frame = 0;
+
+  check(fixture_dir && fixture_dir[0],
+        "saber-capsule receives a fixture directory");
+  written = snprintf(path, sizeof(path), "%s/%s", fixture_dir,
+                     "capsule.sav");
+  check(written >= 0 && written < (int)sizeof(path),
+        "saber-capsule fixture path fits");
+  check(readable_file(path), "capsule.sav exists for saber-capsule");
+  check(RtlLoadSnapshot(path), "capsule.sav loads for saber-capsule");
+  check(MmxZeroActive() && MmxSaberEnabled() && g_ram[0x1f7a] == 0x02,
+        "saber-capsule fixture is the active Saber Zero capsule stage");
+
+  const unsigned part0 = g_ram[0x1f99];
+  printf("reference: saber-capsule fixture stage=$%02X zero=%u saber=%u "
+         "$0BAA=$%02X $1F99=$%02X\n",
+         g_ram[0x1f7a], MmxZeroActive(), MmxSaberEnabled(), g_ram[0x0baa],
+         part0);
+
+  for (unsigned d = 0x0e68; d < 0x1228; d += 0x40)
+    if (g_ram[d] && g_ram[d + 0x0a] == 0x4d)
+      capsule_x = read_ram_word(g_ram, d + 0x05);
+  check(capsule_x != 0, "saber-capsule fixture has a capsule actor");
+  MmxZeroCancel(g_ram);
+  MmxSaberFrameReset();
+
+  for (unsigned n = 0; n < 4000 && !return_frame; ++n) {
+    const unsigned px = read_ram_word(g_ram, 0x0bad);
+    for (unsigned d = 0x0e68; d < 0x1228; d += 0x40)
+      if (g_ram[d] && g_ram[d + 0x0a] == 0x4d)
+        capsule_x = read_ram_word(g_ram, d + 0x05);
+
+    unsigned input;
+    if (g_ram[0x0baa] == 0x1e)
+      input = (n % 16 == 0) ? SNES_PAD_START :
+          (n % 16 == 8) ? SNES_PAD_B : 0;
+    else
+      input = (capsule_x && px > capsule_x + 2) ? SNES_PAD_LEFT :
+          (capsule_x && px + 2 < capsule_x) ? SNES_PAD_RIGHT : 0;
+    if (input == SNES_PAD_RIGHT || input == SNES_PAD_LEFT) {
+      stuck = (px == last_px) ? stuck + 1 : 0;
+      if (stuck > 8 && (n % 40) < 20) input |= SNES_PAD_B;
+    }
+    last_px = px;
+    frame(input);
+
+    if (g_ram[0x0baa] == 0x38) {
+      MmxZeroState state = MmxZeroGetState();
+      const uint8_t *base = MmxZeroMenuPose();
+      const uint8_t *pose = MmxZeroPose(g_ram, &state);
+      unsigned pixels = 0;
+      if (pose)
+        for (unsigned i = 0; i < 128 * 128; ++i)
+          if (pose[i]) ++pixels;
+      ++celebration_frames;
+      if (pixels < min_pixels) min_pixels = pixels;
+      if (pose && base)
+        celebration_pose =
+            (unsigned)((pose - base) / (128 * 128));
+    }
+    if (!grant_frame && g_ram[0x1f99] != part0) grant_frame = n + 1;
+    if (grant_frame && g_ram[0x0baa] == 0x00) return_frame = n + 1;
+  }
+
+  printf("reference: saber-capsule celebration_frames=%u min_pixels=%u "
+         "pose=0x%02X part=$%02X->$%02X\n",
+         celebration_frames, min_pixels, celebration_pose, part0,
+         g_ram[0x1f99]);
+  check(celebration_frames >= 30,
+        "saber-capsule reaches at least 30 celebration frames");
+  check(min_pixels >= 300,
+        "saber-capsule Zero pose has at least 300 opaque pixels");
+  check(celebration_pose == 0x00,
+        "saber-capsule celebration uses Zero's idle stance");
+  check(grant_frame && part0 != g_ram[0x1f99] &&
+            (g_ram[0x1f99] & ~part0) != 0,
+        "saber-capsule grants a new armor-part bit");
+  check(return_frame && g_ram[0x0baa] == 0x00 && return_frame <= 4000,
+        "saber-capsule returns to native action $00 after the grant");
+  puts("ok: saber-capsule");
+}
+static unsigned saber_normal_ammo_spend(const char *fixture, unsigned weapon,
+                                        uint8_t armor, unsigned shots,
+                                        unsigned *before, unsigned *after) {
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  select_native_weapon(weapon);
+  g_ram[0x1f99] = (g_ram[0x1f99] & 0xf0) | armor;
+  *before = saber_weapon_ammo_word(weapon);
+  for (unsigned shot = 0; shot < shots; ++shot) {
+    frame(SNES_PAD_X);
+    if (shot + 1 < shots) {
+      /* X1 allows one Storm Tornado on screen; let it leave first. */
+      for (unsigned i = 1; i < SABER_ONE_SHOT_FRAMES; ++i) frame(0);
+      for (unsigned i = 0; i < 240 && all_projectiles(); ++i) frame(0);
+    }
+  }
+  *after = saber_weapon_ammo_word(weapon);
+  return *before - *after;
+}
+
+static unsigned saber_charged_ammo_spend(const char *fixture, bool head,
+                                         unsigned *before, unsigned *after) {
+  bool fired = false;
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  select_native_weapon(5); /* Storm Tornado. */
+  g_ram[0x1f99] = (g_ram[0x1f99] & 0xf0) | 0x02 | (head ? 0x01 : 0);
+  *before = saber_weapon_ammo_word(5);
+  hold_charge_button(SABER_ARMS_CHARGE_HOLD_FRAMES, SNES_PAD_X);
+  {
+    /* Charged Storm Tornado is not projectile class 2; prove the release by
+     * the weapon objects it spawns (see saber-arms-charge). */
+    const unsigned held_objects = all_projectiles();
+    frame(0);
+    fired = all_projectiles() > held_objects;
+    for (unsigned i = 0; i < 30; ++i) frame(0);
+  }
+  *after = saber_weapon_ammo_word(5);
+  check(fired, head ?
+      "helmet charged Storm Tornado release emits a charged projectile" :
+      "no-helmet charged Storm Tornado release emits a charged projectile");
+  return *before - *after;
+}
+
+static void saber_head_ammo_checks(const char *fixture) {
+  unsigned storm_no_head_before, storm_no_head_after;
+  unsigned storm_head_before, storm_head_after;
+  unsigned storm_two_before, storm_two_after;
+  unsigned fire_head_before, fire_head_after;
+  unsigned charged_no_head_before, charged_no_head_after;
+  unsigned charged_head_before, charged_head_after;
+  unsigned x_before, x_after;
+  unsigned storm_no_head = saber_normal_ammo_spend(
+      fixture, 5, 0x00, 1, &storm_no_head_before, &storm_no_head_after);
+  unsigned storm_head = saber_normal_ammo_spend(
+      fixture, 5, 0x01, 1, &storm_head_before, &storm_head_after);
+  unsigned storm_two = saber_normal_ammo_spend(
+      fixture, 5, 0x01, 2, &storm_two_before, &storm_two_after);
+  unsigned fire_head = saber_normal_ammo_spend(
+      fixture, 2, 0x01, 1, &fire_head_before, &fire_head_after);
+  unsigned fire_no_head_before, fire_no_head_after;
+  unsigned fire_no_head = saber_normal_ammo_spend(
+      fixture, 2, 0x00, 1, &fire_no_head_before, &fire_no_head_after);
+  unsigned charged_no_head = saber_charged_ammo_spend(
+      fixture, false, &charged_no_head_before, &charged_no_head_after);
+  unsigned charged_head = saber_charged_ammo_spend(
+      fixture, true, &charged_head_before, &charged_head_after);
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  select_native_weapon(5); /* Storm Tornado. */
+  g_ram[0x1f99] |= 0x01;
+  switch_to_x();
+  x_before = saber_weapon_ammo_word(5);
+  frame(SNES_PAD_Y);
+  x_after = saber_weapon_ammo_word(5);
+
+  printf("reference: saber-head-ammo Storm normal no-head word=0x%04X->0x%04X spend=0x%04X\n",
+         storm_no_head_before, storm_no_head_after, storm_no_head);
+  printf("reference: saber-head-ammo Storm normal head word=0x%04X->0x%04X spend=0x%04X\n",
+         storm_head_before, storm_head_after, storm_head);
+  printf("reference: saber-head-ammo Storm normal head two-shots word=0x%04X->0x%04X spend=0x%04X\n",
+         storm_two_before, storm_two_after, storm_two);
+  printf("reference: saber-head-ammo Fire Wave normal head word=0x%04X->0x%04X spend=0x%04X\n",
+         fire_head_before, fire_head_after, fire_head);
+  printf("reference: saber-head-ammo Storm charged no-head word=0x%04X->0x%04X spend=0x%04X\n",
+         charged_no_head_before, charged_no_head_after, charged_no_head);
+  printf("reference: saber-head-ammo Storm charged head word=0x%04X->0x%04X spend=0x%04X\n",
+         charged_head_before, charged_head_after, charged_head);
+  printf("reference: saber-head-ammo X with head Storm normal word=0x%04X->0x%04X spend=0x%04X\n",
+         x_before, x_after, x_before - x_after);
+
+  check(storm_no_head == 0x0100 &&
+            storm_no_head_after == storm_no_head_before - 0x0100,
+        "Zero without helmet spends the full normal Storm Tornado cost");
+  check(storm_head == 0x0080 &&
+            storm_head_after == storm_head_before - 0x0080 &&
+            storm_two == 0x0100 &&
+            storm_two_after == storm_two_before - 0x0100,
+        "Zero helmet halves normal Storm Tornado cost and preserves fractions");
+  /* One press runs several $0010 Fire Wave spends; each becomes $0008. */
+  printf("reference: saber-head-ammo Fire Wave normal no-head spend=0x%04X\n",
+         fire_no_head);
+  check(fire_head != 0 && fire_no_head != 0 && fire_head * 2 == fire_no_head &&
+            fire_head % 0x0008 == 0,
+        "Zero helmet halves Fire Wave to a nonzero fixed-point cost");
+  check(charged_no_head != 0 && charged_head * 2 == charged_no_head &&
+            charged_head_after == charged_head_before - charged_head,
+        "Zero helmet halves the charged Storm Tornado cost");
+  check(x_after == x_before - 0x0100,
+        "X keeps the full Storm Tornado cost with the helmet flag set");
+  puts("ok: saber-head-ammo");
+}
 static void saber_tuning_checks(void) {
   check(g_mod_provider->feature_set_option(
             g_mod_provider->ctx, "megaman-x.character.saber-zero",
@@ -5223,6 +6709,140 @@ static void native_buster_contact(unsigned enemy, unsigned projectile) {
   g_cpu = saved_cpu;
   check(result == RECOMP_RETURN_NORMAL,
         "native buster oracle returns from the generated collision routine");
+}
+
+/* Run the native player-damage routine $84:9F2A (called from $82:A618) on
+ * incoming damage `damage`, returning the HP it removed. */
+static unsigned native_player_damage(unsigned damage) {
+  CpuState saved_cpu = g_cpu;
+  RecompReturn result;
+  unsigned before;
+  g_ram[0x0bcf] = (uint8_t)((g_ram[0x0bcf] & 0x80) | 28);
+  before = g_ram[0x0bcf] & 0x7f;
+  g_ram[0x0bce] = (uint8_t)damage;
+  g_cpu.DB = 0x00;
+  g_cpu.PB = 0x84;
+  g_cpu.m_flag = 1;
+  g_cpu.x_flag = 1;
+  g_cpu.P = (uint8_t)((g_cpu.P & (uint8_t)~0x08) | 0x30);
+  g_cpu._flag_D = 0;
+  g_cpu.A = 0;
+  g_cpu.X = 0;
+  g_cpu.Y = 0;
+  g_cpu.host_return_valid = 0;
+  result = cpu_dispatch_call_pc(&g_cpu, 0x849f2a, 0x82a618);
+  g_cpu = saved_cpu;
+  check(result == RECOMP_RETURN_NORMAL,
+        "native player damage routine returns normally");
+  return before - (g_ram[0x0bcf] & 0x7f);
+}
+
+static void saber_body_damage_case(const char *who, unsigned damage,
+                                   unsigned upgrades,
+                                   unsigned expected_body) {
+  unsigned lost_plain, lost_body;
+  g_ram[0x1f99] = (uint8_t)(upgrades & ~0x04u);
+  lost_plain = native_player_damage(damage);
+  g_ram[0x1f99] = (uint8_t)(upgrades | 0x04u);
+  lost_body = native_player_damage(damage);
+  printf("reference: saber-body-damage %s dmg=%u no-body=%u body=%u\n",
+         who, damage, lost_plain, lost_body);
+  check(lost_plain == damage, "damage without body armor is full");
+  check(lost_body == expected_body,
+        "body armor damage matches the active character rule");
+}
+
+static unsigned saber_body_contact_enemy(const char *fixture, bool use_x,
+                                         unsigned *walk_frames) {
+  unsigned target = 0;
+
+  if (!use_x) return walk_to_ground_enemy(fixture, walk_frames);
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  switch_to_x();
+  for (unsigned i = 0; i < 300 && !target; ++i) {
+    frame(i < 180 ? SNES_PAD_RIGHT : SNES_PAD_RIGHT | SNES_PAD_R);
+    target = reachable_ground_enemy();
+    if (target && walk_frames) *walk_frames = i + 1;
+  }
+  return target;
+}
+
+static unsigned saber_body_contact_case(const char *fixture, const char *who,
+                                        bool use_x, bool body) {
+  unsigned walk_frames = 0;
+  unsigned enemy = saber_body_contact_enemy(fixture, use_x, &walk_frames);
+  unsigned incoming;
+  unsigned before;
+  unsigned after;
+  unsigned hit_frame;
+  unsigned max;
+  unsigned lost;
+  unsigned expected;
+
+  check(enemy >= 0x0e68 && enemy < 0x1228 && g_ram[enemy] &&
+            g_ram[enemy + 0x0e] && (g_ram[enemy + 0x27] & 127),
+        "Highway body-contact target is a live enemy in $0E68..$1227");
+  incoming = g_ram[enemy + 0x26];
+  check(incoming >= 2, "Highway body-contact target has contact damage >= 2");
+
+  g_ram[0x1f99] = body ? (uint8_t)(g_ram[0x1f99] | 0x04u) :
+      (uint8_t)(g_ram[0x1f99] & (uint8_t)~0x04u);
+  max = g_ram[0x1f9a] & 0x7f;
+  check(max > incoming, "body-contact start HP exceeds the contact damage");
+  g_ram[0x0bcf] = (uint8_t)((g_ram[0x0bcf] & 0x80) | max);
+  before = max;
+  write_ram_word(g_ram, 0x0bad, read_ram_word(g_ram, enemy + 5));
+  write_ram_word(g_ram, 0x0bb0, read_ram_word(g_ram, enemy + 8));
+  for (hit_frame = 1; hit_frame <= 120 &&
+       (g_ram[0x0bcf] & 0x7f) == before; ++hit_frame) {
+    write_ram_word(g_ram, enemy + 5, read_ram_word(g_ram, 0x0bad));
+    write_ram_word(g_ram, enemy + 8, read_ram_word(g_ram, 0x0bb0));
+    g_ram[0x0c30] = 0;
+    g_ram[0x0c32] = 0;
+    frame(0);
+  }
+  after = g_ram[0x0bcf] & 0x7f;
+  check(after < before, "live body contact lands within 120 frames");
+  lost = before - after;
+  expected = !body ? incoming :
+      (use_x ? (incoming + 1) / 2 : incoming - incoming / 4);
+  check(incoming - incoming / 4 != (incoming + 1) / 2,
+        "Saber+body and X+body expectations differ");
+  printf("body contact %s enemy=%04x incoming=%u before=%u after=%u lost=%u "
+         "expected=%u\n",
+         who, enemy, incoming, before, after, lost, expected);
+  check(lost == expected,
+        "live body contact HP loss matches the active character rule");
+  return lost;
+}
+
+static void saber_body_damage_checks(const char *fixture) {
+  static const unsigned damage[] = {1, 3, 4, 10, 11};
+  static const unsigned zero_body[] = {1, 3, 3, 8, 9};
+  static const unsigned x_body[] = {1, 2, 2, 5, 6};
+  unsigned i;
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  check(MmxZeroActive(), "saber-body-damage starts as Saber Zero");
+  for (i = 0; i < sizeof(damage) / sizeof(damage[0]); ++i)
+    saber_body_damage_case("zero", damage[i], g_ram[0x1f99],
+                           zero_body[i]);
+
+  load_fixture(fixture);
+  MmxSaberFrameReset();
+  switch_to_x();
+  for (i = 0; i < sizeof(damage) / sizeof(damage[0]); ++i)
+    saber_body_damage_case("x", damage[i], g_ram[0x1f99],
+                           x_body[i]);
+
+  saber_body_contact_case(fixture, "zero-no-body", false, false);
+  saber_body_contact_case(fixture, "zero-body", false, true);
+  saber_body_contact_case(fixture, "x-body", true, true);
+
+  puts("ok: saber-body-damage");
 }
 
 /* Enter Armored Armadillo after his state-handler dispatch at $83B2ED. This
@@ -6459,6 +8079,14 @@ static unsigned apply_test_damage(unsigned enemy, unsigned damage) {
   return drop;
 }
 
+static void saber_damage_set_arms(bool arms) {
+  if (arms)
+    g_ram[MMX_SABER_ARMOR_RAM_OFFSET] |= MMX_SABER_ARMOR_ARMS_BIT;
+  else
+    g_ram[MMX_SABER_ARMOR_RAM_OFFSET] &=
+        (uint8_t)~MMX_SABER_ARMOR_ARMS_BIT;
+}
+
 static void saber_wave_damage_checks(const char *fixture) {
   unsigned target, walk_frames = 0;
   unsigned slot, pulse_count = 0, retire_frame = 0;
@@ -6511,6 +8139,7 @@ static void saber_wave_damage_checks(const char *fixture) {
   MmxZeroCancel(g_ram);
   retire_non_wave_projectiles(slot);
   g_ram[target + 0x27] = 64;
+  saber_damage_set_arms(false);
   hp_before_wave = g_ram[target + 0x27] & 127;
   for (unsigned frame_number = 1; frame_number <= 48 && g_ram[slot];
        ++frame_number) {
@@ -6536,6 +8165,7 @@ static void saber_wave_damage_checks(const char *fixture) {
       }
     }
     if (!g_ram[slot]) retire_frame = frame_number;
+    if (pulse_count >= 1) saber_damage_set_arms(true);
   }
   printf("reference: wave HP before=%u drops=%u,%u,%u frames=%u,%u,%u retire_frame=%u final_hp=%u\n",
          hp_before_wave, pulse_drops[0], pulse_drops[1], pulse_drops[2],
@@ -6547,10 +8177,10 @@ static void saber_wave_damage_checks(const char *fixture) {
                     MMX_SABER_TUNING_DAMAGE_WAVE) &&
             pulse_drops[1] ==
                 (unsigned)MmxSaberTuningNormalDamage(
-                    MMX_SABER_TUNING_DAMAGE_WAVE) &&
+                    MMX_SABER_TUNING_DAMAGE_WAVE) + 2 &&
             pulse_drops[2] ==
                 (unsigned)MmxSaberTuningNormalDamage(
-                    MMX_SABER_TUNING_DAMAGE_WAVE) &&
+                    MMX_SABER_TUNING_DAMAGE_WAVE) + 2 &&
             pulse_frames[1] - pulse_frames[0] == MMX_SABER_WAVE_PULSE_FRAMES + 1 &&
             pulse_frames[2] - pulse_frames[1] == MMX_SABER_WAVE_PULSE_FRAMES &&
             retire_frame == pulse_frames[2] && !g_ram[slot],
@@ -6559,6 +8189,7 @@ static void saber_wave_damage_checks(const char *fixture) {
   /* The direct callback check is the stable proof for the blade even when
    * this fixture's moving enemy geometry does not overlap $5A53. */
   saber_finisher_window_setup(fixture);
+  saber_damage_set_arms(true);
   frame(SNES_PAD_Y);
   unsigned slash_slot = saber_finisher_slot_with_tag(0x5a53);
   unsigned empty = empty_enemy_slot();
@@ -6568,7 +8199,7 @@ static void saber_wave_damage_checks(const char *fixture) {
          finisher_first, finisher_second);
   check(slash_slot && finisher_first ==
             (unsigned)MmxSaberTuningNormalDamage(
-                MMX_SABER_TUNING_DAMAGE_X3_FINISHER) &&
+                MMX_SABER_TUNING_DAMAGE_X3_FINISHER) + 2 &&
             finisher_second == 0,
         "the Saber $5A53 finisher blade deals its tuned damage exactly once per enemy");
 
@@ -6759,11 +8390,12 @@ static unsigned saber_damage_callback_probe(const char *label,
 static unsigned saber_damage_ground1_drop(const char *fixture,
                                           unsigned expected,
                                           unsigned *initial_hp,
-                                          unsigned *final_hp) {
+                                          unsigned *final_hp, bool arms) {
   unsigned target, walk_frames = 0, slot;
   target = walk_to_ground_enemy(fixture, &walk_frames);
   check(target == 0xea8,
         "saber-damage slash 1 reaches Highway enemy slot 0xEA8");
+  saber_damage_set_arms(arms);
   slot = saber_damage_start_ground1();
   check(slot != 0, "saber-damage slash 1 publishes a tagged slot");
   *initial_hp = g_ram[target + 0x27] & 127;
@@ -6777,11 +8409,12 @@ static unsigned saber_damage_ground1_drop(const char *fixture,
 static unsigned saber_damage_ground3_drop(const char *fixture,
                                           unsigned expected,
                                           unsigned *initial_hp,
-                                          unsigned *final_hp) {
+                                          unsigned *final_hp, bool arms) {
   unsigned target, walk_frames = 0, slot;
   target = walk_to_ground_enemy(fixture, &walk_frames);
   check(target == 0xea8,
         "saber-damage slash 3 reaches Highway enemy slot 0xEA8");
+  saber_damage_set_arms(arms);
   slot = saber_damage_start_ground3();
   check(slot != 0, "saber-damage slash 3 publishes a tagged slot");
   *initial_hp = g_ram[target + 0x27] & 127;
@@ -6799,10 +8432,11 @@ static unsigned saber_damage_boss_slot(void) {
 }
 
 static void saber_damage_boss_probe(const char *fixture, unsigned expected_boss,
-                                    unsigned expected_normal) {
+                                    unsigned expected_normal, bool arms) {
   unsigned boss, normal, slot;
   unsigned boss_first, boss_second, normal_first, normal_second;
   load_response_fixture(fixture);
+  saber_damage_set_arms(arms);
   boss = saber_damage_boss_slot();
   normal = empty_enemy_slot();
   check(boss != 0 && MmxWidePolicy_IsBossEncounter(g_ram[boss + 0x0a]),
@@ -6874,27 +8508,33 @@ static void saber_damage_checks(const char *x1_rom, const char *x3_rom,
   saber_damage_reactivate();
   drop = saber_damage_ground1_drop(
       fixture, MmxSaberTuningNormalDamage(MMX_SABER_TUNING_DAMAGE_SLASH1),
-      &initial_hp, &final_hp);
+      &initial_hp, &final_hp, false);
   check(drop == 3 && final_hp == initial_hp - 3,
         "default ground slash 1 drops Highway HP by 3");
 
   saber_damage_set_option("slash1_damage", "5");
   saber_damage_reactivate();
-  drop = saber_damage_ground1_drop(fixture, 5, &initial_hp, &final_hp);
+  drop = saber_damage_ground1_drop(fixture, 5, &initial_hp, &final_hp, false);
   check(drop == 5 && final_hp == initial_hp - 5,
         "slash1_damage=5 drops Highway HP by 5");
+  drop = saber_damage_ground1_drop(fixture, 7, &initial_hp, &final_hp, true);
+  check(drop == 7 && final_hp == initial_hp - 7,
+        "arms make slash1 damage 5 drop Highway HP by 7");
 
   saber_damage_set_option("slash3_damage", "8");
   saber_damage_reactivate();
-  drop = saber_damage_ground3_drop(fixture, 8, &initial_hp, &final_hp);
+  drop = saber_damage_ground3_drop(fixture, 8, &initial_hp, &final_hp, false);
   check(drop == 8 && final_hp == initial_hp - 8,
         "default ground slash 3 drops Highway HP by 8");
 
   saber_damage_set_option("slash3_damage", "32");
   saber_damage_reactivate();
-  drop = saber_damage_ground3_drop(fixture, 32, &initial_hp, &final_hp);
+  drop = saber_damage_ground3_drop(fixture, 32, &initial_hp, &final_hp, false);
   check(drop == initial_hp && final_hp == 0,
         "slash3_damage=32 clamps to the native HP subtraction and kills Highway");
+  drop = saber_damage_ground3_drop(fixture, 32, &initial_hp, &final_hp, true);
+  check(drop == initial_hp && final_hp == 0,
+        "arms keep slash3 damage capped at 32 and kill Highway");
 
   saber_damage_set_option("air_damage", "11");
   saber_damage_set_option("wall_damage", "13");
@@ -6908,7 +8548,8 @@ static void saber_damage_checks(const char *x1_rom, const char *x3_rom,
   check(slot != 0 && enemy != 0,
         "saber-damage air setup publishes a live active slot");
   g_ram[enemy + 0x27] = 32;
-  saber_damage_callback_probe("air slash", enemy, slot, 11);
+  saber_damage_set_arms(true);
+  saber_damage_callback_probe("air slash with arms", enemy, slot, 13);
 
   check(saber_wall_setup(wall_path, &wall_route, false) ==
             wall_route.expected_wall_frame,
@@ -6919,7 +8560,8 @@ static void saber_damage_checks(const char *x1_rom, const char *x3_rom,
   check(slot != 0 && enemy != 0,
         "saber-damage wall setup publishes a live active slot");
   g_ram[enemy + 0x27] = 32;
-  saber_damage_callback_probe("wall slash", enemy, slot, 13);
+  saber_damage_set_arms(true);
+  saber_damage_callback_probe("wall slash with arms", enemy, slot, 15);
 
   load_fixture(fixture);
   MmxSaberFrameReset();
@@ -6938,7 +8580,8 @@ static void saber_damage_checks(const char *x1_rom, const char *x3_rom,
             dash_snapshot.phase == SABER_PHASE_ACTIVE,
         "saber-damage dash setup publishes a live active slot");
   g_ram[enemy + 0x27] = 32;
-  saber_damage_callback_probe("dash slash", enemy, slot, 17);
+  saber_damage_set_arms(true);
+  saber_damage_callback_probe("dash slash with arms", enemy, slot, 19);
 
   saber_damage_set_option("x3_finisher_damage", "20");
   saber_damage_set_option("wave_damage", "4");
@@ -6953,10 +8596,12 @@ static void saber_damage_checks(const char *x1_rom, const char *x3_rom,
   saber_damage_set_option("slash1_damage", "3");
   saber_damage_set_option("boss_slash1_damage", "0");
   saber_damage_reactivate();
-  saber_damage_boss_probe(penguin_path, 3, 3);
+  saber_damage_boss_probe(penguin_path, 3, 3, false);
+  saber_damage_boss_probe(penguin_path, 4, 5, true);
   saber_damage_set_option("boss_slash1_damage", "7");
   saber_damage_reactivate();
-  saber_damage_boss_probe(penguin_path, 7, 3);
+  saber_damage_boss_probe(penguin_path, 7, 3, false);
+  saber_damage_boss_probe(penguin_path, 8, 5, true);
 
   activate_zero(x1_rom, x3_rom, assets, false, false);
   check(!MmxSaberEnabled(), "saber-damage disables Saber for the upstream check");
@@ -7054,17 +8699,17 @@ static void saber_lifecycle_load_checks(const char *x1_rom,
   check(snapshot_capacity != 0 && airborne_snapshot != NULL,
         "lifecycle test allocates an in-memory snapshot buffer");
 
-  /* D1: SetState enters the reset seam once for its reset and once again
-   * after the replacement state has been installed. Keep this assertion
-   * separate from Saber behavior so either generic call cannot disappear. */
+  /* D1: SetState resets the installed extension once before the replacement
+   * state is restored. Keep this assertion separate from Saber behavior so
+   * the generic reset call cannot disappear or be duplicated. */
   MmxZeroExtension probe = { .state_reset = zero_state_reset_probe };
   const MmxZeroState zero_state = MmxZeroGetState();
   zero_state_reset_calls = 0;
   MmxZeroSetExtension(&probe);
   MmxZeroSetState(zero_state);
   MmxZeroSetExtension(MmxSaberFrameExtension());
-  check(zero_state_reset_calls == 2,
-        "state replacement calls the generic reset seam at both boundaries");
+  check(zero_state_reset_calls == 1,
+        "state replacement resets the extension once before the extension state is restored");
 
   /* D4a: replace a live Saber attack with the standing save in the same
    * process. The callback must retire the guest slot before the next frame. */
@@ -7360,15 +9005,39 @@ static void saber_context_load_checks(const char *fixture) {
   const size_t size = RtlSaveSnapshotToMemory(saved, capacity);
   check(size != 0 && tagged_projectiles() == 1,
         "air slash save-state route captures a live Saber slot");
+  MmxRendererBeginFrame(g_ram);
+  const MmxSaberAttackSnapshot saved_attack = MmxSaberAttackSnapshotGet();
+  const unsigned saved_tagged_projectiles = tagged_projectiles();
+  const uint16_t saved_hit_slots = MmxSaberAttackHitSlots();
+  const unsigned saved_cues = MmxSaberAttackCueCount();
+  const uint32_t saved_priority_frame = MmxSaberPriorityCurrentFrame();
+  const bool saved_overlay_active =
+      MmxRendererPlayerOverlaySnapshot().active;
   frame(0);
   check(RtlLoadSnapshotFromMemory(saved, size),
         "air slash save-state route restores through the normal loader");
   MmxRendererBeginFrame(g_ram);
-  const bool load_overlay_clear =
-      !MmxRendererPlayerOverlaySnapshot().active;
-  check(load_overlay_clear && saber_context_clean(MmxSaberAttackCueCount()) &&
-            MmxSaberPriorityCurrentFrame() == 0,
-        "save-state load drops air Saber, hitbox, overlay, combo, and priority state");
+  const MmxSaberAttackSnapshot loaded_attack = MmxSaberAttackSnapshotGet();
+  const unsigned loaded_tagged_projectiles = tagged_projectiles();
+  const uint16_t loaded_hit_slots = MmxSaberAttackHitSlots();
+  const uint32_t loaded_priority_frame = MmxSaberPriorityCurrentFrame();
+  const bool loaded_overlay_active =
+      MmxRendererPlayerOverlaySnapshot().active;
+  check(loaded_attack.kind == saved_attack.kind &&
+            loaded_attack.index == saved_attack.index &&
+            loaded_attack.phase == saved_attack.phase &&
+            loaded_attack.tick == saved_attack.tick &&
+            loaded_attack.anim_id == saved_attack.anim_id &&
+            loaded_attack.anim_step == saved_attack.anim_step &&
+            loaded_attack.facing == saved_attack.facing &&
+            loaded_tagged_projectiles == saved_tagged_projectiles &&
+            loaded_hit_slots == saved_hit_slots &&
+            MmxSaberAttackCueCount() == saved_cues &&
+            loaded_priority_frame == saved_priority_frame &&
+            loaded_overlay_active == saved_overlay_active &&
+            loaded_attack.kind == SABER_KIND_AIR &&
+            loaded_tagged_projectiles == 1,
+        "save-state load restores the air Saber, hitbox, overlay and priority state");
   const unsigned loaded_cues = MmxSaberAttackCueCount();
   idle(OLD_SABER_AIR_TOTAL + 2);
   check(MmxSaberAttackCueCount() == loaded_cues,
@@ -7389,11 +9058,18 @@ static void saber_context_load_checks(const char *fixture) {
   snes_rewind_step(-1);
   snes_rewind_commit();
   MmxRendererBeginFrame(g_ram);
-  const bool rewind_overlay_clear =
-      !MmxRendererPlayerOverlaySnapshot().active;
-  check(rewind_overlay_clear && saber_context_clean(MmxSaberAttackCueCount()) &&
-            MmxSaberPriorityCurrentFrame() == 0,
-        "rewind drops air Saber, hitbox, overlay, combo, and priority state");
+  const MmxSaberAttackSnapshot rewind_attack = MmxSaberAttackSnapshotGet();
+  const bool rewind_overlay_active =
+      MmxRendererPlayerOverlaySnapshot().active;
+  const bool rewind_state_consistent =
+      (rewind_attack.kind == SABER_KIND_AIR &&
+          rewind_attack.phase != SABER_PHASE_IDLE &&
+          tagged_projectiles() == 1 && rewind_overlay_active) ||
+      (rewind_attack.kind == SABER_KIND_NONE &&
+          rewind_attack.phase == SABER_PHASE_IDLE &&
+          tagged_projectiles() == 0 && !rewind_overlay_active);
+  check(rewind_state_consistent,
+        "rewind restores a consistent Saber state (live slash with its slot, or idle with no slot)");
   const unsigned rewound_cues = MmxSaberAttackCueCount();
   idle(OLD_SABER_AIR_TOTAL + 2);
   check(MmxSaberAttackCueCount() == rewound_cues,
@@ -8418,7 +10094,10 @@ int main(int argc, char **argv) {
   check(fixture && fixture[0], "MMX_ZERO_TEST_FIXTURE supplied");
   check(x3_rom && x3_rom[0], "MMX_COOP_X3_ROM supplied");
   check(assets && assets[0], "MMX_ZERO_TEST_ASSETS supplied");
-  if (only && (!strcmp(only, "fixtures") || !strcmp(only, "saber-wall") ||
+  if (only && (!strcmp(only, "fixtures") || !strcmp(only, "saber-legs") ||
+      !strcmp(only, "saber-frozen") ||
+      !strcmp(only, "saber-capsule") ||
+      !strcmp(only, "saber-wall") ||
       !strcmp(only, "saber-cancel") || !strcmp(only, "saber-buster-rules") ||
       !strcmp(only, "saber-damage") || !strcmp(only, "saber-priority") ||
       !strcmp(only, "saber-armadillo") ||
@@ -8496,12 +10175,21 @@ int main(int argc, char **argv) {
   const bool saber_package = only && !strcmp(only, "saber-package");
   const bool saber_finisher = only && !strcmp(only, "saber-finisher");
   const bool saber_tuning = only && !strcmp(only, "saber-tuning");
+  const bool saber_armor = only && !strcmp(only, "saber-armor");
+  const bool saber_body_damage = only && !strcmp(only, "saber-body-damage");
+  const bool saber_arms_charge = only && !strcmp(only, "saber-arms-charge");
+  const bool saber_head_ammo = only && !strcmp(only, "saber-head-ammo");
   const bool saber_hitbox_debug = only && !strcmp(only, "saber-hitbox-debug");
   const bool saber_damage = only && !strcmp(only, "saber-damage");
   const bool zero_extension = only && !strcmp(only, "zero-extension");
   const bool saber_input = only && !strcmp(only, "saber-input");
+  const bool saber_fire_wave_armor =
+      only && !strcmp(only, "saber-fire-wave-armor");
   const bool saber_ground_1 = only && !strcmp(only, "saber-ground-1");
   const bool saber_ground_combo = only && !strcmp(only, "saber-ground-combo");
+  const bool saber_legs = only && !strcmp(only, "saber-legs");
+  const bool saber_frozen = only && !strcmp(only, "saber-frozen");
+  const bool saber_capsule = only && !strcmp(only, "saber-capsule");
   const bool saber_air = only && !strcmp(only, "saber-air");
   const bool saber_wall = only && !strcmp(only, "saber-wall");
   const bool saber_dash = only && !strcmp(only, "saber-dash");
@@ -8529,14 +10217,16 @@ int main(int argc, char **argv) {
   const bool zero_response_seam = only && !strcmp(only, "zero-response-seam");
   const bool fixtures = only && !strcmp(only, "fixtures");
   const bool saber_enabled_group = saber_package || zero_extension ||
-      saber_input || saber_ground_1 || saber_ground_combo ||
-      saber_air || saber_wall || saber_dash || saber_land || saber_ground_lifecycle ||
+      saber_input || saber_fire_wave_armor || saber_ground_1 || saber_ground_combo ||
+      saber_air || saber_legs || saber_frozen || saber_capsule || saber_wall || saber_dash || saber_land || saber_ground_lifecycle ||
       saber_ground_hit || saber_cancel || saber_lifecycle_load ||
       saber_contexts ||
       saber_render_snapshot || saber_buster_rules || saber_burst_height ||
       saber_finisher || saber_priority_classify ||
       saber_priority || saber_armadillo ||
       saber_tuning || saber_hitbox_debug || saber_damage ||
+      saber_head_ammo ||
+      saber_armor || saber_arms_charge || saber_body_damage ||
       saber_wave_travel || saber_wave_damage || saber_wave_lifecycle ||
       saber_wave_render || saber_ride_pilot || saber_boss_death;
   SpecialCounts upstream_specials = {0};
@@ -8560,7 +10250,11 @@ int main(int argc, char **argv) {
     activate_zero(argv[1], x3_rom, assets, saber_enabled_group,
                   saber_enabled_group);
   }
-  if (saber_input) {
+  if (saber_fire_wave_armor) {
+    check(MmxSaberEnabled(),
+          "saber-fire-wave-armor runs with the Saber package enabled");
+    saber_fire_wave_armor_checks(fixture);
+  } else if (saber_input) {
     check(MmxSaberEnabled(), "saber-input runs with the Saber package enabled");
     saber_input_checks(fixture, &upstream_specials);
   } else if (saber_ground_1) {
@@ -8573,6 +10267,17 @@ int main(int argc, char **argv) {
   } else if (saber_air) {
     check(MmxSaberEnabled(), "saber-air runs with the Saber package enabled");
     saber_air_checks(fixture);
+  } else if (saber_legs) {
+    check(MmxSaberEnabled(), "saber-legs runs with the Saber package enabled");
+    saber_legs_checks(fixture, fixture_dir);
+  } else if (saber_frozen) {
+    check(MmxSaberEnabled(),
+          "saber-frozen runs with the Saber package enabled");
+    saber_frozen_checks(fixture_dir);
+  } else if (saber_capsule) {
+    check(MmxSaberEnabled(),
+          "saber-capsule runs with the Saber package enabled");
+    saber_capsule_checks(fixture_dir);
   } else if (saber_wall) {
     check(MmxSaberEnabled(), "saber-wall runs with the Saber package enabled");
     saber_wall_checks(fixture_dir);
@@ -8621,6 +10326,22 @@ int main(int argc, char **argv) {
     check(MmxSaberEnabled(),
           "saber-armadillo runs with the Saber package enabled");
     saber_armadillo_checks(argv[1], x3_rom, assets, fixture_dir);
+  } else if (saber_armor) {
+    check(MmxSaberEnabled(),
+          "saber-armor runs with the Saber package enabled");
+    saber_armor_checks(fixture);
+  } else if (saber_body_damage) {
+    check(MmxSaberEnabled(),
+          "saber-body-damage runs with the Saber package enabled");
+    saber_body_damage_checks(fixture);
+  } else if (saber_arms_charge) {
+    check(MmxSaberEnabled(),
+          "saber-arms-charge runs with the Saber package enabled");
+    saber_arms_charge_checks(fixture);
+  } else if (saber_head_ammo) {
+    check(MmxSaberEnabled(),
+          "saber-head-ammo runs with the Saber package enabled");
+    saber_head_ammo_checks(fixture);
   } else if (saber_tuning) {
     check(MmxSaberEnabled(),
           "saber-tuning runs with the Saber package enabled");
@@ -8712,10 +10433,15 @@ int main(int argc, char **argv) {
     if (only && !strcmp(only, "saber-assets")) {
       saber_assets_checks(argv[1], x3_rom, fixture, assets);
     } else if (only && strcmp(only, "x3-plain") && strcmp(only, "x3-charge") &&
+      strcmp(only, "saber-head-ammo") &&
         strcmp(only, "x3-hurt") && strcmp(only, "x3-jump") &&
         strcmp(only, "x3-post-charge") && strcmp(only, "x1-native") &&
         strcmp(only, "x3-zero-specials") &&
       strcmp(only, "saber-package") && strcmp(only, "saber-input") &&
+      strcmp(only, "saber-fire-wave-armor") &&
+      strcmp(only, "saber-armor") &&
+      strcmp(only, "saber-body-damage") &&
+      strcmp(only, "saber-arms-charge") &&
       strcmp(only, "saber-finisher") &&
       strcmp(only, "saber-priority-classify") &&
       strcmp(only, "saber-priority") &&
@@ -8725,6 +10451,8 @@ int main(int argc, char **argv) {
       strcmp(only, "saber-damage") &&
       strcmp(only, "saber-ground-1") &&
       strcmp(only, "saber-ground-combo") &&
+      strcmp(only, "saber-legs") &&
+      strcmp(only, "saber-frozen") &&
       strcmp(only, "saber-air") &&
       strcmp(only, "saber-wall") &&
       strcmp(only, "saber-dash") &&

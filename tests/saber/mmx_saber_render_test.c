@@ -1,4 +1,6 @@
 #include "mmx_saber_render.h"
+#include "mmx_saber_armor.h"
+#include "mmx_saber_black_zero.h"
 #include "mmx_zero.h"
 #include "sha256.h"
 
@@ -16,8 +18,16 @@
 static MmxZeroState test_zero_state;
 static uint16_t test_zero_colors[128];
 static uint16_t test_charge_colors[3][16];
+static bool test_arms;
+static bool test_black_zero;
 
 bool MmxZeroActive(void) { return true; }
+MmxSaberArmorFlags MmxSaberArmorCurrent(void) {
+  MmxSaberArmorFlags flags = {0};
+  flags.black = test_black_zero;
+  flags.arms = test_arms;
+  return flags;
+}
 MmxZeroState MmxZeroGetState(void) { return test_zero_state; }
 const uint16_t *MmxZeroColors(void) { return test_zero_colors; }
 int MmxZeroChargeFlashPaletteIndex(const MmxZeroState *s) {
@@ -160,9 +170,9 @@ static MmxSaberAssets *make_flash_assets(void) {
   put_u32(data, 32, 6); /* body 4 bytes + blade 2 bytes */
   put_u16(data, 112, 1); /* source id */
   put_u16(data, 148, 0);
-  put_u16(data, 150, 1);
-  put_u16(data, 152, 2);
-  put_u16(data, 154, 3);
+  put_u16(data, 150, 0x009c);
+  put_u16(data, 152, 0x0094);
+  put_u16(data, 154, 0x2388);
   put_u16(data, 156, 1); /* animation id */
   put_u16(data, 158, 0); /* first step */
   put_u16(data, 160, 1); /* step count */
@@ -183,7 +193,7 @@ static MmxSaberAssets *make_flash_assets(void) {
   data[PIXEL_OFFSET + 0] = 1;
   data[PIXEL_OFFSET + 1] = 2;
   data[PIXEL_OFFSET + 2] = 0;
-  data[PIXEL_OFFSET + 3] = 3;
+  data[PIXEL_OFFSET + 3] = 1;
   data[PIXEL_OFFSET + 4] = 2;
   data[PIXEL_OFFSET + 5] = 3;
   memset(data + 68, 0, sizeof(digest));
@@ -283,12 +293,177 @@ static bool find_blade_snapshot(const MmxSaberAssets *assets,
   return false;
 }
 
+static void shipped_purple_blade_checks(const MmxSaberAssets *assets) {
+  const uint16_t *base = MmxSaberAssetsPalette(assets);
+  const uint16_t count = MmxSaberAssetsPaletteCount(assets);
+  const MmxSaberAttackSnapshot snapshot = {
+    kKinds[0], kIndices[0], SABER_PHASE_ACTIVE, kOldTuples[0][0].tick, 1,
+    0, 0x40};
+  MmxRenderPlayerOverlay actual;
+  unsigned greens = 0, others = 0;
+  bool ok;
+
+  test_zero_state = (MmxZeroState){0};
+  test_black_zero = false;
+  test_arms = true;
+  ok = MmxSaberRenderResolveSnapshot(assets, snapshot, &actual);
+  check(ok && actual.palette != base,
+        "shipped sheet with arms resolves a recoloured palette");
+  for (unsigned i = 1; ok && i < count; ++i) {
+    const unsigned r = base[i] & 31u, g = (base[i] >> 5) & 31u,
+                   b = (base[i] >> 10) & 31u;
+    if (g > r && g > b) {
+      ++greens;
+      check(actual.palette[i] == MmxSaberPurpleBlade(base[i]),
+            "shipped green blade entries turn purple with arms");
+    } else {
+      ++others;
+      check(actual.palette[i] == base[i],
+            "shipped non-green entries stay unchanged with arms");
+    }
+  }
+  check(greens >= 4 && others >= 4,
+        "shipped palette has both blade greens and body colours");
+  test_arms = false;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette == base,
+        "shipped sheet without arms keeps the loaded palette");
+}
+
+static void black_zero_render_checks(const MmxSaberAssets *assets,
+                                     const MmxSaberAssets *ride) {
+  const uint16_t *base = MmxSaberAssetsPalette(assets);
+  const uint16_t *ride_base = MmxSaberAssetsPalette(ride);
+  uint16_t base_count = MmxSaberAssetsPaletteCount(assets);
+  uint16_t ride_count = MmxSaberAssetsPaletteCount(ride);
+  uint16_t expected_black[256] = {0};
+  uint16_t expected_flash[256] = {0};
+  uint16_t normal_flash[256] = {0};
+  MmxSaberAttackSnapshot snapshot;
+  const MmxSaberFrame *expected;
+  MmxRenderPlayerOverlay actual;
+  const uint16_t *cached;
+  uint8_t ram[0x20000] = {0};
+
+  /* The shipped sheets keep the blade in separate frames, so use the first
+   * ground-slash tuple (body plane) as the overlay frame under test. */
+  snapshot = (MmxSaberAttackSnapshot){
+    kKinds[0], kIndices[0], SABER_PHASE_ACTIVE, kOldTuples[0][0].tick, 1,
+    0, 0x40};
+  expected = MmxSaberAssetsFrameForStep(assets, 1, kOldTuples[0][0].step);
+  check(expected != NULL,
+        "Black Zero render test finds an overlay frame");
+  MmxSaberBlackZeroPalette(base, base_count, expected_black);
+  test_zero_state = (MmxZeroState){0};
+  test_black_zero = false;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette == base && actual.palette_count == base_count,
+        "normal overlay state keeps the loaded palette");
+  test_black_zero = true;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette != base &&
+            !memcmp(actual.palette, expected_black,
+                    (size_t)base_count * sizeof(*base)) &&
+            actual.palette_count == base_count,
+        "Black Zero overlay uses the converted palette");
+  cached = actual.palette;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette == cached,
+        "Black Zero overlay reuses its cached palette");
+
+  test_zero_state.charge = 30;
+  test_zero_state.charge_phase = 0;
+  expected_flash_palette(expected_flash, expected_black, base_count,
+                         MmxZeroBodyColors(&test_zero_state));
+  expected_flash_palette(normal_flash, base, base_count,
+                         MmxZeroBodyColors(&test_zero_state));
+  check(memcmp(expected_flash, normal_flash,
+               (size_t)base_count * sizeof(*base)) != 0 &&
+            MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            !memcmp(actual.palette, expected_flash,
+                    (size_t)base_count * sizeof(*base)),
+        "charge flash ranks against the Black Zero palette");
+
+  ram[0x0baa] = 0x2c;
+  MmxSaberBlackZeroPalette(ride_base, ride_count, expected_black);
+  test_zero_state = (MmxZeroState){0};
+  test_black_zero = false;
+  test_arms = true;
+  check(MmxSaberRenderResolveRide(ride, ram, &actual) &&
+            actual.palette == ride_base && actual.palette_count == ride_count,
+        "arms do not recolour the Ride Armor pilot");
+  test_arms = false;
+  check(MmxSaberRenderResolveRide(ride, ram, &actual) &&
+            actual.palette == ride_base && actual.palette_count == ride_count,
+        "normal Ride Armor pilot keeps the loaded palette");
+  test_black_zero = true;
+  check(MmxSaberRenderResolveRide(ride, ram, &actual) &&
+            actual.palette != ride_base &&
+            !memcmp(actual.palette, expected_black,
+                    (size_t)ride_count * sizeof(*ride_base)) &&
+            actual.palette_count == ride_count,
+        "Black Zero Ride Armor pilot uses the converted palette");
+
+  test_black_zero = false;
+  test_zero_state = (MmxZeroState){0};
+}
 static unsigned first_pixel(const MmxSaberPlane *plane) {
   size_t size = (size_t)plane->width * plane->height;
   for (size_t i = 0; i < size; ++i) if (plane->pixels[i]) return plane->pixels[i];
   return 0;
 }
 
+static void purple_blade_render_checks(const MmxSaberAssets *assets) {
+  const uint16_t *base = MmxSaberAssetsPalette(assets);
+  uint16_t base_count = MmxSaberAssetsPaletteCount(assets);
+  uint16_t expected_black[256] = {0};
+  uint16_t expected_flash[256] = {0};
+  MmxSaberAttackSnapshot snapshot;
+  const MmxSaberFrame *expected;
+  MmxRenderPlayerOverlay actual;
+  const uint16_t *cached;
+
+  check(find_blade_snapshot(assets, &snapshot, &expected),
+        "purple render test finds a body-and-blade frame");
+  test_zero_state = (MmxZeroState){0};
+  test_black_zero = false;
+  test_arms = false;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette == base,
+        "without arms the overlay palette stays original");
+  test_arms = true;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette != base && actual.palette[1] == base[1] &&
+            actual.palette[2] == base[2] &&
+            actual.palette[3] == MmxSaberPurpleBlade(base[3]) &&
+            MmxSaberRenderSharedBladePaletteCount() == 1,
+        "arms recolour only the unique blade index and report one shared index");
+  cached = actual.palette;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette == cached,
+        "arms overlay reuses its cached palette");
+  test_zero_state.charge = 30;
+  test_zero_state.charge_phase = 0;
+  expected_flash_palette(expected_flash, cached, base_count,
+                         MmxZeroBodyColors(&test_zero_state));
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            !memcmp(actual.palette, expected_flash,
+                    (size_t)base_count * sizeof(*base)),
+        "charge flash ranks against the purple overlay palette");
+  test_zero_state = (MmxZeroState){0};
+  MmxSaberBlackZeroPalette(base, base_count, expected_black);
+  test_black_zero = true;
+  check(MmxSaberRenderResolveSnapshot(assets, snapshot, &actual) &&
+            actual.palette[1] == expected_black[1] &&
+            actual.palette[2] == expected_black[2] &&
+            actual.palette[2] != MmxSaberPurpleBlade(expected_black[2]) &&
+            actual.palette[3] == MmxSaberPurpleBlade(expected_black[3]) &&
+            actual.palette[3] != expected_black[3],
+        "Black Zero keeps body conversion and applies purple to the unique blade");
+  test_arms = false;
+  test_black_zero = false;
+  test_zero_state = (MmxZeroState){0};
+}
 static void charge_flash_checks(const MmxSaberAssets *assets) {
   const uint16_t *base = MmxSaberAssetsPalette(assets);
   uint16_t palette_count = MmxSaberAssetsPaletteCount(assets);
@@ -471,6 +646,30 @@ static void wave_sequence_checks(const MmxSaberWave *wave) {
               actual.z == 0xa680,
           "wave resolver selects the hard-coded old two-tick frame sequence");
   }
+  {
+    const uint16_t *base = MmxSaberWavePalette(wave);
+    MmxRenderWorldSprite purple, repeat, normal;
+    bool matches = true;
+
+    test_arms = true;
+    check(MmxSaberRenderResolveWaveSnapshot(wave, 2, 320, 224, false,
+                                            &purple),
+          "arms wave resolves");
+    for (unsigned i = 0; i < MmxSaberWavePaletteCount(wave); ++i)
+      matches &= purple.palette[i] == (base[i] ?
+          MmxSaberPurpleBlade(base[i]) : 0);
+    check(matches && purple.palette != base,
+          "arms wave uses purple copy for every nonzero entry");
+    check(MmxSaberRenderResolveWaveSnapshot(wave, 2, 320, 224, false,
+                                            &repeat) &&
+              repeat.palette == purple.palette,
+          "arms wave reuses cached purple palette");
+    test_arms = false;
+    check(MmxSaberRenderResolveWaveSnapshot(wave, 2, 320, 224, false,
+                                            &normal) &&
+              normal.palette == base,
+          "without arms wave keeps original palette");
+  }
   MmxRenderWorldSprite right, left;
   check(MmxSaberRenderResolveWaveSnapshot(wave, 2, 320, 224, false, &right) &&
             MmxSaberRenderResolveWaveSnapshot(wave, 2, 320, 224, true, &left) &&
@@ -573,6 +772,9 @@ int main(void) {
   MmxSaberAssets *flash_assets = make_flash_assets();
   check(flash_assets != NULL, "in-memory body-and-blade flash sidecar parses");
   charge_flash_checks(flash_assets);
+  black_zero_render_checks(assets, ride);
+  shipped_purple_blade_checks(assets);
+  purple_blade_render_checks(flash_assets);
   MmxSaberAssetsFree(flash_assets);
 
   MmxSaberWaveFree(wave);

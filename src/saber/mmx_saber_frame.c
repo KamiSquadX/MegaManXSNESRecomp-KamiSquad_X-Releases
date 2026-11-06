@@ -1,6 +1,8 @@
 #include "mmx_saber_frame.h"
 
 #include "mmx_saber_attack.h"
+#include "mmx_saber_armor.h"
+#include "mmx_saber_black_zero.h"
 #include "mmx_saber_combo.h"
 #include "mmx_saber_hitbox_debug.h"
 #include "mmx_saber_input.h"
@@ -11,6 +13,7 @@
 #include <string.h>
 
 static bool release_pending;
+static bool release_pending_from_special;
 static bool previous_y;
 static bool previous_x;
 static MmxSaberFramePadSource pad_source;
@@ -26,21 +29,46 @@ static unsigned charge_cap(void) {
   return 200;
 }
 
-static void state_reset(uint8_t *ram) {
+static unsigned charge_rate(void) {
+  return MmxSaberArmorCurrent().head ? 0x180 : 0x100;
+}
+
+static unsigned weapon_cost(unsigned weapon_id, unsigned cost, bool charged) {
+  unsigned half;
+  (void)charged;
+  if (weapon_id == 0 || !cost || !MmxSaberArmorCurrent().head) return cost;
+  half = cost >> 1;
+  return half ? half : 1;
+}
+
+static bool modern_movement(void) {
+  return MmxSaberArmorCurrent().legs;
+}
+
+static void reset_frame_state(uint8_t *ram, bool retire_attack_ram) {
   if (ram) frame_ram = ram;
+  MmxSaberArmorApplyStageStart(ram);
   MmxSaberHitboxDebugSetRam(ram);
   if (ram)
     MmxSaberAttackResetRam(ram);
-  else
+  else if (retire_attack_ram)
     MmxSaberAttackReset();
+  else
+    MmxSaberAttackResetHostState();
   MmxSaberWaveRuntimeReset(ram);
   MmxSaberPriorityReset();
   MmxSaberComboReset(ram);
   MmxSaberAttackResetCueCount();
+  MmxSaberBlackZeroNativeColorsUpdate(false, false, NULL);
   release_pending = false;
+  release_pending_from_special = false;
   previous_y = false;
   previous_x = false;
   clear_frame_state();
+}
+
+static void state_reset(uint8_t *ram) {
+  reset_frame_state(ram, true);
 }
 
 static void clear_frame_state(void) {
@@ -56,7 +84,9 @@ static bool zero_frame_context(const uint8_t *ram) {
   return ram && MmxZeroActive() && !MmxZeroSwapping() &&
       ram[0xd1] == 2 && ram[0xd2] == 4 && ram[0xd3] == 4 &&
       ram[0xba9] == 2 && (ram[0xbcf] & 127) && !ram[0x1f0c] &&
-      ram[0x1f10] < 6 && ram[0xbbe] != 0x6b && ram[0xbaa] != 0x2c;
+      ram[0x1f10] < 6 && ram[0xbbe] != 0x6b && ram[0xbaa] != 0x2c &&
+      /* Native restraint/freeze action ($84:9FEB / Chill Penguin ice). */
+      ram[0xbaa] != 0x1e;
 }
 
 void MmxSaberFrameSetPadSource(MmxSaberFramePadSource source) {
@@ -118,6 +148,17 @@ static void write_native_pad(uint8_t *ram, MmxSaberNativePad native) {
   ram[0x0be1] = native.fire_previous;
   ram[0x0be2] = native.dash_pressed;
   ram[0x0be3] = native.action_pressed;
+}
+
+/* Mirrors native $81:9FE1-$81:A003.  Native runs this before the Saber pad
+ * is written, so apply the same repeat cadence to the mapped pad afterward. */
+static void mirror_native_fire_wave_repeat(uint8_t *ram, bool fire_blocked) {
+  if (fire_blocked || ram[0x0bdb] != 0x08 || !(ram[0x0bdf] & 0x40))
+    return;
+  if (--ram[0x0c20] == 0) {
+    ram[0x0c20] = 0x02;
+    ram[0x0be3] |= 0x40;
+  }
 }
 
 static uint8_t native_horizontal_direction(const uint8_t *ram) {
@@ -202,6 +243,7 @@ static void pre_player(uint8_t *ram) {
   MmxSaberPadSaber pre_native_saber;
   MmxSaberPadZero zero;
   MmxSaberPhysicalPad physical;
+  MmxSaberArmorFlags armor;
   MmxSaberFramePad pad;
 
   MmxSaberHitboxDebugSetRam(ram);
@@ -211,6 +253,10 @@ static void pre_player(uint8_t *ram) {
   if (MmxSaberWaveRuntimeObserveStage(ram))
     MmxSaberComboCancel(ram);
   clear_frame_state();
+  armor = MmxSaberArmorCurrent();
+  MmxSaberBlackZeroNativeColorsUpdate(
+      armor.black, armor.arms,
+      (armor.black || armor.arms) ? MmxZeroColors() : NULL);
   if (!zero_frame_context(ram)) {
     /* This also handles an exchange to X, title/menu frames, and an upstream
      * Zero lifecycle transition. Do not touch any native input byte. */
@@ -223,8 +269,16 @@ static void pre_player(uint8_t *ram) {
     return;
   }
 
+  /* A special release latch belongs to its special charge.  Do not let a
+   * later buster selection turn it into a legacy buster release. */
+  if (release_pending_from_special && ram[0x0bdb] == 0) {
+    release_pending = false;
+    release_pending_from_special = false;
+  }
+
   pad = sample_pad(ram);
   physical = read_physical_pad(ram, pad);
+  const bool release_pending_before = release_pending;
   saber = MmxSaberAttackPadState(release_pending);
   pre_native_saber = saber;
   MmxSaberAttackObservePreNative(ram);
@@ -244,7 +298,8 @@ static void pre_player(uint8_t *ram) {
       (ram[0x0bdb] == 0) && x_charge_owned,
       ram[0x0baa] == 0x0e || locked,
       zero_dead_or_reset(ram),
-      (ram[0x0bd3] & 4) || (ram[0x0bd4] & 4)};
+      (ram[0x0bd3] & 4) || (ram[0x0bd4] & 4),
+      ram[0x0bdb] != 0 && ram[0x0c00] >= 2};
 
   /* Classify the physical edge first, advance the Saber owner second, and
    * only then compute/write the native pad.  saber_pressed is phase-independent,
@@ -276,9 +331,15 @@ static void pre_player(uint8_t *ram) {
   /* The computed view is the sole input write for this frame. There is no
    * restore step: the native player and the legacy callback consume it. */
   write_native_pad(ram, out.native);
+  mirror_native_fire_wave_repeat(ram, out.fire_blocked || zero.hurt);
   frame_intent = out.legacy;
   frame_override = out.legacy_override;
   frame_computed = true;
+  if (!out.release_pending)
+    release_pending_from_special = false;
+  else if (!release_pending_before && !zero.buster_selected &&
+           zero.special_charging)
+    release_pending_from_special = true;
   release_pending = out.release_pending;
   previous_y = (physical.buttons & MMX_SABER_PAD_Y) != 0;
   previous_x = pad.x_held;
@@ -298,13 +359,22 @@ static int burst_origin_y(const uint8_t *ram, unsigned shot_index,
   return shot_index == 0 ? paired_y : native_y;
 }
 
+static unsigned player_damage(const uint8_t *ram, unsigned incoming,
+                              unsigned native) {
+  /* Body armor reduces Saber Zero's damage by 25%. */
+  if (!ram || !MmxSaberEnabled() ||
+      !MmxSaberArmorDecode(ram[MMX_SABER_ARMOR_RAM_OFFSET]).body)
+    return native;
+  return incoming - incoming / 4;
+}
+
 /* "SABR" + layout version, then the frame's own fields and each module's
  * snapshot in a fixed order. A blob without this header leaves the reset
  * state that MmxZeroSetState already established. */
-enum { SABER_STATE_MAGIC = 0x52424153u, SABER_STATE_VERSION = 1u };
+enum { SABER_STATE_MAGIC = 0x52424153u, SABER_STATE_VERSION = 2u };
 typedef struct SaberFrameSavedState {
   uint32_t magic, version;
-  bool release_pending, previous_y, previous_x;
+  bool release_pending, release_pending_from_special, previous_y, previous_x;
 } SaberFrameSavedState;
 
 static size_t saved_state_size(void) {
@@ -321,6 +391,7 @@ static void state_save(uint8_t out[]) {
   frame.magic = SABER_STATE_MAGIC;
   frame.version = SABER_STATE_VERSION;
   frame.release_pending = release_pending;
+  frame.release_pending_from_special = release_pending_from_special;
   frame.previous_y = previous_y;
   frame.previous_x = previous_x;
   memcpy(cursor, &frame, sizeof(frame));
@@ -334,16 +405,18 @@ static void state_save(uint8_t out[]) {
   MmxSaberWaveRuntimeStateSave(cursor);
 }
 
-static void state_load(const uint8_t in[]) {
+static bool state_load(const uint8_t in[]) {
   SaberFrameSavedState frame;
   const uint8_t *cursor = in;
   memcpy(&frame, cursor, sizeof(frame));
   if (frame.magic != SABER_STATE_MAGIC ||
       frame.version != SABER_STATE_VERSION ||
       saved_state_size() > MMX_ZERO_EXTENSION_STATE_BYTES)
-    return;
+    return false;
+  reset_frame_state(NULL, false);
   cursor += sizeof(frame);
   release_pending = frame.release_pending;
+  release_pending_from_special = frame.release_pending_from_special;
   previous_y = frame.previous_y;
   previous_x = frame.previous_x;
   clear_frame_state();
@@ -354,11 +427,15 @@ static void state_load(const uint8_t in[]) {
   MmxSaberPriorityStateLoad(cursor);
   cursor += MmxSaberPriorityStateSize();
   MmxSaberWaveRuntimeStateLoad(cursor);
+  return true;
 }
 
 static const MmxZeroExtension extension = {
     .pre_player = pre_player,
     .player_end = player_end,
+    .modern_movement = modern_movement,
+    .colors = MmxSaberBlackZeroNativeColorsHook,
+    .death_orb_color = MmxSaberBlackZeroDeathOrbColor,
     .legacy_intent = legacy_intent,
     .legacy_slash_request = MmxSaberComboLegacySlashRequest,
     .charge_cap = charge_cap,
@@ -366,11 +443,14 @@ static const MmxZeroExtension extension = {
     .response = MmxSaberPriorityResponse,
     .weapon_tick = MmxSaberAttackWeaponTick,
     .damage = MmxSaberAttackDamage,
+    .player_damage = player_damage,
     .hitbox = MmxSaberAttackHitbox,
     .collision_rom = MmxSaberAttackCollisionRom,
     .state_reset = state_reset,
     .state_save = state_save,
     .state_load = state_load,
+    .charge_rate = charge_rate,
+    .weapon_cost = weapon_cost,
 };
 
 const MmxZeroExtension *MmxSaberFrameExtension(void) {

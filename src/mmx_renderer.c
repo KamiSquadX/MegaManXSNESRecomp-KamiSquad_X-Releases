@@ -1409,11 +1409,12 @@ static uint16_t background(const Ppu *p, const Raster *r, unsigned layer, int x,
   unsigned priority = tile & 0x2000 ? (layer == 2 && (p->bgmode & 8) ? 15 : high[layer]) : low[layer];
   return (uint16_t)((priority << 12) | (layer << 8) | index);
 }
+enum { SPRITE_TINT_NONE, SPRITE_TINT_RED, SPRITE_TINT_ZERO_DEATH_ORB };
 static int axl_badge_color(unsigned x, unsigned y);
 static void sprite(const Ppu *p, const Raster *r, int x, int sy, unsigned attr, int size,
                     int y, MmxRenderView view, uint16_t *out, bool margins_only,
                     const MmxSpriteAsset *asset, unsigned raw_tile, int *object_color,
-                    bool full_coordinates, unsigned zero_icon, bool red_tint) {
+                    bool full_coordinates, unsigned zero_icon, unsigned tint) {
   int row = full_coordinates ? y - sy : (y - sy) & 255;
   if (row < 0 || row >= size) return;
   if (attr & 0x8000) row = size - 1 - row;
@@ -1442,13 +1443,20 @@ static void sprite(const Ppu *p, const Raster *r, int x, int sy, unsigned attr, 
       out[dest] = (uint16_t)(z | pixel);
       object_color[dest] = hud_color >= 0 ? hud_color :
           asset && !asset->live_colors ? asset->colors[pixel] : -1;
-      if (red_tint) {
+      if (tint) {
         unsigned color=object_color[dest]>=0 ? (unsigned)object_color[dest] : r->palette[(z|pixel)&255];
         unsigned red=color&31,green=(color>>5)&31,blue=(color>>10)&31;
         /* Keep the original highlights/neutral outline. Convert only the
          * blue ramp to red, using its existing dark-to-light shading. */
-        if (blue>red && blue>green)
-          object_color[dest]=(int)(blue | ((red<green ? red : green)<<5) | (red<<10));
+        if (blue>red && blue>green) {
+          color = blue | ((red<green ? red : green)<<5) | (red<<10);
+          object_color[dest]=(int)color;
+        }
+        if (tint == SPRITE_TINT_ZERO_DEATH_ORB) {
+          uint16_t mapped = MmxZeroDeathOrbColor((uint16_t)color);
+          if (mapped != color || object_color[dest] >= 0)
+            object_color[dest] = (int)mapped;
+        }
       }
       if (x + c < 0 || x + c >= 256) ++stats.margin_sprite_pixels;
     }
@@ -2767,7 +2775,8 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
         if(beam) asset=beam;
       }
       sprite(&p, r, s.x, s.y, attr, s.size, y, view, objects, !center, asset,
-          coop_special?s.attr&255:s.tile, object_colors, true, false, red_ready || red_death);
+          coop_special?s.attr&255:s.tile, object_colors, true, false,
+          red_ready ? SPRITE_TINT_RED : red_death ? SPRITE_TINT_ZERO_DEATH_ORB : SPRITE_TINT_NONE);
     }
     if ((stage || frame_axl.title || frame_axl.menu) && !zero) axl_row(y, view, objects, object_colors);
     if (stage) coop_partner_row(&p,r,y,view,objects,object_colors);

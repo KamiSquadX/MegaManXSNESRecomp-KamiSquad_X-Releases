@@ -1,13 +1,63 @@
 #include "mmx_zero.h"
+#include "saber/mmx_saber_black_zero.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* Exercise the real Saber callback without widening the standalone target. */
+#include "../src/saber/mmx_saber_black_zero.c"
+
 static uint8_t ram[0x20000], before[0x20000], rom[0x180000], clean[0x180000];
-static void asset(const char *path) {
+static const uint16_t *color_hook_table;
+static const uint16_t *color_hook(const uint16_t *native) {
+  (void)native;
+  return color_hook_table;
+}
+static bool modern_movement_hook_value;
+static bool modern_movement_hook(void) {
+  return modern_movement_hook_value;
+}
+static unsigned charge_rate_hook_value;
+static unsigned charge_cap_hook_value;
+static unsigned charge_rate_hook(void) { return charge_rate_hook_value; }
+static unsigned charge_cap_hook(void) { return charge_cap_hook_value; }
+static unsigned weapon_cost_hook_value;
+static unsigned weapon_cost_hook_calls;
+static unsigned weapon_cost_hook(unsigned weapon_id, unsigned cost, bool charged) {
+  (void)weapon_id;
+  (void)cost;
+  (void)charged;
+  ++weapon_cost_hook_calls;
+  return weapon_cost_hook_value;
+}
+static void weapon_cost_checks(void) {
+  static const MmxZeroExtension extension = {.weapon_cost = weapon_cost_hook};
+  MmxZeroState saved;
+
+  MmxZeroSetExtension(NULL);
+  assert(MmxZeroWeaponCost(2, 0x0100, false) == 0x0100);
+
+  weapon_cost_hook_value = 0x0055;
+  weapon_cost_hook_calls = 0;
+  MmxZeroSetExtension(&extension);
+  assert(MmxZeroWeaponCost(2, 0x0100, true) == 0x0055 &&
+         weapon_cost_hook_calls == 1);
+
+  saved = MmxZeroGetState();
+  saved.active_x = 1;
+  MmxZeroSetState(saved);
+  weapon_cost_hook_calls = 0;
+  assert(MmxZeroWeaponCost(2, 0x0100, false) == 0x0100 &&
+         weapon_cost_hook_calls == 0);
+
+  saved.active_x = 0;
+  MmxZeroSetState(saved);
+  MmxZeroSetExtension(NULL);
+}
+static void asset(const char *path, bool modern) {
   FILE *f = fopen(path, "wb"); assert(f);
-  const uint8_t header[] = {'M','M','X','Z','E','R','O','6',128,0,128,0,64,0,64,0,117,0,35,0};
+  const uint8_t header[] = {'M','M','X','Z','E','R','O',modern ? '7' : '6',128,0,128,0,64,0,64,0,117,0,35,0};
   uint8_t page[16384] = {0};
   assert(fwrite(header, sizeof(header), 1, f) == 1);
   assert(fwrite(page, 256, 1, f) == 1);
@@ -39,6 +89,17 @@ static void asset(const char *path) {
   muzzle[0] = 2; muzzle[122] = 255; muzzle[123] = 232;
   assert(fwrite(muzzle,sizeof(muzzle),1,f) == 1);
   for (unsigned i = 0; i < MMX_ZERO_POSES; ++i) assert(fwrite(page, sizeof(page), 1, f) == 1);
+  if (modern) {
+    uint8_t flash[96] = {0};
+    for (unsigned i = 0; i < 48; ++i) {
+      unsigned color = 0x0200 + i;
+      flash[i * 2] = (uint8_t)color;
+      flash[i * 2 + 1] = (uint8_t)(color >> 8);
+    }
+    assert(fwrite(flash, sizeof(flash), 1, f) == 1);
+    for (unsigned i = 0; i < MMX_ZERO_CHARGE_POSES; ++i)
+      assert(fwrite(page, sizeof(page), 1, f) == 1);
+  }
   assert(!fclose(f));
 }
 static void player(void) {
@@ -52,8 +113,240 @@ static bool ceiling_query(const uint8_t *r, int x, int y) { (void)r; (void)x; re
 static void tick(unsigned held, unsigned pressed) {
   ram[0xbdf] = held; ram[0xbe3] = pressed; MmxZeroPlayerTick(ram);
 }
-static void modern_checks(void) {
+static void color_checks(void) {
+  static const MmxZeroExtension colors_extension = {.colors = color_hook};
+  uint16_t replacement[128];
+  for (unsigned i = 0; i < 128; ++i) replacement[i] = (uint16_t)(0x4000 + i);
+
+  MmxZeroSetExtension(NULL);
+  const uint16_t *native = MmxZeroColors();
+  MmxZeroState normal = {0};
+  assert(MmxZeroColors() == native && MmxZeroBodyColors(&normal) == native + 16);
+
+  color_hook_table = replacement;
+  MmxZeroSetExtension(&colors_extension);
+  assert(MmxZeroColors() == replacement &&
+         MmxZeroBodyColors(&normal) == replacement + 16);
+
+  asset("zero-test-modern.bin", true);
+  assert(MmxZeroLoad("zero-test-modern.bin"));
+  MmxZeroSetState((MmxZeroState){.charge = 25});
+  MmxZeroState flashing = MmxZeroGetState();
+  const uint16_t *body = MmxZeroBodyColors(&flashing);
+  assert(body != replacement + 16 && body[0] == 0x0200 && body[15] == 0x020F);
+
+  color_hook_table = NULL;
+  MmxZeroSetState((MmxZeroState){0});
+  normal = MmxZeroGetState();
+  native = MmxZeroColors();
+  assert(native != replacement && MmxZeroBodyColors(&normal) == native + 16);
+  MmxZeroSetExtension(NULL);
+  assert(MmxZeroColors() == native && MmxZeroBodyColors(&normal) == native + 16);
+
+  assert(MmxZeroLoad("zero-test.bin"));
+}
+static void death_orb_color_checks(void) {
+  static const uint16_t source[] = {0x739C, 0x3DFE, 0x295E, 0x001F, 0x009C};
+  static const uint16_t expected[] = {0x739C, 0x2D6B, 0x1CE7, 0x0CA5, 0x2D6B};
+  static const MmxZeroExtension extension = {
+      .death_orb_color = MmxSaberBlackZeroDeathOrbColor};
+  uint16_t native[128] = {0};
+
+  MmxZeroSetExtension(&extension);
+  MmxSaberBlackZeroNativeColorsUpdate(false, false, NULL);
+  for (unsigned i = 0; i < sizeof(source) / sizeof(source[0]); ++i)
+    assert(MmxZeroDeathOrbColor(source[i]) == source[i]);
+
+  MmxSaberBlackZeroNativeColorsUpdate(true, false, native);
+  for (unsigned i = 0; i < sizeof(source) / sizeof(source[0]); ++i)
+    assert(MmxZeroDeathOrbColor(source[i]) == expected[i]);
+  assert(MmxZeroDeathOrbColor(0x739C) == 0x739C);
+  assert(MmxZeroDeathOrbColor(0x7FFF) == 0x7FFF);
+
+  MmxZeroSetExtension(NULL);
+  assert(MmxZeroDeathOrbColor(0x3DFE) == 0x3DFE);
+  MmxSaberBlackZeroNativeColorsUpdate(false, false, NULL);
+}
+static void charge_rate_checks(void) {
+  static const MmxZeroExtension charge_extension = {
+      .charge_cap = charge_cap_hook,
+      .charge_rate = charge_rate_hook};
+  MmxZeroSetModern(false);
+  MmxZeroSetExtension(NULL);
+  player();
+  for (unsigned i = 0; i < 201; ++i) tick(64, i == 0 ? 64 : 0);
+  assert(MmxZeroGetState().charge == 201);
+  player();
+  MmxZeroSetState((MmxZeroState){.charge = 21});
+  tick(64, 0);
+  MmxZeroState s = MmxZeroGetState();
+  assert(s.charge == 22 && !s.modern.charge_fraction && s.charge_phase == 1);
+  tick(64, 0);
+  s = MmxZeroGetState();
+  assert(s.charge == 23 && !s.modern.charge_fraction && s.charge_phase == 2);
+
+  charge_cap_hook_value = 200;
+  charge_rate_hook_value = 0x180;
+  MmxZeroSetExtension(&charge_extension);
+  player();
+  unsigned cue_21 = 0, cue_81 = 0;
+  for (unsigned frame = 1; frame <= 134; ++frame) {
+    tick(64, frame == 1 ? 64 : 0);
+    if (ram[0xbff] == 0x97) ++cue_21;
+    if (ram[0xbff] == 0x51) ++cue_81;
+    MmxZeroState s = MmxZeroGetState();
+    if (frame == 14)
+      assert(s.charge == 21 && MmxZeroChargeTier(&s) == 4);
+    if (frame == 54)
+      assert(s.charge == 81 && MmxZeroChargeTier(&s) == 6);
+    if (frame == 94)
+      assert(s.charge == 141 && MmxZeroChargeTier(&s) == 8);
+    if (frame == 134)
+      assert(s.charge == 200 && s.modern.charge_fraction == 0);
+  }
+  assert(cue_21 == 1 && cue_81 == 1);
+
+  player();
+  MmxZeroSetState((MmxZeroState){.charge = 21});
+  tick(64, 0);
+  s = MmxZeroGetState();
+  assert(s.charge == 22 && s.modern.charge_fraction == 128 && s.charge_phase == 1);
+  tick(64, 0);
+  s = MmxZeroGetState();
+  assert(s.charge == 24 && s.modern.charge_fraction == 0 && s.charge_phase == 2);
+
+  charge_rate_hook_value = 0x200;
+  player();
+  cue_21 = cue_81 = 0;
+  for (unsigned frame = 1; frame <= 41; ++frame) {
+    tick(64, frame == 1 ? 64 : 0);
+    if (ram[0xbff] == 0x97) ++cue_21;
+    if (ram[0xbff] == 0x51) ++cue_81;
+    if (frame == 11) assert(ram[0xbff] == 0x97);
+    if (frame == 41) assert(ram[0xbff] == 0x51);
+  }
+  assert(cue_21 == 1 && cue_81 == 1);
+
+  charge_rate_hook_value = 0x180;
+  player();
+  tick(64, 64);
+  assert(MmxZeroGetState().modern.charge_fraction == 128);
+  tick(0, 0);
+  s = MmxZeroGetState();
+  assert(!s.charge && !s.modern.charge_fraction);
+  player();
+  tick(64, 64);
+  MmxZeroCancel(ram);
+  assert(!MmxZeroGetState().charge && !MmxZeroGetState().modern.charge_fraction);
+  player();
+  tick(64, 64);
+  MmxZeroResetState();
+  assert(!MmxZeroGetState().charge && !MmxZeroGetState().modern.charge_fraction);
+  MmxZeroSetExtension(NULL);
+}
+static void aerial_charge_checks(void) {
+  static const MmxZeroExtension movement_extension = {
+      .modern_movement = modern_movement_hook};
+  static const uint8_t native_charge[] = {0x40, 2, 8, 1, 1};
+  MmxZeroState held = {.charge = 81, .charge_phase = 7};
+  held.modern.charge_fraction = 128;
+
   MmxZeroSetTerrainQuery(NULL);
+  MmxZeroSetModern(false);
+  modern_movement_hook_value = true;
+  MmxZeroSetExtension(&movement_extension);
+  assert(!MmxZeroModern());
+
+  player();
+  MmxZeroSetState(held);
+  ram[0xbd3] = 0; ram[0xbaa] = 8; ram[0xbab] = 2;
+  memcpy(ram + 0xbff, native_charge, sizeof(native_charge));
+  ram[0xc2a] = 3; ram[0xc2f] |= 64;
+  ram[0xc98] = ram[0xca2] = 1;
+  ram[0xd58] = ram[0xd62] = 1;
+  ram[0xbe3] = 128;
+  MmxZeroMovementTick(ram);
+  MmxZeroState s = MmxZeroGetState();
+  assert(s.modern.jump_used == 1 && s.charge == held.charge &&
+         s.charge_phase == held.charge_phase &&
+         s.modern.charge_fraction == held.modern.charge_fraction);
+  assert(!memcmp(ram + 0xbff, native_charge, sizeof(native_charge)) &&
+         ram[0xc2a] == 3 && (ram[0xc2f] & 64) && ram[0xba3] == 0 &&
+         ram[0xc98] == 1 && ram[0xca2] == 1 &&
+         ram[0xd58] == 1 && ram[0xd62] == 1);
+  ram[0xbdf] = 64;
+  MmxZeroPlayerTick(ram);
+  assert(MmxZeroGetState().charge != 0);
+
+  player();
+  MmxZeroSetState(held);
+  ram[0xbd3] = 0; ram[0xbaa] = 8; ram[0xbab] = 2;
+  memcpy(ram + 0xbff, native_charge, sizeof(native_charge));
+  ram[0xc2a] = 3; ram[0xc2f] |= 64;
+  ram[0xc98] = ram[0xca2] = 1;
+  ram[0xd58] = ram[0xd62] = 1;
+  ram[0xbe2] = 128;
+  MmxZeroMovementTick(ram);
+  s = MmxZeroGetState();
+  assert(s.modern.dash_used == 1 && s.charge == held.charge &&
+         s.charge_phase == held.charge_phase &&
+         s.modern.charge_fraction == held.modern.charge_fraction);
+  assert(!memcmp(ram + 0xbff, native_charge, sizeof(native_charge)) &&
+         ram[0xc2a] == 3 && (ram[0xc2f] & 64) && ram[0xba3] == 0 &&
+         ram[0xc98] == 1 && ram[0xca2] == 1 &&
+         ram[0xd58] == 1 && ram[0xd62] == 1);
+
+  player();
+  MmxZeroSetState((MmxZeroState){.charge = 81, .slash = 1});
+  ram[0xbd3] = 0; ram[0xbaa] = 8; ram[0xbab] = 2; ram[0xbe3] = 128;
+  MmxZeroMovementTick(ram);
+  s = MmxZeroGetState();
+  assert(!s.slash && !s.charge);
+
+  modern_movement_hook_value = false;
+  MmxZeroSetExtension(NULL);
+  MmxZeroSetModern(false);
+  MmxZeroResetState();
+  player();
+}
+static void platform_grounded_checks(void) {
+  static const MmxZeroExtension movement_extension = {
+      .modern_movement = modern_movement_hook};
+  MmxZeroState spent = {0};
+  spent.modern.jump_used = spent.modern.dash_used = 1;
+
+  MmxZeroSetTerrainQuery(NULL);
+  MmxZeroSetModern(false);
+  modern_movement_hook_value = true;
+  MmxZeroSetExtension(&movement_extension);
+
+  player();
+  MmxZeroSetState(spent);
+  ram[0xbd3] = 0; ram[0xbd4] = 4; ram[0xbaa] = 0;
+  ram[0xbe2] = ram[0xbe3] = 0;
+  MmxZeroMovementTick(ram);
+  MmxZeroState s = MmxZeroGetState();
+  assert(!s.modern.jump_used && !s.modern.dash_used);
+
+  player();
+  MmxZeroSetState(spent);
+  ram[0xbd3] = ram[0xbd4] = 0; ram[0xbaa] = 8;
+  ram[0xbe2] = ram[0xbe3] = 0;
+  MmxZeroMovementTick(ram);
+  s = MmxZeroGetState();
+  assert(s.modern.jump_used == 1 && s.modern.dash_used == 1);
+
+  modern_movement_hook_value = false;
+  MmxZeroSetExtension(NULL);
+  MmxZeroSetModern(false);
+  MmxZeroResetState();
+  player();
+}
+static void modern_checks(void) {
+  static const MmxZeroExtension movement_extension = {
+      .modern_movement = modern_movement_hook};
+  MmxZeroSetTerrainQuery(NULL);
+  MmxZeroSetExtension(NULL);
   MmxZeroSetModern(true); MmxZeroResetState(); player();
   tick(64,64);
   MmxZeroState s = MmxZeroGetState();
@@ -92,6 +385,45 @@ static void modern_checks(void) {
   s=MmxZeroGetState(); s.active_x=1; MmxZeroSetState(s);
   memcpy(before,ram,sizeof(ram)); MmxZeroMovementTick(ram); tick(ram[0xbdf],ram[0xbe3]);
   assert(!memcmp(before,ram,sizeof(ram))); /* X remains native. */
+
+  /* A non-modern controller stays legacy without an extension or with a
+   * movement hook that declines the capability. */
+  MmxZeroSetModern(false); MmxZeroSetExtension(NULL); MmxZeroResetState(); player();
+  ram[0xbd3]=0; ram[0xbaa]=8; ram[0xbab]=2; ram[0xbe3]=128;
+  MmxZeroMovementTick(ram);
+  assert(!MmxZeroGetState().modern.jump_used && ram[0xbaa]==8);
+  ram[0xbe3]=0; ram[0xbe2]=ram[0xbde]=128; MmxZeroMovementTick(ram);
+  assert(!MmxZeroGetState().modern.dash_ticks);
+
+  modern_movement_hook_value = false;
+  MmxZeroSetExtension(&movement_extension); MmxZeroResetState(); player();
+  ram[0xbd3]=0; ram[0xbaa]=8; ram[0xbab]=2; ram[0xbe3]=128;
+  MmxZeroMovementTick(ram);
+  assert(!MmxZeroGetState().modern.jump_used && ram[0xbaa]==8);
+  ram[0xbe3]=0; ram[0xbe2]=ram[0xbde]=128; MmxZeroMovementTick(ram);
+  assert(!MmxZeroGetState().modern.dash_ticks);
+
+  modern_movement_hook_value = true;
+  MmxZeroSetExtension(&movement_extension); MmxZeroResetState(); player();
+  ram[0xbd3]=0; ram[0xbaa]=8; ram[0xbab]=2; ram[0xbe3]=128;
+  MmxZeroMovementTick(ram);
+  assert(!MmxZeroModern() && MmxZeroGetState().modern.jump_used && ram[0xbaa]==6);
+  ram[0xbe3]=0; ram[0xbe2]=ram[0xbde]=128; MmxZeroMovementTick(ram);
+  assert(MmxZeroGetState().modern.dash_used &&
+         MmxZeroGetState().modern.dash_ticks==18);
+  MmxZeroPlayerMotion(ram,0xba8);
+  assert(ram[0xbc2]==0x75 && ram[0xbc3]==3);
+  MmxZeroPlayerEnd(ram);
+  assert(MmxZeroGetState().modern.dash_ticks==17);
+
+  /* Movement capability must not turn on modern slash/buster behavior. */
+  MmxZeroSetExtension(&movement_extension); MmxZeroResetState(); player();
+  tick(64,64);
+  assert(!MmxZeroModern() && !MmxZeroGetState().slash &&
+         MmxZeroGetState().charge==1);
+
+  modern_movement_hook_value = false;
+  MmxZeroSetExtension(NULL);
   MmxZeroSetModern(false); MmxZeroResetState(); player();
 }
 static unsigned ext_pre, ext_resets, ext_damage;
@@ -103,7 +435,11 @@ static unsigned ext_damage_hook(uint8_t *r, unsigned e, unsigned p, unsigned v) 
   (void)r; (void)e; (void)p; ++ext_damage; return v + 1;
 }
 static void ext_save(uint8_t out[]) { out[0] = 'T'; out[1] = ext_saved; }
-static void ext_load(const uint8_t in[]) { if (in[0] == 'T') ext_saved = in[1]; }
+static bool ext_load(const uint8_t in[]) {
+  if (in[0] != 'T') return false;
+  ext_saved = in[1];
+  return true;
+}
 static bool ext_gate(void) { return ext_gate_open; }
 /* Co-op runs the player routine per seat; the extension follows Zero's seat. */
 static void extension_checks(void) {
@@ -122,8 +458,8 @@ static void extension_checks(void) {
   MmxZeroSelectState(z); assert(ext_resets == resets && ext_saved == 7);
   MmxZeroExtSaveState(blob); assert(blob[0] == 'T' && blob[1] == 7 && !blob[2]);
   MmxZeroSetState(z); assert(ext_resets > resets && !ext_saved);
-  MmxZeroExtLoadState(blob); assert(ext_saved == 7);
-  memset(blob, 0, sizeof(blob)); MmxZeroExtLoadState(blob); assert(ext_saved == 7);
+  assert(MmxZeroExtLoadState(blob) && ext_saved == 7);
+  memset(blob, 0, sizeof(blob)); assert(!MmxZeroExtLoadState(blob) && ext_saved == 7);
   MmxZeroSetExtensionGate(NULL); MmxZeroSetExtension(NULL);
   MmxZeroExtSaveState(blob); assert(!blob[0] && !blob[1]);
 }
@@ -131,7 +467,10 @@ int main(void) {
   player(); memcpy(before, ram, sizeof(ram));
   tick(0,0); assert(!memcmp(before, ram, sizeof(ram)));
   assert(MmxZeroUpgradeBits(0x81971c, 0) == 0);
-  asset("zero-test.bin"); assert(MmxZeroLoad("zero-test.bin"));
+  asset("zero-test.bin", false); assert(MmxZeroLoad("zero-test.bin"));
+  weapon_cost_checks();
+  color_checks();
+  death_orb_color_checks();
   assert(MmxZeroUpgradeBits(0x81971c, 2) == 10);
   ram[0xbc8]=0x52;ram[0xbc9]=0xa5;
   assert(MmxZeroHeadProbe(ram,0xba8,0xed)==0xe5);
@@ -221,17 +560,22 @@ int main(void) {
   FILE *f = fopen("zero-test-bad.bin","wb"); assert(f); fputs("MMXZERO3",f); fclose(f);
   assert(!MmxZeroLoad("zero-test-bad.bin") && MmxZeroEnabled());
   player();
+  MmxZeroState celebration = {.anim_valid = 1, .anim_pose = 0x50};
+  MmxZeroState raised = celebration;
+  raised.anim_pose = 0;
+  assert(MmxZeroPose(ram, &celebration) == MmxZeroPose(ram, &raised));
   const unsigned charges[]={20,21,80,81,140,141,200,201};
   const unsigned tiers[]={0,4,4,6,6,8,8,10};
   for(unsigned c=0;c<8;++c) {
     player();
     for(unsigned i=0;i<charges[c];++i) tick(64,i==0?64:0);
-    MmxZeroState z=MmxZeroGetState(); assert(MmxZeroChargeTier(&z)==tiers[c]);
+    MmxZeroState z=MmxZeroGetState(); assert(z.charge==charges[c] && MmxZeroChargeTier(&z)==tiers[c]);
     tick(0,0); z=MmxZeroGetState();
     assert(z.combo==(tiers[c]>=8) && z.saber_ready==(tiers[c]==10));
     if(tiers[c] && tiers[c]<8) assert(ram[0xc01]==(tiers[c]==4?2:8));
   }
   assert(MmxZeroGetState().burst == 1 && !ram[0x1228]);
+  charge_rate_checks();
   /* Highway restraint is native action $32 with sequence $49. It must
    * override a mirrored attack pose without changing rescue group $66. */
   player(); ram[0xbaa]=0x32; ram[0xbab]=2;
@@ -323,11 +667,13 @@ int main(void) {
   MmxZeroState start = MmxZeroGetState(); start.active_x = 0; MmxZeroSetState(start);
   assert(MmxZeroActive()); /* A saved character wins over the start choice. */
   MmxZeroSetStartCharacter(false); MmxZeroResetState(); assert(MmxZeroActive());
+  aerial_charge_checks();
+  platform_grounded_checks();
   modern_checks();
   MmxZeroDisable(); MmxZeroSetCollisionRom(rom,sizeof(rom));
   assert(!memcmp(rom,clean,sizeof(rom)));
   extension_checks();
-  remove("zero-test.bin"); remove("zero-test-bad.bin");
+  remove("zero-test.bin"); remove("zero-test-modern.bin"); remove("zero-test-bad.bin");
   puts("Zero: asset validation, collision restoration, combo, damage, cancellation, state and extension-seat tests passed");
   return 0;
 }

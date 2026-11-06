@@ -14,6 +14,10 @@ static uint8_t animation[MMX_ZERO_ANIMATION_BYTES];
 static uint8_t muzzle[MMX_ZERO_MUZZLE_BYTES];
 static MmxZeroState state;
 static const MmxZeroExtension *extension;
+static void reset_charge_progress(void) {
+  state.charge = 0;
+  state.modern.charge_fraction = 0;
+}
 static bool (*extension_gate)(void);
 _Static_assert(offsetof(MmxZeroState, anim_offset) == MMX_ZERO_LEGACY_STATE_SIZE,
                "Keep the v4 combat-state prefix readable");
@@ -25,6 +29,9 @@ _Static_assert(offsetof(MmxZeroState, hp) == MMX_ZERO_SWAP_STATE_SIZE,
                "Keep the v7 character/swap-state prefix readable");
 _Static_assert(offsetof(MmxZeroState, modern) == MMX_ZERO_HEALTH_STATE_SIZE,
                "Keep the v8-v14 Zero state prefix readable");
+_Static_assert(sizeof(MmxZeroState) ==
+                   MMX_ZERO_HEALTH_STATE_SIZE + sizeof(MmxZeroModernState),
+               "Keep the v15 Zero snapshot size stable");
 static unsigned word(const uint8_t *p) { return p[0] | p[1] << 8; }
 static void putword(uint8_t *p, unsigned v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 MmxZeroState MmxZeroGetState(void) { return state; }
@@ -34,6 +41,11 @@ static bool start_x;
 static bool modern_behavior;
 void MmxZeroSetModern(bool enabled) { modern_behavior = enabled; }
 bool MmxZeroModern(void) { return MmxZeroActive() && modern_behavior; }
+static bool modern_movement(void) {
+  return MmxZeroModern() ||
+      (MmxZeroActive() && extension && extension->modern_movement &&
+       extension->modern_movement());
+}
 void MmxZeroSetStartCharacter(bool x) { start_x = x; }
 void MmxZeroSetExtension(const MmxZeroExtension *ext) { extension = ext; }
 void MmxZeroSetExtensionGate(bool (*gate)(void)) { extension_gate = gate; }
@@ -54,8 +66,9 @@ void MmxZeroExtSaveState(uint8_t out[MMX_ZERO_EXTENSION_STATE_BYTES]) {
   memset(out, 0, MMX_ZERO_EXTENSION_STATE_BYTES);
   if (extension && extension->state_save) extension->state_save(out);
 }
-void MmxZeroExtLoadState(const uint8_t in[MMX_ZERO_EXTENSION_STATE_BYTES]) {
-  if (extension && extension->state_load) extension->state_load(in);
+bool MmxZeroExtLoadState(const uint8_t in[MMX_ZERO_EXTENSION_STATE_BYTES]) {
+  if (extension && extension->state_load) return extension->state_load(in);
+  return false;
 }
 static void clear_state(void) {
   memset(&state, 0, sizeof(state)); state.active_x = start_x;
@@ -63,6 +76,7 @@ static void clear_state(void) {
 }
 void MmxZeroResetState(void) {
   clear_state();
+  reset_charge_progress();
   if (extension && extension->state_reset) extension->state_reset(NULL);
 }
 bool MmxZeroValidState(const MmxZeroState *value) {
@@ -71,7 +85,7 @@ bool MmxZeroValidState(const MmxZeroState *value) {
   return s.combo <= 2 && s.slash <= 44 && s.charge <= 201 &&
       s.modern.enabled <= 1 && s.modern.jump_used <= 1 && s.modern.dash_used <= 1 &&
       s.modern.dash_ticks <= 18 && (s.modern.dash_facing == 0 || s.modern.dash_facing == 64) &&
-      s.modern.slash_buffer <= 6 && s.modern.hit_phase <= 1 && !s.modern.reserved &&
+      s.modern.slash_buffer <= 6 && s.modern.hit_phase <= 1 &&
       s.active_x <= 1 && s.swap_phase <= 6 && s.swap_tick <= 30 && s.swap_y <= 0 && s.swap_y >= -320 &&
       s.hp_valid <= 1 && s.hp_max <= 32 && s.hp[0] <= 32 && s.hp[1] <= 32 &&
       (!s.hp_valid || (s.hp_max >= 16 && s.hp[0] <= s.hp_max && s.hp[1] <= s.hp_max)) &&
@@ -111,6 +125,13 @@ static unsigned legacy_charge_cap(void) {
     if (cap) return cap;
   }
   return 201;
+}
+static unsigned legacy_charge_rate(void) {
+  if (extension && extension->charge_rate) {
+    unsigned rate = extension->charge_rate();
+    if (rate) return rate;
+  }
+  return 0x100;
 }
 
 bool MmxZeroEnabled(void) { return poses != NULL; }
@@ -187,7 +208,11 @@ bool MmxZeroLoad(const char *path) {
   for (unsigned i = 0; i < 128; ++i) colors[i] = (uint16_t)(word(palette + 2 * i) & 0x7fff);
   return true;
 }
-const uint16_t *MmxZeroColors(void) { return colors; }
+const uint16_t *MmxZeroColors(void) {
+  const uint16_t *replacement =
+      extension && extension->colors ? extension->colors(colors) : NULL;
+  return replacement ? replacement : colors;
+}
 bool MmxZeroHasChargeArt(void) { return charge_poses != NULL; }
 int MmxZeroChargeFlashPaletteIndex(const MmxZeroState *s) {
   if (!charge_poses || !s || s->active_x || s->swap_phase || s->slash ||
@@ -196,7 +221,7 @@ int MmxZeroChargeFlashPaletteIndex(const MmxZeroState *s) {
 }
 const uint16_t *MmxZeroBodyColors(const MmxZeroState *s) {
   int index = MmxZeroChargeFlashPaletteIndex(s);
-  return index < 0 ? colors + 16 : charge_colors[index];
+  return index < 0 ? MmxZeroColors() + 16 : charge_colors[index];
 }
 const uint8_t *MmxZeroChargePose(const MmxZeroState *s) {
   if (!charge_poses || !s || s->active_x || s->swap_phase || s->slash || s->burst || s->combo || s->charge < 21) return NULL;
@@ -218,6 +243,10 @@ void MmxZeroDeathOrbSpawn(uint8_t r[0x20000], unsigned source, unsigned orb) {
 bool MmxZeroDeathOrbRed(const uint8_t r[0x20000], unsigned orb) {
   return poses && r && orb >= 0x1928 && orb < 0x1d08 && !((orb - 0x1928) % 32) &&
       r[orb] && r[orb + 10] == 14 && r[orb + 2] == 0x5a;
+}
+uint16_t MmxZeroDeathOrbColor(uint16_t native) {
+  return extension && extension->death_orb_color ?
+      extension->death_orb_color(native) : native;
 }
 const uint8_t *MmxZeroMenuPose(void) { return poses; }
 static void animation_record(unsigned offset) {
@@ -374,6 +403,8 @@ const uint8_t *MmxZeroPose(const uint8_t ram[0x20000], const MmxZeroState *s) {
    * until the next native animation start. New saves retain the exact phase. */
   unsigned pose = s && s->anim_valid ? s->anim_pose : ram[0xbbf] & 127;
   if (s && s->burst && s->burst_offset + 3 <= sizeof(animation)) pose = animation[s->burst_offset + 2];
+  /* X1 capsule celebration pose $50 has no usable X3 Zero art; Zero holds his idle stance there. */
+  if (pose == 0x50) pose = 0;
   if (pose >= 117) pose = 0;
   if (s && s->slash) pose = 117 + slash_pose(s);
   return poses + (size_t)pose * MMX_ZERO_WIDTH * MMX_ZERO_HEIGHT;
@@ -474,6 +505,17 @@ unsigned MmxZeroUpgradeBits(unsigned pc, unsigned original) {
     default: return original;
   }
 }
+unsigned MmxZeroWeaponCost(unsigned weapon_id, unsigned cost, bool charged) {
+  if (!MmxZeroActive() || !extension || !extension->weapon_cost)
+    return cost;
+  return extension->weapon_cost(weapon_id, cost, charged);
+}
+unsigned MmxZeroPlayerDamage(const uint8_t ram[0x20000], unsigned incoming,
+                             unsigned native) {
+  if (!MmxZeroActive() || !extension || !extension->player_damage)
+    return native;
+  return extension->player_damage(ram, incoming, native);
+}
 unsigned MmxZeroHeadProbe(const uint8_t r[0x20000], unsigned object, unsigned original) {
   /* $81:9EAC probes one pixel above X's standing terrain top (-18).
    * Zero's standing top is -26, so the original -19 query misses a block
@@ -509,6 +551,21 @@ void MmxZeroCancel(uint8_t ram[0x20000]) {
   /* Combat cancellation (hurt, weapon switch, menus) must not reset the
    * independent body animation. Full reset/load uses MmxZeroResetState. */
   memset(&state, 0, MMX_ZERO_LEGACY_STATE_SIZE);
+  memset((uint8_t *)&state + MMX_ZERO_ANIMATION_STATE_SIZE, 0,
+         MMX_ZERO_COMBAT_STATE_SIZE - MMX_ZERO_ANIMATION_STATE_SIZE);
+  reset_charge_progress();
+  state.modern.slash_buffer = state.modern.hit_phase = 0;
+}
+static void cancel_keep_charge(uint8_t *r) {
+  if (state.slash || state.combo || state.burst) {
+    MmxZeroCancel(r);
+    return;
+  }
+  if (r) release_projectile(r);
+  else state.projectile = 0;
+  state.slash = 0;
+  state.air = state.facing = 0;
+  state.hit_slots = 0;
   memset((uint8_t *)&state + MMX_ZERO_ANIMATION_STATE_SIZE, 0,
          MMX_ZERO_COMBAT_STATE_SIZE - MMX_ZERO_ANIMATION_STATE_SIZE);
   state.modern.slash_buffer = state.modern.hit_phase = 0;
@@ -683,9 +740,9 @@ static void end_air_dash(uint8_t *r) {
 }
 void MmxZeroMovementTick(uint8_t r[0x20000]) {
   if (body_hooks && body_hooks->pre_player && !MmxZeroActive()) body_hooks->pre_player(r);
-  if (!MmxZeroModern() || !r) return;
+  if (!modern_movement() || !r) return;
   if (!movement_playable(r)) { end_air_dash(r); return; }
-  bool grounded = (r[0xbd3] & 4) != 0;
+  bool grounded = (r[0xbd3] & 4) || (r[0xbd4] & 4);
   unsigned action = r[0xbaa];
   /* Wall contact restores aerial options, like landing. A menu, weapon
    * change or attack cancellation never grants another midair action. */
@@ -696,7 +753,7 @@ void MmxZeroMovementTick(uint8_t r[0x20000]) {
   bool air = !grounded && (action == 6 || action == 8 || state.modern.dash_ticks);
   if (air && (r[0xbe3] & 128) && !state.modern.jump_used &&
       (!terrain_query || !standing_blocked(r))) {
-    end_air_dash(r); MmxZeroCancel(r);
+    end_air_dash(r); cancel_keep_charge(r);
     state.modern.jump_used = 1;
     r[0xbaa] = 6; r[0xbab] = 0; r[0xbfd] = 0;
     /* Same initial jump speed/gravity as X1/X3's native action-6 row at
@@ -711,7 +768,7 @@ void MmxZeroMovementTick(uint8_t r[0x20000]) {
     end_air_dash(r);
   if (air && !state.modern.dash_ticks && !state.modern.dash_used &&
       (r[0xbe2] & 128)) {
-    MmxZeroCancel(r);
+    cancel_keep_charge(r);
     state.modern.dash_used = 1; state.modern.dash_ticks = 18;
     state.modern.dash_facing = (r[0xbdf] & 3) == 1 ? 64 :
         (r[0xbdf] & 3) == 2 ? 0 : r[0xc11] & 64;
@@ -728,7 +785,7 @@ void MmxZeroMovementTick(uint8_t r[0x20000]) {
 }
 void MmxZeroPlayerMotion(uint8_t r[0x20000], unsigned object) {
   if (body_hooks && body_hooks->motion && !MmxZeroActive()) body_hooks->motion(r, object);
-  if (!MmxZeroModern() || !r || object != 0xba8 || !state.modern.dash_ticks) return;
+  if (!modern_movement() || !r || object != 0xba8 || !state.modern.dash_ticks) return;
   putword(r + 0xc04, 0x0375);
   putword(r + 0xbc2, state.modern.dash_facing ? 0x0375 : -0x0375);
   r[0xbfa] = 0x20;
@@ -787,7 +844,8 @@ void MmxZeroPlayerTick(uint8_t r[0x20000]) {
     }
     /* Direct saber uses the same ground/air art and collision arc. Retain
      * every pose, shortening only the long follow-through hold. */
-    state.charge = state.charge_phase = state.combo = state.saber_ready = 0;
+    reset_charge_progress();
+    state.charge_phase = state.combo = state.saber_ready = 0;
     state.burst = state.burst_end = 0;
     if (state.slash && pressed && state.slash >= 32) state.modern.slash_buffer = 6;
     if (state.slash) {
@@ -838,13 +896,29 @@ void MmxZeroPlayerTick(uint8_t r[0x20000]) {
     }
   } else if (!state.burst && !state.combo) {
     if (intent.held) {
-      if (state.charge < legacy_charge_cap()) ++state.charge;
+      const unsigned previous_charge = state.charge;
+      const unsigned cap = legacy_charge_cap();
+      if (state.charge < cap) {
+        const uint64_t total = (uint64_t)state.modern.charge_fraction +
+            legacy_charge_rate();
+        const uint64_t advance = total >> 8;
+        const uint64_t next = (uint64_t)state.charge + advance;
+        state.modern.charge_fraction = (uint8_t)(total & 0xff);
+        if (next >= cap) {
+          state.charge = (uint16_t)cap;
+          state.modern.charge_fraction = 0;
+        } else {
+          state.charge = (uint16_t)next;
+        }
+      } else {
+        state.modern.charge_fraction = 0;
+      }
       /* Feed X1's ordinary charging visuals at Zero's measured thresholds.
        * Its release command is selected explicitly below; X1 special weapons
        * never enter this path and retain their own charge/upgrade rules. */
-      if (state.charge == 21) r[0xbff] = 0x97;
+      if (state.charge >= 21 && previous_charge < 21) r[0xbff] = 0x97;
       else if (state.charge > 21 && state.charge < 81) r[0xbff] = 0x90;
-      else if (state.charge == 81) r[0xbff] = 0x51;
+      else if (state.charge >= 81 && previous_charge < 81) r[0xbff] = 0x51;
       else if (state.charge > 81) r[0xbff] = 0x40;
       if (state.charge >= 141) { r[0xc03] = 1; r[0xc2a] = 4; }
     } else if (intent.released) {
@@ -857,7 +931,7 @@ void MmxZeroPlayerTick(uint8_t r[0x20000]) {
          * is class 1 (green half-shot); command 6 is class 2. */
         clear_charge(r); r[0xc01] = tier >= 6 ? 8 : 2;
       }
-      state.charge = 0;
+      reset_charge_progress();
     }
   }
   if (state.burst) {
@@ -945,7 +1019,7 @@ void MmxZeroPlayerEnd(uint8_t r[0x20000]) {
     unsigned phase = age < 12 ? age / 3 : 4;
     putword(r + d + 0x20, age < 19 ? 0xffb0 + (state.air ? 20 : 0) + phase * 4 : 0);
   }
-  if (MmxZeroModern() && r && state.modern.dash_ticks) {
+  if (modern_movement() && r && state.modern.dash_ticks) {
     r[0xc06] &= (uint8_t)~4;
     if (r[0xbaa] != 0x14 || (r[0xbd3] & 4) || state.modern.dash_ticks == 1)
       end_air_dash(r);

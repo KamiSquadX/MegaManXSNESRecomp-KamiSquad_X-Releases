@@ -10,7 +10,9 @@ enum { MMX_ZERO_WIDTH = 128, MMX_ZERO_HEIGHT = 128, MMX_ZERO_POSES = 152, MMX_ZE
        MMX_ZERO_HEALTH_STATE_SIZE = 40 };
 typedef struct MmxZeroModernState {
   uint8_t enabled, jump_used, dash_used, dash_ticks;
-  uint8_t dash_facing, slash_buffer, hit_phase, reserved;
+  uint8_t dash_facing, slash_buffer, hit_phase;
+  /* Reuses the former reserved byte without changing save/snapshot layout. */
+  uint8_t charge_fraction;
 } MmxZeroModernState;
 typedef struct MmxZeroLegacyIntent {
   bool held, pressed, released;
@@ -18,8 +20,11 @@ typedef struct MmxZeroLegacyIntent {
 typedef struct MmxZeroExtension {
   void (*pre_player)(uint8_t *ram);                 /* $815C, before SlideTick */
   void (*player_end)(uint8_t *ram);                 /* $8165, after MmxZeroPlayerEnd */
+  bool (*modern_movement)(void);                    /* true = enable aerial actions */
+  const uint16_t *(*colors)(const uint16_t *native); /* 128-entry replacement or NULL */
   unsigned (*weapon_tick)(uint8_t *ram, unsigned d, unsigned value);
   unsigned (*damage)(uint8_t *ram, unsigned d, unsigned x, unsigned value);
+  unsigned (*player_damage)(const uint8_t *ram, unsigned incoming, unsigned native);
   unsigned (*hitbox)(const uint8_t *ram, unsigned d, unsigned x, unsigned value);
   bool (*legacy_intent)(const uint8_t *ram, MmxZeroLegacyIntent *intent); /* true = override */
   unsigned (*charge_cap)(void);                       /* 0 = no cap */
@@ -33,7 +38,10 @@ typedef struct MmxZeroExtension {
   /* Savestate and rollback: the owner's host-side state as a fixed blob.
    * Load must ignore a blob it did not write (e.g. all zeros). */
   void (*state_save)(uint8_t out[]);
-  void (*state_load)(const uint8_t in[]);
+  bool (*state_load)(const uint8_t in[]); /* true = blob accepted */
+  unsigned (*charge_rate)(void);                    /* Q8.8 per frame; 0 = default 0x100 */
+  uint16_t (*death_orb_color)(uint16_t native);     /* Zero-owned death-orb pixel */
+  unsigned (*weapon_cost)(unsigned weapon_id, unsigned cost, bool charged);
 } MmxZeroExtension;
 enum { MMX_ZERO_EXTENSION_STATE_BYTES = 2048 };
 typedef struct MmxZeroState {
@@ -63,9 +71,9 @@ void MmxZeroSetExtension(const MmxZeroExtension *ext);
  * state untouched for its own seat. */
 void MmxZeroSetExtensionGate(bool (*gate)(void));
 void MmxZeroExtPrePlayer(uint8_t *ram);
-/* Zero-filled when no extension is set. Load runs after MmxZeroSetState. */
+/* Zero-filled when no extension is set. */
 void MmxZeroExtSaveState(uint8_t out[MMX_ZERO_EXTENSION_STATE_BYTES]);
-void MmxZeroExtLoadState(const uint8_t in[MMX_ZERO_EXTENSION_STATE_BYTES]);
+bool MmxZeroExtLoadState(const uint8_t in[MMX_ZERO_EXTENSION_STATE_BYTES]);
 void MmxZeroExtPlayerEnd(uint8_t *ram);
 bool MmxZeroLoad(const char *path);
 void MmxZeroDisable(void);
@@ -88,6 +96,7 @@ const uint8_t *MmxZeroChargePose(const MmxZeroState *snapshot);
 bool MmxZeroHasChargeArt(void);
 void MmxZeroDeathOrbSpawn(uint8_t ram[0x20000], unsigned source, unsigned orb);
 bool MmxZeroDeathOrbRed(const uint8_t ram[0x20000], unsigned orb);
+uint16_t MmxZeroDeathOrbColor(uint16_t native);
 bool MmxZeroNativeChargeObject(unsigned object, unsigned kind);
 const uint8_t *MmxZeroMenuPose(void);
 /* Original X3 BGR555 badge pixel; -2 is transparent, -1 retains native art. */
@@ -115,6 +124,9 @@ typedef struct MmxZeroBodyHooks {
   unsigned (*response)(uint8_t *ram, unsigned enemy, unsigned projectile, unsigned value);
 } MmxZeroBodyHooks;
 void MmxZeroSetBodyHooks(const MmxZeroBodyHooks *hooks);
+unsigned MmxZeroWeaponCost(unsigned weapon_id, unsigned cost, bool charged);
+unsigned MmxZeroPlayerDamage(const uint8_t ram[0x20000], unsigned incoming,
+                             unsigned native);
 /* Native helmet query must reach the active body's ceiling contact row. */
 unsigned MmxZeroHeadProbe(const uint8_t ram[0x20000], unsigned object, unsigned original);
 unsigned MmxZeroHeadBreakY(const uint8_t ram[0x20000], unsigned object, unsigned original);

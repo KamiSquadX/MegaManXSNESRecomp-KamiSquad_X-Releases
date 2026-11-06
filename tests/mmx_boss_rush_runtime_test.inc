@@ -352,7 +352,7 @@ static void rush_foreign_spike_checks(uint8_t *start,size_t cap) {
 static uint8_t rush_extension_value;
 static void rush_extension_reset(uint8_t *ram) {(void)ram;rush_extension_value=0;}
 static void rush_extension_save(uint8_t out[]) {out[0]='R';out[1]=rush_extension_value;}
-static void rush_extension_load(const uint8_t in[]) {if(in[0]=='R')rush_extension_value=in[1];}
+static bool rush_extension_load(const uint8_t in[]) {if(in[0]!='R')return false;rush_extension_value=in[1];return true;}
 static void rush_state_format_checks(uint8_t *start,uint8_t *legacy,uint8_t *actual,size_t cap) {
   static const MmxZeroExtension extension={.state_reset=rush_extension_reset,
       .state_save=rush_extension_save,.state_load=rush_extension_load};

@@ -5,7 +5,8 @@ Saber Zero was written by [RaphaelAzev](https://github.com/RaphaelAzev) in the
 fork and merged here. It is a **Zero behavior**, alongside X3 and Modern: it
 keeps the X3 Zero character and adds a Saber attack owner, the X3
 finisher/wave sequence, priority-aware follow-ups, donor sprites and sound
-effects, Ride Armor pilot art, and an optional hitbox overlay.
+effects, Ride Armor pilot art, X1 armor upgrades, Black Zero, and an optional
+hitbox overlay.
 
 Choose **Zero behavior → Saber Zero** in **Characters → Add Zero** (single
 player; **Starting character** and the native Select exchange are unchanged) or
@@ -33,9 +34,12 @@ buster/special translation owns X. The other native controls remain available.
 | Select | Native X/Zero exchange in the normal standing exchange context. |
 
 Hurt, death, reset, menus, and an exchange to X cancel the Saber owner for that
-frame. A charge held before a slash can continue through the slash; a release
-is latched and fires on the first eligible frame after the slash. A hurt frame
-does not invent a buster press or throw away an existing release latch.
+frame. A buster or selected special-weapon charge held before a slash can
+continue through the slash; a release is latched and fires on the first
+eligible frame after the slash. A hurt frame does not invent a buster press or
+throw away an existing release latch. While frozen by Chill Penguin, Saber
+Zero cannot slash or fire; mashing breaks the ice as it does for X, and attacks
+resume after he is free.
 
 ## Saber attacks
 
@@ -77,6 +81,13 @@ Release of the capped charge starts the two-shot class-3 sequence. Press X
 again for the second burst after the native first-burst delay. Saber Zero
 changes the two emission origins so the two max shots share one vertical height,
 both on the ground and in the supported airborne route.
+
+A held buster charge survives a double jump or air dash and can be released
+after the aerial move to fire the charged shot.
+
+With Fire Wave selected, holding the buster button streams flames continuously
+as it does for X, with or without the Arms part, including while a charge
+builds.
 
 After the second burst becomes newly live, the finisher window opens at the
 post-player update. It is 27 frames by default and can be tuned from 12 to 60.
@@ -126,6 +137,44 @@ native OAM result rather than a fixed screen offset.
 debug rectangles for the enemy, Zero, and Saber attack boxes. It is a renderer
 debug option; it does not change collision or damage.
 
+## Armor upgrades and Black Zero
+
+Zero can collect X1's four armor parts alongside X. The parts use the shared
+native `$1F99` bits, so capsules work for both characters and collected parts
+persist through the password like X's parts. The package option
+`start_all_upgrades` grants all four parts at stage or checkpoint start while
+Zero is active; it is intended for testing, and the granted parts persist in
+the password like collected parts.
+
+| Part | Effect |
+|------|--------|
+| Legs (`$08`) | Double jump and air dash. Standing on a moving platform refreshes both aerial moves because platform contact counts as ground. Zero's ground dash remains innate. |
+| Arms (`$02`) | Purple saber blade and Saber wave. Adds 2 damage to every Saber attack, or 1 against bosses, after tuned damage and before the 32-point cap. A full buster charge fires charged X1 special weapons. |
+| Body (`$04`) | Reduces all enemy damage Saber Zero takes by 25%, including contact and hits (damage minus a quarter, rounded down). X keeps X1's native halving. |
+| Head (`$01`) | Buster charges at 1.5 times the normal rate. X1 special weapons cost half energy using fixed-point accounting, so whole-unit costs alternate. Breaks the helmet blocks X breaks in Flame Mammoth. |
+| All four parts | Black Zero: black and grey armor with pale hair. The appearance also applies on death and boss defeat. Death orbs use grey. |
+
+During the armor-capsule celebration, Zero remains visible in his idle
+stance instead of vanishing.
+
+The Black Zero palette follows the MMX3 Zero Project romhack. This repository
+contains colour constants only; it does not distribute ROM data. See the
+[credits](../assets/saber-zero/CREDITS.md).
+
+## Generic Zero extension hooks
+
+`MmxZeroExtension` exposes these optional generic hooks for Zero behavior. An
+absent hook preserves the original behavior:
+
+| Hook | Purpose |
+|------|---------|
+| `colors` | Supply the Zero palette. |
+| `modern_movement` | Enable aerial modern movement actions. |
+| `charge_rate` | Supply the charge increment in Q8.8 fixed-point units per frame. |
+| `weapon_cost` | Adjust a weapon's energy cost. |
+| `player_damage` | Adjust incoming enemy damage, including contact and hits. |
+| `death_orb_color` | Supply a Zero-owned death-orb pixel color. |
+
 ## Saber Zero settings
 
 Tuning lives in the separate **Characters → Saber Zero settings** feature
@@ -135,12 +184,14 @@ the default below, even if a different value was stored earlier: a disabled
 feature is left out of the netplay mod comparison, so its values must not reach
 the game either. It exposes 31 numeric tuning options and `show_hitboxes`. Normal damage values accept 1–32; boss damage accepts 0–32,
 where 0 means “use the matching normal value”; priority values accept 1–9.
+The manifest also exposes `start` and `start_all_upgrades`; the table includes
+their defaults.
 The window ranges are 30–120 frames for priority and 12–60 frames for the
 finisher. Swing volume ranges from 0–200 in steps of 10.
 
 | Group | Options and defaults |
 |-------|----------------------|
-| Debug | `show_hitboxes=false` |
+| Character/debug | `start_all_upgrades=false`; `show_hitboxes=false` |
 | Normal damage | `slash1_damage=3`, `slash2_damage=3`, `slash3_damage=8`, `x3_finisher_damage=16`, `air_damage=3`, `wall_damage=3`, `dash_damage=5`, `wave_damage=6` |
 | Boss damage | `boss_slash1_damage=1`, `boss_slash2_damage=1`, `boss_slash3_damage=2`, `boss_air_damage=1`, `boss_wall_damage=1`, `boss_dash_damage=2`, `boss_x3_finisher_damage=6`, `boss_wave_damage=4` |
 | Priority | `slash1_priority=6`, `slash2_priority=7`, `slash3_priority=8`, `air_priority=1`, `wall_priority=1`, `dash_priority=9`, `charge_small_priority=1`, `charge_full_priority=1`, `max_shot1_priority=2`, `max_shot2_priority=3`, `x3_finisher_priority=4`, `wave_priority=5` |
@@ -148,19 +199,23 @@ finisher. Swing volume ranges from 0–200 in steps of 10.
 
 ## Co-op, savestates and netplay
 
-Co-op runs the player routine once per seat. Saber's per-frame and per-hit
-callbacks run only on Zero's seat; X's pass and co-op "ghost" replays leave
-Saber state untouched, and a co-op seat exchange keeps it (it uses
-`MmxZeroSelectState`, which does not reset the Zero extension). In co-op the
-Saber pad is the seat's own X and Y, not port 1. A partner-seat Zero is drawn
-with the Saber overlay as well; the Ride Armor pilot sheet is applied only to
-the live seat, so a partner Zero piloting a Ride Armor keeps the native cockpit
-art.
+Co-op runs the player routine once per seat. Every Saber rule follows the seat
+that is Saber Zero, whether P1 or P2, including body armor: that seat takes 25%
+less enemy damage from contact and hits; an X seat keeps native halving. Saber's
+per-frame and per-hit callbacks run only on Zero's seat; X's pass and co-op
+"ghost" replays leave Saber state untouched, and a co-op seat exchange keeps it
+(it uses `MmxZeroSelectState`, which does not reset the Zero extension). In
+co-op the Saber pad is the seat's own X and Y, not port 1. A partner-seat Zero
+is drawn with the Saber overlay as well; the Ride Armor pilot sheet is applied
+only to the live seat, so a partner Zero piloting a Ride Armor keeps the native
+cockpit art.
 
-Saber's host-side state (attack, combo, hit priority, wave bookkeeping and the
-pad edges) is part of the savestate as a fixed Zero-extension blob (chunk v18),
-so rewind, save states and netplay rollback restore a swing in progress instead
-of cancelling it. Older saves load with Saber reset.
+Saber's host-side state (attack, combo, hit priority, wave bookkeeping, pad
+edges, and special-charge release ownership) is part of the savestate as a
+fixed Zero-extension blob, version 2. A save state taken mid-slash resumes the
+slash with its hitbox. Rewind and netplay rollback restore the same consistent
+Saber state. The special-charge release latch survives save/load. Older Saber
+data loads with the in-progress Saber state fully reset.
 
 ## Known limitations
 
@@ -175,10 +230,8 @@ bosses were surveyed, but only Chill Penguin, Mammoth, and Armadillo were
 played through during this pass. Treat other boss interactions as needing more
 playtesting.
 
-Planned work includes Zero armor parts: legs for double jump and air dash,
-arms for a purple saber and more damage, with the other parts still to be
-defined. Additional Zero saber techniques and Zero-related dialogue and other
-cutscene entries are also planned.
+Additional Zero saber techniques and Zero-related dialogue and other cutscene
+entries remain planned.
 
 ## Running the tests
 
@@ -198,6 +251,9 @@ The Saber runner's no-argument form runs its default pass and every named group
 in isolated test runs, and returns zero only when all of them pass. It includes
 the input, attack lifecycle, buster, finisher, priority, damage, renderer,
 Ride Armor, package, upstream Zero parity, response-seam, and fixture checks.
+The named groups include `saber-frozen`, `saber-fire-wave-armor` (the real Fire
+Wave route), and `saber-capsule`; `saber-capsule` uses the operator fixture
+`capsule.sav` from the fixture directory.
 To run one named group, for example:
 
 ```bash
