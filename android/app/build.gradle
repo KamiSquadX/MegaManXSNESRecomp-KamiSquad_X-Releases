@@ -3,7 +3,7 @@ plugins {
 }
 
 // Release stamp shared with the desktop build (crash reports, netplay).
-def buildVersion = project.findProperty('mmxVersion') ?: '2.3.3-ks.1.1.3'
+def buildVersion = project.findProperty('mmxVersion') ?: '2.3.3-ks.1.2.0'
 def sdl3Dir = file("${rootDir}/SDL3")
 // Build-time tools run on this PC, not the device (android/host-tools).
 def hostToolsDir = file("${rootDir}/build/host-tools")
@@ -22,7 +22,7 @@ android {
         applicationId 'com.kamisquadx.megamanxrecomp'
         minSdk 28
         targetSdk 34
-        versionCode 10103
+        versionCode 10200
         versionName buildVersion
 
         externalNativeBuild {
