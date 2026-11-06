@@ -146,6 +146,11 @@ function(add_mmx_variant TARGET GEN_DIR CFG_DIR)
         target_link_libraries(${TARGET} PRIVATE android log)
     endif()
     if(NINTENDO_SWITCH)
+        # Horizon's filesystem will not rename onto an existing file; every
+        # cache, save and settings write here replaces one that way. Wrapping
+        # rename() reaches C callers and libstdc++'s filesystem::rename alike.
+        target_sources(${TARGET} PRIVATE switch/switch_rename.c)
+        target_link_options(${TARGET} PRIVATE "-Wl,--wrap=rename")
         # Homebrew .nro for hbmenu: title, author and version shown there.
         nx_generate_nacp(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.nacp"
             NAME "Mega Man X Recomp" AUTHOR "KamiSquad_X"
