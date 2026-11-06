@@ -437,7 +437,6 @@ void launcher_model_init(LauncherModel* m,
         m->has_vsync            = game->has_vsync != 0;
         m->has_skip_fmv         = game->has_skip_fmv != 0;
         m->has_turbo_loads      = game->has_turbo_loads != 0;
-        m->has_geometry_precision = game->has_geometry_precision != 0;
         // game->has_fullscreen_toggle is deliberately NOT read: the Fullscreen
         // row is universal (drawn for every console) — see recomp_launcher.h.
         m->has_bios             = game->has_bios != 0;
@@ -569,6 +568,8 @@ void launcher_model_init(LauncherModel* m,
                                       m->assist_fast_forward_min
             ? game->assist_fast_forward_max
             : m->assist_fast_forward_min;
+        m->assist_fast_forward_divisor = game->assist_fast_forward_divisor > 0 &&
+            game->assist_fast_forward_divisor <= 1000 ? game->assist_fast_forward_divisor : 1;
         m->tpak_slots           = clampi(game->tpak_slots, 0, RECOMP_LAUNCHER_MAX_TPAKS);
         m->tpak_inspect_cb      = game->tpak_inspect;
         m->audio_device_labels  = game->audio_device_labels;
@@ -580,15 +581,8 @@ void launcher_model_init(LauncherModel* m,
         m->internal_resolution_values = game->internal_resolution_values;
         m->num_internal_resolutions   = game->num_internal_resolutions;
         m->internal_resolution_note   = game->internal_resolution_note;
-        m->has_dynamic_resolution      = game->has_dynamic_resolution != 0;
         m->has_render_pipeline         = game->has_render_pipeline != 0;
-        m->quality_offered_mask        = game->quality_offered_mask;
-        m->quality_detected            = game->quality_detected;
-        m->quality_summary             = game->quality_summary;
-        m->quality_reason              = game->quality_reason;
-        m->quality_apply               = game->quality_apply;
-        m->quality_redetect            = game->quality_redetect;
-        m->quality_snapshot_valid      = false;
+        m->linear_filter_hidden        = game->linear_filter_hidden != 0;
         m->renderer_note        = game->renderer_note;
         m->hide_rebind          = game->hide_rebind != 0;
         m->has_mouse_controls   = game->has_mouse_controls != 0;
@@ -654,6 +648,7 @@ void launcher_model_init(LauncherModel* m,
     m->s.rom_patch_source_path[0] = '\0';
     m->s.rom_patch_sha1[0] = '\0';
     m->s.rom_patch_crc32[0] = '\0';
+    m->s.fast_forward_toggle_mode = m->s.fast_forward_toggle_mode ? 1 : 0;
     m->s.assist_fast_forward_multiplier = clampi(
         m->s.assist_fast_forward_multiplier > 0
             ? m->s.assist_fast_forward_multiplier
@@ -944,10 +939,13 @@ void launcher_model_init(LauncherModel* m,
     {
         char cached_rom[1024];
         const char* seeded_rom = initial_rom;
-        if (lm_load_cached_rom_path(game, initial_rom, cached_rom,
+        if ((!game || !game->disc_selection_locked) && lm_load_cached_rom_path(game, initial_rom, cached_rom,
                                     sizeof(cached_rom)))
             seeded_rom = cached_rom;
         launcher_model_set_rom(m, seeded_rom);
+        m->disc_selection_locked=game && game->disc_selection_locked;
+        m->artwork_root=game?game->artwork_root:NULL;
+        m->dashboard_quick_controls=game && game->dashboard_quick_controls;
     }
 
     // Password/mantra save: read the current one-line password file so the
@@ -1578,6 +1576,7 @@ int launcher_model_rom_report(const LauncherModel* m, char* out, size_t cap) {
 }
 
 void launcher_model_set_rom(LauncherModel* m, const char* path) {
+    if(m->disc_selection_locked && (!path || strcmp(path,m->rom_full)!=0))return;
     if (lm_is_sbi_path(path)) {
         char mounted[sizeof(m->rom_full)] = {0};
         m->setup_error[0] = '\0';
@@ -1672,6 +1671,10 @@ static void run_verify(LauncherModel* m) {
     if (m->disc_verify_cb && m->rom_present) {
         RecompLauncherCDiscVerify dv; memset(&dv, 0, sizeof(dv));
         if (m->disc_verify_cb(m->rom_full, &dv)) {
+            if (dv.profile_handoff) {
+                m->profile_handoff = true;
+                m->action = LNG_ACTION_QUIT;
+            }
             safe_copy(m->verify.serial, sizeof(m->verify.serial), dv.serial);
             safe_copy(m->verify.region, sizeof(m->verify.region), dv.region);
             m->verify.iso_ok  = dv.iso_ok != 0;
@@ -2159,6 +2162,26 @@ void launcher_model_set_vsync(LauncherModel* m, int value) {
     m->s.vsync = value;
 }
 
+/* The enabled feature that overrides the VSync row, as the mod provider
+ * reports it. The saved Settings.vsync is left alone: it applies again once
+ * that feature is off. */
+const char* launcher_model_vsync_forced_off_by(const LauncherModel* m) {
+    static char name[128];
+    if (!m || !m->mods || !m->mods->feature_count || !m->mods->feature_get)
+        return NULL;
+    const int n = m->mods->feature_count(m->mods->ctx);
+    for (int i = 0; i < n; ++i) {
+        RecompLauncherCModFeature f;
+        memset(&f, 0, sizeof f);
+        if (!m->mods->feature_get(m->mods->ctx, i, &f) || !f.enabled ||
+            !f.forces_vsync_off)
+            continue;
+        snprintf(name, sizeof name, "%s", f.name[0] ? f.name : f.id);
+        return name;
+    }
+    return NULL;
+}
+
 const char* launcher_model_renderer_label(const LauncherModel* m) {
     if (m->renderer_ids)
         return launcher_model_renderer_label_at(m, m->s.renderer);
@@ -2181,71 +2204,6 @@ void launcher_model_cycle_supersampling(LauncherModel* m) {
 
 bool launcher_model_render_pipeline_offered(const LauncherModel* m) {
     return m && m->has_render_pipeline && m->s.renderer == 1;
-}
-
-bool launcher_model_quality_offered(const LauncherModel* m) {
-    return m && (m->quality_offered_mask & 0xF) != 0 && m->quality_apply != NULL;
-}
-
-const char* launcher_model_quality_label(int preset) {
-    static const char* const k[] = {"", "Low", "Medium", "High", "Ultra", "Custom"};
-    return (preset >= 0 && preset <= 5) ? k[preset] : "";
-}
-
-/* The Settings fields a preset may set. A field the host's preset leaves
- * alone simply keeps its value in the snapshot, so comparing all of them is
- * exact. */
-static bool quality_fields_equal(const RecompLauncherCSettings* a,
-                                 const RecompLauncherCSettings* b) {
-    return a->internal_resolution == b->internal_resolution &&
-           a->supersampling == b->supersampling &&
-           a->dynamic_resolution == b->dynamic_resolution &&
-           a->dynamic_resolution_min == b->dynamic_resolution_min &&
-           a->render_thread == b->render_thread &&
-           a->present_thread == b->present_thread &&
-           a->frame_generation == b->frame_generation &&
-           a->antialiasing == b->antialiasing &&
-           a->texture_filter == b->texture_filter &&
-           a->fmv_filter == b->fmv_filter &&
-           a->geometry_correction == b->geometry_correction &&
-           a->perspective_texturing == b->perspective_texturing &&
-           a->frame_interp == b->frame_interp &&
-           a->frame_interp_fps == b->frame_interp_fps;
-}
-
-void launcher_model_quality_select(LauncherModel* m, int preset) {
-    if (!launcher_model_quality_offered(m) || preset < 1 || preset > 4) return;
-    if (!(m->quality_offered_mask & (1 << (preset - 1)))) return;
-    m->quality_apply(preset, &m->s);
-    m->s.quality_preset = preset;
-    m->s.quality_base = preset;
-    m->quality_snapshot = m->s;
-    m->quality_snapshot_valid = true;
-}
-
-void launcher_model_quality_redetect(LauncherModel* m) {
-    if (!launcher_model_quality_offered(m) || !m->quality_redetect) return;
-    const int p = m->quality_redetect();
-    if (p >= 1 && p <= 4) {
-        m->quality_detected = p;
-        launcher_model_quality_select(m, p);
-    }
-}
-
-void launcher_model_quality_track(LauncherModel* m) {
-    if (!launcher_model_quality_offered(m)) return;
-    const int q = m->s.quality_preset;
-    if (q < 1 || q > 4) return;
-    if (!m->quality_snapshot_valid) {
-        /* The host seeded the settings with this preset in force. */
-        m->quality_snapshot = m->s;
-        m->quality_snapshot_valid = true;
-        return;
-    }
-    if (!quality_fields_equal(&m->s, &m->quality_snapshot)) {
-        m->s.quality_base = q;
-        m->s.quality_preset = 5;
-    }
 }
 
 bool launcher_model_render_pipeline_children_enabled(const LauncherModel* m) {
@@ -2296,6 +2254,37 @@ void launcher_model_apply_internal_resolution_settings(LauncherModel* m) {
     if (!launcher_model_internal_resolution_offered(m)) return;
     if (launcher_model_internal_resolution_index(m) < 0)
         m->s.internal_resolution = m->internal_resolution_values[0];
+}
+
+/* One scratch model for launcher_model_each_cycle_label: the launcher model is
+ * ~60 KB, too big for the stack of a draw call, and the launcher draws on one
+ * thread. */
+static LauncherModel s_cycle_probe;
+
+int launcher_model_each_cycle_label(const LauncherModel* m,
+                                    void (*cycle)(LauncherModel*),
+                                    const char* (*label)(const LauncherModel*),
+                                    void (*visit)(const char* label, void* ctx),
+                                    void* ctx) {
+    if (!m || !cycle || !label || !visit) return 0;
+    /* Labels are copied out at once: several label functions format into one
+     * static buffer that the next call overwrites. */
+    static char seen[LNG_CYCLE_LABELS_MAX][64];
+    int n = 0;
+    s_cycle_probe = *m;
+    for (int step = 0; step < LNG_CYCLE_LABELS_MAX; ++step) {
+        const char* l = label(&s_cycle_probe);
+        if (!l) l = "";
+        int repeat = 0;
+        for (int i = 0; i < n && !repeat; ++i)
+            repeat = strncmp(seen[i], l, sizeof seen[i] - 1) == 0;
+        if (repeat) break;
+        safe_copy(seen[n], sizeof seen[n], l);
+        visit(seen[n], ctx);
+        ++n;
+        cycle(&s_cycle_probe);
+    }
+    return n;
 }
 
 const char* launcher_model_supersampling_label(const LauncherModel* m) {
@@ -2393,25 +2382,6 @@ void launcher_model_clear_shader_path(LauncherModel* m) {
     launcher_model_set_shader_path(m, "");
 }
 
-void launcher_model_toggle_geometry_correction(LauncherModel* m) {
-    m->s.geometry_correction = !m->s.geometry_correction;
-}
-
-void launcher_model_toggle_perspective_texturing(LauncherModel* m) {
-    m->s.perspective_texturing = !m->s.perspective_texturing;
-}
-
-/* Sub-pixel vertices are only observable in the supersampled mirror: at 1x the
- * corrected position rounds back to the pixel it came from. Say so in the UI
- * rather than letting the row look broken when someone ticks it at native res. */
-bool launcher_model_geometry_correction_inert(const LauncherModel* m) {
-    /* With an internal-resolution vocabulary the native entry is value 1
-     * (the documented convention); the legacy cycle keeps its 1x test. */
-    if (launcher_model_internal_resolution_offered(m))
-        return m->s.geometry_correction && m->s.internal_resolution == 1;
-    return m->s.geometry_correction && m->s.supersampling < 2;
-}
-
 // Screen-model vocabulary: the active SystemProfile's own set when it has one
 // (e.g. GBA's 5 LCD models), else the legacy 4-entry PSX-era set above.
 static const char* const* screen_kind_vocab(const LauncherModel* m, int* out_n) {
@@ -2427,6 +2397,16 @@ static const char* const* screen_kind_vocab(const LauncherModel* m, int* out_n) 
 void launcher_model_cycle_screen_kind(LauncherModel* m) {
     int n = 4; (void)screen_kind_vocab(m, &n);
     m->s.screen_kind = (clampi(m->s.screen_kind, 0, n - 1) + 1) % n;
+}
+int launcher_model_screen_kind_count(const LauncherModel* m) {
+    int n=0;(void)screen_kind_vocab(m,&n);return n;
+}
+const char* launcher_model_screen_kind_name(const LauncherModel* m,int index) {
+    int n=0;const char* const* names=screen_kind_vocab(m,&n);
+    return names[clampi(index,0,n-1)];
+}
+void launcher_model_set_screen_kind(LauncherModel* m,int index) {
+    if(m && m->has_screen_kind)m->s.screen_kind=clampi(index,0,launcher_model_screen_kind_count(m)-1);
 }
 
 const char* launcher_model_screen_kind_label(const LauncherModel* m) {
@@ -3265,6 +3245,13 @@ bool launcher_model_can_finish_setup(const LauncherModel* m) {
         if (m->netplay_supported && !m->verify.netplay_ok) return false;
     }
     return true;
+}
+
+bool launcher_model_can_open_mods(const LauncherModel* m) {
+    if (!m || m->profile_handoff || m->setup_preparing) return false;
+    if (m->profile && m->profile->verify.mode == 1)
+        return m->rom_present && m->rom_full[0] && m->verify.verdict == 1;
+    return true; /* Preserve non-disc hosts. */
 }
 
 bool launcher_model_can_launch(const LauncherModel* m) {

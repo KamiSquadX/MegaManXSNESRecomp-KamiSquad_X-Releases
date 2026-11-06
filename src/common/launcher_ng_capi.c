@@ -231,6 +231,9 @@ int recomp_launcher_run_window(const char* window_title,
     launcher_window_size_save(window_size_path, plat.logical_w, plat.logical_h);
     launcher_platform_close(&plat);
     launcher_boot_timing_mark("rui:platform_closed");
+    /* A verified regional handoff must not persist the foreign disc or any
+     * partially edited controls into the current region's settings. */
+    if (model.profile_handoff) return RECOMP_LAUNCHER_RESULT_PROFILE;
 
     /* Edited settings go back to the caller on EVERY exit, quit included.
      *

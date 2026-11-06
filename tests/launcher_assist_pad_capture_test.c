@@ -57,5 +57,21 @@ int main(void) {
      * one-button combo, so the runtime can keep their implicit Select chord. */
     assert(RECOMP_LAUNCHER_PAD_BUTTON(3) < 1000);
     assert(RECOMP_LAUNCHER_PAD_BUTTON_COMBO(1u << 3) == 1008);
+    /* Legacy hosts retain integer units. A fractional host explicitly opts in;
+     * committing/reopening the common model must preserve 2.1x and Toggle. */
+    assert(model.assist_fast_forward_divisor == 1);
+    game.assist_fast_forward_min = 10;
+    game.assist_fast_forward_max = 50;
+    game.assist_fast_forward_divisor = 10;
+    saved.assist_fast_forward_multiplier = 21;
+    saved.fast_forward_toggle_mode = 1;
+    launcher_model_init(&model, &saved, &game, NULL);
+    assert(model.assist_fast_forward_divisor == 10);
+    assert(model.s.assist_fast_forward_multiplier == 21);
+    assert(model.s.fast_forward_toggle_mode == 1);
+    launcher_model_commit(&model, &saved);
+    launcher_model_init(&model, &saved, &game, NULL);
+    assert(model.s.assist_fast_forward_multiplier == 21);
+    assert(model.s.fast_forward_toggle_mode == 1);
     return 0;
 }

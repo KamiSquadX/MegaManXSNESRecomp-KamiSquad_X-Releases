@@ -564,28 +564,38 @@ static int linux_pick_save_kdialog(const char* title, const char* const* pattern
     return linux_spawn_capture(argv, out, out_cap);
 }
 
-static int linux_pick_folder_zenity(const char* title, char* out, size_t out_cap) {
+static int linux_pick_folder_zenity(const char* title, const char* start_dir,
+                                    char* out, size_t out_cap) {
     char title_arg[640];
     snprintf(title_arg, sizeof(title_arg), "--title=%s",
              title && title[0] ? title : "Select folder");
+    /* zenity opens a directory when --filename ends in a separator. */
+    char start_arg[4200];
+    snprintf(start_arg, sizeof(start_arg), "--filename=%s/",
+             start_dir && start_dir[0] ? start_dir : ".");
     char* argv[] = {
         "zenity",
         "--file-selection",
         "--directory",
         title_arg,
+        start_arg,
         NULL
     };
     return linux_spawn_capture(argv, out, out_cap);
 }
 
-static int linux_pick_folder_kdialog(const char* title, char* out, size_t out_cap) {
+static int linux_pick_folder_kdialog(const char* title, const char* start_dir,
+                                     char* out, size_t out_cap) {
     char title_buf[512];
     snprintf(title_buf, sizeof(title_buf), "%s",
              title && title[0] ? title : "Select folder");
+    char start_buf[4096];
+    snprintf(start_buf, sizeof(start_buf), "%s",
+             start_dir && start_dir[0] ? start_dir : ".");
     char* argv[] = {
         "kdialog",
         "--getexistingdirectory",
-        ".",
+        start_buf,
         "--title",
         title_buf,
         NULL
@@ -638,21 +648,22 @@ static int linux_pick_save(const char* title, const char* const* patterns,
     return -1;
 }
 
-static int linux_pick_folder(const char* title, char* out, size_t out_cap) {
+static int linux_pick_folder(const char* title, const char* start_dir,
+                             char* out, size_t out_cap) {
     const int want_kd = linux_desktop_prefers_kdialog();
     const int have_kd = linux_have_cmd("kdialog");
     const int have_zn = linux_have_cmd("zenity");
     int r;
     if (want_kd && have_kd) {
-        r = linux_pick_folder_kdialog(title, out, out_cap);
+        r = linux_pick_folder_kdialog(title, start_dir, out, out_cap);
         if (r >= 0) return r;
     }
     if (have_zn) {
-        r = linux_pick_folder_zenity(title, out, out_cap);
+        r = linux_pick_folder_zenity(title, start_dir, out, out_cap);
         if (r >= 0) return r;
     }
     if (!want_kd && have_kd) {
-        r = linux_pick_folder_kdialog(title, out, out_cap);
+        r = linux_pick_folder_kdialog(title, start_dir, out, out_cap);
         if (r >= 0) return r;
     }
     return -1;
@@ -702,18 +713,25 @@ bool launcher_pick_rom(char* out_path, size_t out_cap) {
 }
 
 int launcher_try_pick_folder(const char* title, char* out_path, size_t out_cap) {
+    return launcher_try_pick_folder_in(title, NULL, out_path, out_cap);
+}
+
+int launcher_try_pick_folder_in(const char* title, const char* start_dir,
+                                char* out_path, size_t out_cap) {
     if (!out_path || out_cap == 0) return -1;
     out_path[0] = '\0';
 
 #if defined(__ANDROID__) || defined(__SWITCH__)
     (void)title;
+    (void)start_dir;
     return -1;
 #elif defined(__linux__)
-    return linux_pick_folder(title, out_path, out_cap);
+    return linux_pick_folder(title, start_dir, out_path, out_cap);
 #else
     {
         const char* sel =
-            tinyfd_selectFolderDialog(title ? title : "Select folder", "");
+            tinyfd_selectFolderDialog(title ? title : "Select folder",
+                                      start_dir ? start_dir : "");
         if (!sel || !sel[0]) return 0;
         snprintf(out_path, out_cap, "%s", sel);
         return 1;

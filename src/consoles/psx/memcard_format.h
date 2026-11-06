@@ -25,12 +25,13 @@ extern "C" {
 #define RECOMPUI_MEMCARD_SIZE (128 * 1024)
 
 // Write a freshly formatted (blank) 128KB memory-card image to `path`,
-// creating the file or overwriting whatever is there. Layout: frame 0 is the
+// exclusively creating a new file. Existing files are never overwritten.
+// Layout: frame 0 is the
 // "MC"-magic header, frames 1..15 are the (all-free) directory, frames
 // 16..35 are the (all-clear) broken-sector list, frames 36..62 are reserved/
 // zeroed, and frame 63 is a write-test copy of frame 0 — every frame's last
 // byte carries the standard XOR checksum over its first 127 bytes.
-// Returns 0 on success, -1 on a NULL/empty path or I/O failure.
+// Returns 0 on success, -1 on an existing file, NULL/empty path or I/O failure.
 int recompui_memcard_format_file(const char* path);
 
 #ifdef __cplusplus

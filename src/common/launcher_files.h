@@ -87,6 +87,9 @@ int launcher_try_pick_file(const char* title, const char* const* patterns,
 
 // Tri-state folder pick. Same contract as launcher_try_pick_file.
 int launcher_try_pick_folder(const char* title, char* out_path, size_t out_cap);
+/* Same, opening in start_dir (UTF-8; NULL or "" = the picker default). */
+int launcher_try_pick_folder_in(const char* title, const char* start_dir,
+                                char* out_path, size_t out_cap);
 
 // Tri-state save-destination pick. Same contract as launcher_try_pick_file.
 int launcher_try_pick_save_file(const char* title, const char* const* patterns,

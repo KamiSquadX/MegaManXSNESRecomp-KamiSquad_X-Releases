@@ -31,6 +31,12 @@ mega-`if`. Adding a system is (ideally) one `SystemProfile` row.
 
 The System is the **template**; the Game **refines** it.
 
+**What may be a Settings row at all** is fixed for every console by
+[SETTINGS_STANDARD.md](SETTINGS_STANDARD.md): Settings holds PC/system
+concerns only; anything that changes the game's picture, sound or play is a
+mod; one control per value; no quick-settings cards; controls sized to their
+labels. That file also tracks, per console, the rows still waiting to move.
+
 ## Module catalog (base → per-system specialization)
 
 ### Controller  (every game has one)
@@ -64,8 +70,9 @@ The System is the **template**; the Game **refines** it.
 - **Spec (per system):** SNES adds linear-filter + widescreen toggle; Genesis
   adds — while widescreen is on — an **"extra cells per side"** stepper
   (`VideoSpec.widescreen_cells`, N extra 8-px background cells, 1..16); PSX adds
-  renderer, supersampling, screen-model, frame-interp, and the **aspect dropdown**
-  (4:3 / 16:9 / 21:9 gated by the game's offered set).
+  renderer and VSync (its picture controls -- internal resolution, filtering,
+  screen model -- are psxrecomp mods). Picture-changing rows on other systems
+  are migration items under [SETTINGS_STANDARD.md](SETTINGS_STANDARD.md).
 
 ### Verify  ("is this the right game?")
 - ROM CRC/SHA line (cart systems) vs PSX **disc verdict** (serial + region +

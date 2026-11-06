@@ -3,6 +3,13 @@
 // project's runtime headers.
 
 #include "memcard_format.h"
+#include <fcntl.h>
+#include <sys/stat.h>
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <stdint.h>
 #include <stdio.h>
@@ -66,7 +73,16 @@ int recompui_memcard_format_file(const char* path) {
     recompui_memcard_format(data);
 
     int ok = 0;
-    FILE* f = fopen(path, "wb");
+#if defined(_WIN32)
+    int fd = _open(path, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY,
+                   _S_IREAD | _S_IWRITE);
+    FILE* f = fd < 0 ? NULL : _fdopen(fd, "wb");
+    if (fd >= 0 && !f) _close(fd);
+#else
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0666);
+    FILE* f = fd < 0 ? NULL : fdopen(fd, "wb");
+    if (fd >= 0 && !f) close(fd);
+#endif
     if (f) {
         size_t n = fwrite(data, 1, RECOMPUI_MEMCARD_SIZE, f);
         int flush_ok = (fflush(f) == 0);

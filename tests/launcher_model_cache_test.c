@@ -98,6 +98,14 @@ int main(int argc, char** argv) {
                      "valid initial_rom should win"))
         return 9;
 
+    game.disc_selection_locked=1;
+    game.artwork_root="portable-artwork-root";
+    game.dashboard_quick_controls=1;
+    launcher_model_init(&model,&settings,&game,stale);
+    if(!expect_path(model.rom_full,stale,"preselected path cannot be replaced by cached media") || !model.disc_selection_locked || model.artwork_root!=game.artwork_root || !model.dashboard_quick_controls)return 13;
+    launcher_model_set_rom(&model,rom);
+    if(!expect_path(model.rom_full,stale,"locked media cannot be changed"))return 14;
+
     /* A host that owns its bindings must receive Zapper edits through the
      * settings object. A legacy host still uses its native keybind writer. */
     model.settings_bindings = true;

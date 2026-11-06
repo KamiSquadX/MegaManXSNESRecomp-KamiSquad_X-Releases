@@ -306,6 +306,47 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-discs-test>
                 "${CMAKE_CURRENT_BINARY_DIR}")
 
+    add_executable(recomp-ui-launcher-mod-gate-test
+        tests/launcher_mod_gate_test.c src/common/crc32.c src/common/sha1.c
+        src/common/launcher_mod_visibility.c
+        src/common/sha256.c src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-mod-gate-test PRIVATE src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-mod-gate-test PRIVATE ${RUI_SDL_TARGET})
+    # Keep assertions active in Release, matching the intended policy fixture.
+    if(MSVC)
+        target_compile_options(recomp-ui-launcher-mod-gate-test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(recomp-ui-launcher-mod-gate-test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME recomp-ui-launcher-mod-gate COMMAND recomp-ui-launcher-mod-gate-test)
+
+    add_executable(recomp-ui-launcher-mod-button-test
+        tests/launcher_mod_button_test.cpp
+        src/third_party/imgui/imgui.cpp src/third_party/imgui/imgui_draw.cpp
+        src/third_party/imgui/imgui_tables.cpp src/third_party/imgui/imgui_widgets.cpp)
+    target_include_directories(recomp-ui-launcher-mod-button-test PRIVATE
+        src/common src/third_party/imgui)
+    if(MSVC)
+        target_compile_options(recomp-ui-launcher-mod-button-test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(recomp-ui-launcher-mod-button-test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME recomp-ui-launcher-mod-button COMMAND recomp-ui-launcher-mod-button-test)
+
+    # Cover folders: per-serial folders, relocation, Unicode paths, missing and
+    # unsafe serials, ordering and aspect fit. Writes only under the test dir.
+    add_executable(recomp-ui-launcher-artwork-folder-test tests/launcher_artwork_folder_test.cpp)
+    target_include_directories(recomp-ui-launcher-artwork-folder-test PRIVATE src/common)
+    target_compile_features(recomp-ui-launcher-artwork-folder-test PRIVATE cxx_std_17)
+    if(MSVC)
+        target_compile_options(recomp-ui-launcher-artwork-folder-test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(recomp-ui-launcher-artwork-folder-test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME recomp-ui-launcher-artwork-folder
+        COMMAND recomp-ui-launcher-artwork-folder-test
+                "${CMAKE_CURRENT_BINARY_DIR}/artwork-folder-test-$<CONFIG>")
+
     # Renderer / VSync as enumerable lists rather than cycle buttons. Same
     # include-the-TU shape as the discs test above.
     add_executable(recomp-ui-launcher-video-pick-test
@@ -354,21 +395,37 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-render-pipeline
         COMMAND $<TARGET_FILE:recomp-ui-launcher-render-pipeline-test>)
 
-    # Graphics presets: host-applied values, Custom on a governed edit,
-    # Re-detect, offered mask.
-    add_executable(recomp-ui-launcher-quality-preset-test
-        tests/launcher_quality_preset_test.c
+    # VSync row overridden by an enabled mod that forces vsync off
+    # (RecompLauncherCModFeature.forces_vsync_off).
+    add_executable(recomp-ui-launcher-vsync-override-test
+        tests/launcher_vsync_override_test.c
         src/common/crc32.c
         src/common/sha1.c
         src/common/sha256.c
         src/common/ips_patch.c
         src/consoles/psx/memcard_format.c)
-    target_include_directories(recomp-ui-launcher-quality-preset-test PRIVATE
+    target_include_directories(recomp-ui-launcher-vsync-override-test PRIVATE
         src src/common src/consoles/psx)
-    target_link_libraries(recomp-ui-launcher-quality-preset-test PRIVATE ${RUI_SDL_TARGET})
+    target_link_libraries(recomp-ui-launcher-vsync-override-test PRIVATE ${RUI_SDL_TARGET})
     add_test(
-        NAME recomp-ui-launcher-quality-preset
-        COMMAND $<TARGET_FILE:recomp-ui-launcher-quality-preset-test>)
+        NAME recomp-ui-launcher-vsync-override
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-vsync-override-test>)
+
+    # Every label a cycle-button Settings row can show, so the row sizes to the
+    # widest (docs/SETTINGS_STANDARD.md: controls sized to their labels).
+    add_executable(recomp-ui-launcher-cycle-labels-test
+        tests/launcher_cycle_labels_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-cycle-labels-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-cycle-labels-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-cycle-labels
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-cycle-labels-test>)
 
     # First-run wizard: staging a retail BIOS that has no linked backend.
     # Same include-the-TU shape as the discs test above.

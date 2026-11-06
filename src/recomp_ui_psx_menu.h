@@ -6,10 +6,10 @@
  * through PsxMenuHost. recomp-ui implements PsxMenuProvider with its shared
  * runtime-UI model (recomp_runtime_ui.h) and ImGui presentation:
  *
- *   - Display: fullscreen; Graphics: texture filtering (Nearest, Bilinear,
- *     xBR -- the runtime's own enum), FMV filtering, linear filter, render
- *     thread (restart-only: applied by a quick relaunch when the menu
- *     closes); System: pause in menu, resume, return to launcher, quit;
+ *   - Display: fullscreen; Graphics: render thread (restart-only: applied
+ *     by a quick relaunch when the menu closes); System: pause in menu,
+ *     resume, return to launcher, quit. (Texture, FMV and linear filtering
+ *     are psxrecomp's Image Filtering mod now, not menu rows.)
  *     Disc: selected disc and Insert disc and resume (multi-disc titles,
  *     through the runtime's tray policy).
  *   - Opens with F10 or Ctrl+L, or Select + L3 on a controller; arrows,

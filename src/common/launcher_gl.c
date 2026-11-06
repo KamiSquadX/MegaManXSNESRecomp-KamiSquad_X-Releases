@@ -1,6 +1,7 @@
 // launcher_gl.c — image->GL-texture loader (stb_image + GL 1.1).
 
 #include "launcher_gl.h"
+#include <stdint.h>
 
 #include "launcher_sdlcompat.h"   // GL header for the active SDL version
 
@@ -13,6 +14,8 @@
 // glsl_shader.c does — sharing one impl caused LNK2005, and relying on the
 // host's format config left TGA box art unloadable). Static = self-contained
 // impl with our own STBI_ONLY_* set, identical behaviour standalone or in-process.
+#define STBI_WINDOWS_UTF8
+#define STBI_MAX_DIMENSIONS 8192
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_TGA
@@ -39,6 +42,10 @@ void launcher_image_free(unsigned char* pixels) {
 static LauncherTexture load_impl(const char* path, int colorkey_tol) {
     LauncherTexture t = { 0, 0, 0 };
     int w = 0, h = 0, comp = 0;
+    // Bound optional user images before allocating/uploading them.
+    if(!stbi_info(path,&w,&h,&comp) || w<=0 || h<=0 || (uint64_t)w*h>16*1024*1024)return t;
+    GLint limit=0;glGetIntegerv(GL_MAX_TEXTURE_SIZE,&limit);
+    if(w>limit || h>limit)return t;
     unsigned char* pixels = stbi_load(path, &w, &h, &comp, 4); // force RGBA
     if (!pixels) return t;
 

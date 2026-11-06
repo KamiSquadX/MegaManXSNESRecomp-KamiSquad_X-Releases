@@ -142,6 +142,7 @@ static void synth_key(LauncherPlatform* p, SDL_Keycode key) {
     e.key.scancode = sc;
     e.key.down = true;
 #else
+    e.key.windowID = p && p->window ? SDL_GetWindowID(p->window) : 0;
     e.key.keysym.sym = key;
     e.key.keysym.scancode = sc;
     e.key.state = SDL_PRESSED;
@@ -154,6 +155,22 @@ static void synth_key(LauncherPlatform* p, SDL_Keycode key) {
     e.key.state = SDL_RELEASED;
 #endif
     SDL_PushEvent(&e);
+}
+
+static void synth_pad_button(int button) {
+    if (button < 0 || button >= 32) return;
+    SDL_Event e; SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    LNG_EVGBTNWHICH(e) = 42; LNG_EVGBTN(e) = (Uint8)button;
+    SDL_PushEvent(&e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP; SDL_PushEvent(&e);
+}
+static void synth_pad_axis(int axis, int value) {
+    if (axis < 0 || axis > 5 || value < -32768 || value > 32767) return;
+    SDL_Event e; SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+    LNG_EVGAXISWHICH(e) = 42; LNG_EVGAXIS(e) = (Uint8)axis;
+    LNG_EVGAXISVAL(e) = (Sint16)value; SDL_PushEvent(&e);
 }
 
 static bool launcher_debug_step_impl(LauncherPlatform* p, LauncherModel* m) {
@@ -206,6 +223,13 @@ static bool launcher_debug_step_impl(LauncherPlatform* p, LauncherModel* m) {
         m->cfg_player = pl;
     } else if (strncmp(c, "capbtn:", 7) == 0) {
         launcher_model_begin_capture(m, atoi(c + 7));   // rebind a player button (generic spec index)
+    } else if (strncmp(c, "cappad:", 7) == 0) {
+        launcher_model_begin_pad_capture(m, atoi(c + 7));
+    } else if (strncmp(c, "padbutton:", 10) == 0) {
+        synth_pad_button(atoi(c + 10));
+    } else if (strncmp(c, "padaxis:", 8) == 0) {
+        int axis, value;
+        if (sscanf(c + 8, "%d,%d", &axis, &value) == 2) synth_pad_axis(axis, value);
     } else if (strncmp(c, "caphk:", 6) == 0) {
         launcher_model_begin_hk_capture(m, (LngHotkey)atoi(c + 6)); // rebind a hotkey
     } else if (strncmp(c, "size:", 5) == 0) {
@@ -235,6 +259,7 @@ static bool launcher_debug_step_impl(LauncherPlatform* p, LauncherModel* m) {
         e.text.text = s_text;
         e.text.windowID = SDL_GetWindowID(p->window);
 #else
+        e.text.windowID = p && p->window ? SDL_GetWindowID(p->window) : 0;
         snprintf(e.text.text, sizeof(e.text.text), "%s", s_text);
 #endif
         SDL_PushEvent(&e);

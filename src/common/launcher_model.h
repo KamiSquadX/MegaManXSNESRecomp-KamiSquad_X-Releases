@@ -308,6 +308,7 @@ typedef struct {
                                          char* remote_ver, size_t remote_cap);
     bool        setup_prepare_satisfied; // prepare (+ rebuild if chained) succeeded
     char        relaunch_exe[512];       // set when rebuild requests relaunch
+    bool        profile_handoff;
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
@@ -349,19 +350,9 @@ typedef struct {
     const int*         internal_resolution_values;
     int                num_internal_resolutions;
     const char*        internal_resolution_note;
-    bool               has_dynamic_resolution;
     bool               has_render_pipeline;   // GameInfo.has_render_pipeline
-    // ---- graphics presets (GameInfo.quality_*; Settings.quality_preset) ----
-    int                quality_offered_mask;
-    int                quality_detected;
-    const char*        quality_summary;
-    const char*        quality_reason;
-    void (*quality_apply)(int preset, RecompLauncherCSettings* s);
-    int  (*quality_redetect)(void);
-    // The governed fields as the last preset set them; any difference means
-    // the player customised (launcher_model_quality_track).
-    RecompLauncherCSettings quality_snapshot;
-    bool               quality_snapshot_valid;
+    // GameInfo.linear_filter_hidden: no legacy "Linear filtering" row.
+    bool               linear_filter_hidden;
 
     // ---- rebind-page opt-out (GameInfo.hide_rebind) ------------------------
     bool hide_rebind;
@@ -420,6 +411,7 @@ typedef struct {
     const char* credits_text;
     int assist_fast_forward_min;
     int assist_fast_forward_max;
+    int assist_fast_forward_divisor;
     /* Resolved defaults for the assist bindings, seeded from
      * GameInfo.assist_default_{key,pad}_bind when the host supplies them and
      * from the incoming settings otherwise. The Controller page's reset
@@ -484,10 +476,8 @@ typedef struct {
     bool     has_vsync;
     bool     has_skip_fmv;
     bool     has_turbo_loads;
-    // PSX geometry precision: sub-pixel vertices + perspective-correct UVs.
-    // One flag gates both rows (two halves of one enhancement); the settings
-    // stay independent. false => both rows hidden.
-    bool     has_geometry_precision;
+    // (GameInfo.has_geometry_precision is not read: psxrecomp's PGXP
+    // Precision mod owns perspective textures, so there is no row.)
     // (no has_fullscreen_toggle: the Fullscreen row is universal — every
     // console draws it; the ABI flag of that name is deprecated/ignored.)
     bool     has_bios;
@@ -558,6 +548,11 @@ typedef struct {
     // See VerifyResult above. Untouched (all-zero) for verify.mode==0 systems
     // (SNES) — panels branch on m->profile->verify.mode, never on this alone.
     VerifyResult verify;
+    // From GameInfo (RECOMP_LAUNCHER_HAS_ARTWORK_GALLERY): the host chose the
+    // disc already; cover folder root (borrowed, NULL = default); Quick cards.
+    bool disc_selection_locked;
+    const char* artwork_root;
+    bool dashboard_quick_controls;
 
     // ---- editable settings (working copy of the C ABI struct) ----
     RecompLauncherCSettings s;
@@ -934,6 +929,19 @@ const char* launcher_model_renderer_note(const LauncherModel* m);
 void launcher_model_apply_renderer_settings(LauncherModel* m);
 void launcher_model_cycle_supersampling(LauncherModel* m);     // 1x..4x wrap
 const char* launcher_model_supersampling_label(const LauncherModel* m);
+/* Every label a cycle-button row can show: `label` of the current value, then
+ * of each value `cycle` steps to, until a label repeats (at most
+ * LNG_CYCLE_LABELS_MAX). Run on a scratch copy of the model -- the cycle and
+ * label functions only touch m->s -- so the model is never changed. `visit`
+ * gets each distinct label once. The settings page sizes a button to the
+ * widest of them (docs/SETTINGS_STANDARD.md: controls sized to their labels).
+ * Returns the number of labels visited. */
+#define LNG_CYCLE_LABELS_MAX 64
+int launcher_model_each_cycle_label(const LauncherModel* m,
+                                    void (*cycle)(LauncherModel*),
+                                    const char* (*label)(const LauncherModel*),
+                                    void (*visit)(const char* label, void* ctx),
+                                    void* ctx);
 /* Internal resolution as a host-supplied LIST (Native / 720p / ... / Match
  * display). offered: has_supersampling and a non-empty vocabulary. The index
  * getters speak the vocabulary; set stores the entry's value, and a value
@@ -944,17 +952,6 @@ bool        launcher_model_internal_resolution_offered(const LauncherModel* m);
  * renderer is OpenGL (index 1). The two child rows are editable only while
  * Render thread is on. */
 bool        launcher_model_render_pipeline_offered(const LauncherModel* m);
-/* Graphics presets: offered when the host set quality_offered_mask. */
-bool        launcher_model_quality_offered(const LauncherModel* m);
-/* Apply preset 1..4 through the host and remember what it set. */
-void        launcher_model_quality_select(LauncherModel* m, int preset);
-/* Re-run the host's detection and apply the result. */
-void        launcher_model_quality_redetect(LauncherModel* m);
-/* Call every frame: a governed field that differs from the preset's value
- * switches the state to Custom (5), keeping quality_base. */
-void        launcher_model_quality_track(LauncherModel* m);
-/* "Low" .. "Ultra", "Custom", "" for 0. */
-const char* launcher_model_quality_label(int preset);
 bool        launcher_model_render_pipeline_children_enabled(const LauncherModel* m);
 int         launcher_model_internal_resolution_count(const LauncherModel* m);
 const char* launcher_model_internal_resolution_label_at(const LauncherModel* m, int i);
@@ -978,13 +975,10 @@ void launcher_model_cycle_fmv_filter(LauncherModel* m);
 const char* launcher_model_fmv_filter_label(const LauncherModel* m);
 void launcher_model_set_shader_path(LauncherModel* m, const char* path);
 void launcher_model_clear_shader_path(LauncherModel* m);
-// PSX geometry precision (gated on has_geometry_precision).
-void launcher_model_toggle_geometry_correction(LauncherModel* m);
-void launcher_model_toggle_perspective_texturing(LauncherModel* m);
-// True when geometry correction is on but supersampling is 1x, where the
-// correction rounds back to the native pixel and has no visible effect.
-bool launcher_model_geometry_correction_inert(const LauncherModel* m);
 void launcher_model_cycle_screen_kind(LauncherModel* m);       // Raw/CRT/Composite/Trinitron
+int launcher_model_screen_kind_count(const LauncherModel* m);
+const char* launcher_model_screen_kind_name(const LauncherModel* m,int index);
+void launcher_model_set_screen_kind(LauncherModel* m,int index);
 const char* launcher_model_screen_kind_label(const LauncherModel* m);
 void launcher_model_toggle_scanlines(LauncherModel* m);
 void launcher_model_set_scanline_strength_pct(LauncherModel* m, int pct); // clamps 1..100
@@ -1008,7 +1002,12 @@ void launcher_model_toggle_vsync(LauncherModel* m);
 const char* launcher_model_vsync_label(const LauncherModel* m);
 /* Set the exact state rather than cycling to it. Takes a
  * RECOMP_LAUNCHER_VSYNC_* value, not an index. */
-void launcher_model_set_vsync(LauncherModel* m, int value);  // "On"/"Off"/"Adaptive"
+void launcher_model_set_vsync(LauncherModel* m, int value);
+/* The name of an enabled mod feature that presents with driver vsync off
+ * (RecompLauncherCModFeature.forces_vsync_off), or NULL. While one is on,
+ * the VSync row cannot apply, so it is drawn disabled with this as the
+ * reason. The returned text stays valid until the next call. */
+const char* launcher_model_vsync_forced_off_by(const LauncherModel* m);  // "On"/"Off"/"Adaptive"
 void launcher_model_toggle_skip_fmv(LauncherModel* m);
 void launcher_model_toggle_turbo_loads(LauncherModel* m);
 void launcher_model_cycle_fullscreen(LauncherModel* m);        // Off -> Borderless -> Exclusive, wraps
@@ -1220,6 +1219,8 @@ void launcher_model_setup_start_bios_regen(LauncherModel* m);
 bool launcher_model_can_finish_setup(const LauncherModel* m);
 // True when BIOS (if required) and ROM/disc are ready to launch (incl. fingerprint).
 bool launcher_model_can_launch(const LauncherModel* m);
+// Dashboard Mods entry requires a fully verified disc and no regional handoff.
+bool launcher_model_can_open_mods(const LauncherModel* m);
 // True when the mounted disc is OK for online (TOC/cue policy + content).
 // Non-disc games (verify.mode!=1) always return true when netplay is supported.
 bool launcher_model_netplay_disc_ok(const LauncherModel* m);

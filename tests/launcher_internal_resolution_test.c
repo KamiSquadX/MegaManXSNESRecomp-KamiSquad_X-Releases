@@ -1,8 +1,9 @@
 /* Internal resolution as a host-supplied LIST.
  *
  * A host (PSX) can replace the 1x..4x Supersampling cycle with its own
- * vocabulary -- Native / 720p / 1080p / 1440p / 4K / 5K / 8K / Match display --
- * stored as a value in Settings.internal_resolution. The risks are the usual
+ * vocabulary -- Native / 720p / 1080p / 1440p / 4K / 5K / 8K / Match display /
+ * Auto (-2, match display with dynamic resolution) -- stored as a value in
+ * Settings.internal_resolution. The risks are the usual
  * ones for a borrowed vocabulary: a stale or unset value must not become a
  * selection the list cannot show, set must store the VALUE (not the index),
  * and a host that supplies nothing must keep exactly the legacy cycle.
@@ -25,9 +26,9 @@ int main(void) {
     static LauncherModel m;
     static const char* const kLabels[] = {
         "Native", "720p", "1080p", "1440p", "4K", "5K", "8K", "Match display",
-        "2x (480 lines)",
+        "Auto", "2x (480 lines)",
     };
-    static const int kValues[] = { 1, 720, 1080, 1440, 2160, 2880, 4320, -1, 480 };
+    static const int kValues[] = { 1, 720, 1080, 1440, 2160, 2880, 4320, -1, -2, 480 };
 
     /* ---- no vocabulary: legacy cycle untouched -------------------------- */
     memset(&m, 0, sizeof(m));
@@ -47,7 +48,7 @@ int main(void) {
     memset(&m, 0, sizeof(m));
     m.internal_resolution_labels = kLabels;
     m.internal_resolution_values = kValues;
-    m.num_internal_resolutions = 9;
+    m.num_internal_resolutions = 10;
     ok(!launcher_model_internal_resolution_offered(&m),
        "a console without has_supersampling never draws the row");
 
@@ -56,10 +57,10 @@ int main(void) {
     m.has_supersampling = true;
     m.internal_resolution_labels = kLabels;
     m.internal_resolution_values = kValues;
-    m.num_internal_resolutions = 9;
+    m.num_internal_resolutions = 10;
     m.internal_resolution_note = "8K = 16x on this GPU";
     ok(launcher_model_internal_resolution_offered(&m), "offered");
-    ok(launcher_model_internal_resolution_count(&m) == 9, "count follows the host");
+    ok(launcher_model_internal_resolution_count(&m) == 10, "count follows the host");
     ok(strcmp(launcher_model_internal_resolution_label_at(&m, 7), "Match display") == 0,
        "label_at speaks the host vocabulary");
     ok(strcmp(launcher_model_internal_resolution_label_at(&m, 99), "") == 0,
@@ -94,14 +95,14 @@ int main(void) {
     ok(strcmp(launcher_model_internal_resolution_note(&m), "8K = 16x on this GPU") == 0,
        "host note is passed through verbatim");
 
-    /* geometry-correction hint keys off native, not the legacy 1x */
-    m.s.geometry_correction = 1;
-    m.s.supersampling = 1;
-    launcher_model_set_internal_resolution(&m, 4);
-    ok(!launcher_model_geometry_correction_inert(&m),
-       "correction is visible at 4K even though legacy supersampling is 1x");
-    launcher_model_set_internal_resolution(&m, 0);
-    ok(launcher_model_geometry_correction_inert(&m), "and inert at Native");
+    /* Auto is one more entry of the host's list (there is no separate
+     * Dynamic resolution row): it stores -2 and is kept across a reseed. */
+    launcher_model_set_internal_resolution(&m, 8);
+    ok(m.s.internal_resolution == -2 &&
+       strcmp(launcher_model_internal_resolution_label(&m), "Auto") == 0,
+       "Auto stores -2");
+    launcher_model_apply_internal_resolution_settings(&m);
+    ok(m.s.internal_resolution == -2, "a host-listed Auto survives the seed check");
 
     printf("%s\n", fails ? "FAILED" : "all internal-resolution checks passed");
     return fails ? 1 : 0;

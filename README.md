@@ -496,6 +496,10 @@ snesrecomp `docs/RECOMP_NET.md` → "Soft-return rematch checklist".
   widescreen 16:9 with an optional "extra cells / side" stepper (Genesis),
   texture filtering, antialiasing (Off/2×/4×/8×), screen model, frame
   interpolation, and more — each shown only when the console exposes it.
+  Which of these may be Settings rows at all is fixed for every console by
+  [docs/SETTINGS_STANDARD.md](docs/SETTINGS_STANDARD.md): Settings is PC/system
+  only, picture/sound/play changes are mods, and that file tracks each
+  console's remaining migration items.
 - **Save** — SRAM Import/Clear (with `.bak` backup) or PS1 memory cards (per-slot
   enable, Browse / New-formats-a-blank-card, real block-usage grid via the host
   `memcard_inspect` callback).

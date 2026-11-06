@@ -166,13 +166,13 @@ offers it through `PsxMenuHost`; the provider only shows values the host
 reports and sends edits back to it, so recomp-ui and any other provider behave
 the same.
 
-- Rows: Display > Fullscreen; Graphics > Linear filter, FMV filtering, Texture
-  filtering (the host's catalog, `RecompLauncherCGameInfo.texture_filter_*`,
-  which the pre-game launcher uses too -- psxrecomp: Nearest, Bilinear, xBR;
-  Nearest/Bilinear when a host has none), Render thread (restart-only: a quick relaunch when the menu
-  closes); System > Resume, Pause in menu, Return to launcher, Quit; Disc >
-  Selected disc, Insert disc and resume (multi-disc titles, through the
-  runtime's tray policy).
+- Rows: Display > Fullscreen; Graphics > Render thread (restart-only: a quick
+  relaunch when the menu closes); System > Resume, Pause in menu, Return to
+  launcher, Quit; Disc > Selected disc, Insert disc and resume (multi-disc
+  titles, through the runtime's tray policy). Linear, FMV and texture
+  filtering and the internal resolution are not rows: psxrecomp's Image
+  Filtering and Internal Resolution mods own them, with the CRT Filter,
+  Enhanced Audio and Rewind mods (the Mods page; SETTINGS_STANDARD.md).
 - Opens with F10 or Ctrl+L, or Select + L3; arrows / Enter / Esc or D-pad /
   Cross / Circle navigate. Each opening starts at the first section.
 - Selection: psxrecomp uses it when the title registers no provider, so

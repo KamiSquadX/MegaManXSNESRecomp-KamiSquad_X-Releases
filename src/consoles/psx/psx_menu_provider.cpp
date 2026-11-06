@@ -32,16 +32,10 @@ int g_disc = 1;
 char g_status[160];
 char g_subtitle[96];
 
-// Texture filtering offers the host's own vocabulary (the launcher game
-// info's texture_filter catalog, shared with the pre-game launcher), so every
-// frontend offers and keeps the same values. Without one: Nearest/Bilinear.
-const char *const kLegacyFilters[] = {"Nearest", "Bilinear"};
-const int kLegacyFilterValues[] = {0, 1};
-
+// Texture filtering, FMV filtering and smoothing are not menu rows: they are
+// psxrecomp's Image Filtering mod (its options on the Mods page), like the
+// rest of the game's look.
 RecompRuntimeUiItem g_extra[] = {
-    {"graphics.texture_filter", "Graphics", "Texture filtering",
-     "Nearest, bilinear, or xBR sampling of game textures.",
-     RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, kLegacyFilters, 2, kLegacyFilterValues},
     {"graphics.render_thread", "Graphics", "Render thread",
      "Use a second CPU thread; restarts when this menu closes.",
      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, nullptr, 0, nullptr},
@@ -73,9 +67,6 @@ void apply_video() {
 
 int cb_get(void *, const RecompRuntimeUiItem *item, int *out) {
     if (is(item, RECOMP_RUNTIME_UI_KEY_FULLSCREEN)) *out = g_video.fullscreen;
-    else if (is(item, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER)) *out = g_video.present_linear;
-    else if (is(item, RECOMP_RUNTIME_UI_KEY_FMV_FILTER)) *out = g_video.fmv_filter;  // config value == choice index
-    else if (is(item, "graphics.texture_filter")) *out = g_video.texture_filter;
     else if (is(item, "graphics.render_thread")) *out = g_video.render_thread;
     else if (is(item, RECOMP_RUNTIME_UI_KEY_PAUSE_IN_MENU)) *out = g_pause_in_menu ? 1 : 0;
     else if (is(item, "media.disc")) *out = g_disc;
@@ -85,9 +76,6 @@ int cb_get(void *, const RecompRuntimeUiItem *item, int *out) {
 
 int cb_set(void *, const RecompRuntimeUiItem *item, int v) {
     if (is(item, RECOMP_RUNTIME_UI_KEY_FULLSCREEN)) g_video.fullscreen = v;
-    else if (is(item, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER)) g_video.present_linear = v ? 1 : 0;
-    else if (is(item, RECOMP_RUNTIME_UI_KEY_FMV_FILTER)) g_video.fmv_filter = v;
-    else if (is(item, "graphics.texture_filter")) g_video.texture_filter = v;
     else if (is(item, "graphics.render_thread")) g_video.render_thread = v ? 1 : 0;
     else if (is(item, RECOMP_RUNTIME_UI_KEY_PAUSE_IN_MENU)) {
         g_pause_in_menu = v != 0;
@@ -175,25 +163,7 @@ int p_attach(void *, void *, void *, const PsxMenuHost *host) {
     g_host = host;
     if (g_ui) recomp_runtime_ui_destroy(g_ui);
     const int discs = disc_count();
-    g_extra[2].maximum = discs > 1 ? discs : 1;
-    // The host's texture-filter catalog (attach runs on the main thread, where
-    // launcher_game_info may be called).
-    g_extra[0].choices = kLegacyFilters;
-    g_extra[0].choice_values = kLegacyFilterValues;
-    g_extra[0].choice_count = 2;
-#if defined(RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG)
-    if (host->launcher_game_info) {
-        RecompLauncherCGameInfo gi{};
-        host->launcher_game_info(&gi);
-        if (gi.texture_filter_labels && gi.texture_filter_values && gi.num_texture_filters > 0) {
-            g_extra[0].choices = gi.texture_filter_labels;
-            g_extra[0].choice_values = gi.texture_filter_values;
-            g_extra[0].choice_count = (size_t)gi.num_texture_filters;
-        }
-    }
-#endif
-    g_extra[0].minimum = 0;
-    g_extra[0].maximum = (int)g_extra[0].choice_count - 1;
+    g_extra[1].maximum = discs > 1 ? discs : 1;
     RecompRuntimeUiStandardConfig cfg{};
     cfg.menu.title = "Game menu";
     cfg.menu.subtitle = g_subtitle;
@@ -205,12 +175,11 @@ int p_attach(void *, void *, void *, const PsxMenuHost *host) {
     cfg.menu.callbacks.run_action = cb_action;
     cfg.menu.callbacks.is_enabled = cb_enabled;
     cfg.menu.callbacks.visibility_changed = cb_visibility;
-    cfg.features = RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN | RECOMP_RUNTIME_UI_STANDARD_LINEAR_FILTER |
-                   RECOMP_RUNTIME_UI_STANDARD_FMV_FILTER | RECOMP_RUNTIME_UI_STANDARD_PAUSE_IN_MENU |
+    cfg.features = RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN | RECOMP_RUNTIME_UI_STANDARD_PAUSE_IN_MENU |
                    RECOMP_RUNTIME_UI_STANDARD_RESUME | RECOMP_RUNTIME_UI_STANDARD_RETURN_TO_LAUNCHER |
                    RECOMP_RUNTIME_UI_STANDARD_QUIT;
     cfg.extra_items = g_extra;
-    cfg.extra_item_count = discs > 1 ? 4 : 2;
+    cfg.extra_item_count = discs > 1 ? 3 : 1;
     g_ui = recomp_runtime_ui_create_standard(&cfg);
     if (!g_ui) { g_host = nullptr; return 0; }
     return 1;

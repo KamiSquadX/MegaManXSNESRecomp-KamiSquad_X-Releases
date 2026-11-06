@@ -1,9 +1,9 @@
 // psx_menu_provider_test: recomp-ui's psxrecomp menu provider against a fake
 // PsxMenuHost (psx_menu_host.h from the psxrecomp runtime include path).
 // Exercises: default-selection decline, open/pause, netplay pause refusal,
-// texture filter round trip incl. xBR, restart-only relaunch on close,
-// after-match edits never relaunch, disc insert through the host's tray,
-// netplay disc refusal, exits.
+// no texture/FMV/linear filtering rows (psxrecomp's Image Filtering mod owns
+// them), restart-only relaunch on close, after-match edits never relaunch,
+// disc insert through the host's tray, netplay disc refusal, exits.
 #include "psx_menu_host.h"
 #include "recomp_launcher.h"
 #include "recomp_runtime_ui.h"
@@ -35,7 +35,7 @@ static void h_video_get(PsxHostVideoSettings *o) { *o = g_now; }
 static unsigned h_video_apply(const PsxHostVideoSettings *n) {
     g_applied = *n; ++g_applies;
     unsigned bits = psx_host_video_restart_bits(&g_now, n);
-    if (g_netplay && n->texture_filter != g_now.texture_filter) bits |= PSX_MENU_RESTART_AFTER_MATCH;
+    if (g_netplay && n->render_thread != g_now.render_thread) bits |= PSX_MENU_RESTART_AFTER_MATCH;
     return bits | g_bits_next;
 }
 static int h_mod_set(const char *, const char *, const char *, const char *) { return 1; }
@@ -45,15 +45,7 @@ static int h_disc_count(void) { return g_discs; }
 static int h_disc_mounted(void) { return g_mounted; }
 static const char *h_disc_path(int) { return "disc.cue"; }
 static int h_disc_insert(int n) { if (g_netplay) return 3; g_inserted = n; return 0; }
-// The host's texture-filter catalog (what psxrecomp hands every frontend).
-static const char *const kTf[] = {"Nearest", "Bilinear", "xBR"};
-static const int kTfv[] = {0, 1, 3};
-static int g_catalog = 1;
-static void h_game_info(RecompLauncherCGameInfo *gi) {
-#if defined(RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG)
-    if (g_catalog) { gi->texture_filter_labels = kTf; gi->texture_filter_values = kTfv; gi->num_texture_filters = 3; }
-#endif
-}
+static void h_game_info(RecompLauncherCGameInfo *gi) { (void)gi; }
 
 static PsxMenuHost make_host(int default_selection) {
     PsxMenuHost h{};
@@ -108,27 +100,22 @@ int main() {
     CHECK(!p->is_open(p->ctx));
 
     // Open: the menu reads the host's values and pauses through it.
-    g_now.texture_filter = 0; g_now.render_thread = 1;
+    g_now.render_thread = 1;
     in(T);
     CHECK(p->is_open(p->ctx) && g_paused == 1);
 
-    // Texture filter round trip, including xBR (value 3 of the runtime enum).
-    CHECK(go("Graphics", "graphics.texture_filter"));
-    in(R);
-    CHECK(g_applies == 1 && g_applied.texture_filter == 1);
-    in(R);
-    CHECK(g_applies == 2 && g_applied.texture_filter == 3);
-    in(L);
-    CHECK(g_applied.texture_filter == 1);
-    in(R);
-    CHECK(g_applied.texture_filter == 3);
+    // The game's look is not a menu row: texture, FMV and linear filtering
+    // are psxrecomp's Image Filtering mod.
+    CHECK(!go("Graphics", "graphics.texture_filter"));
+    CHECK(!go("Graphics", RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER));
+    CHECK(!go("Graphics", RECOMP_RUNTIME_UI_KEY_FMV_FILTER));
 
-    // Close: pause dropped, no relaunch for live-only edits.
-    in(B); in(B);  // leave the section, then close
-    CHECK(!p->is_open(p->ctx) && g_paused == 0 && g_exit == -1);
+    // Close: pause dropped, nothing edited, no relaunch.
+    if (rui_psx::model()->in_section) in(B);
+    in(B);
+    CHECK(!p->is_open(p->ctx) && g_paused == 0 && g_exit == -1 && g_applies == 0);
 
     // Restart-only edit: render thread off -> quick relaunch on close.
-    g_now.texture_filter = 3;
     in(T);
     CHECK(go("Graphics", "graphics.render_thread"));
     in(L);
@@ -142,7 +129,7 @@ int main() {
     g_netplay = 1;
     in(T);
     CHECK(p->is_open(p->ctx) && g_paused == 0);
-    CHECK(go("Graphics", "graphics.texture_filter"));
+    CHECK(go("Graphics", "graphics.render_thread"));
     in(L);
     in(T);
     CHECK(g_exit == -1);
@@ -172,18 +159,6 @@ int main() {
     CHECK(g_paused == 1);
     p->detach(p->ctx);
     CHECK(g_paused == 0 && !p->is_open(p->ctx));
-
-    // A host without a texture-filter catalog: only Nearest/Bilinear is
-    // offered, so a value the frontends could not keep is never set.
-    g_catalog = 0; g_netplay = 0; g_exit = -1;
-    CHECK(p->attach(p->ctx, nullptr, nullptr, &host) == 1);
-    g_now.texture_filter = 0;
-    in(T);
-    CHECK(go("Graphics", "graphics.texture_filter"));
-    in(R); in(R); in(R);
-    CHECK(g_applied.texture_filter == 1);
-    in(T);
-    p->detach(p->ctx);
 
     if (!g_fail) std::printf("psx_menu_provider_test: ok\n");
     return g_fail ? 1 : 0;
