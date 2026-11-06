@@ -42,17 +42,31 @@ typedef struct MmxCoopState {
   uint8_t menu_owner, menu_last, p1_select_hold, p1_select_armed; /* Last two bytes were reserved. */
   uint8_t pickup_owner[16]; /* Native item slots $1628 + index*$30. */
   uint16_t pickup_s, pickup_d;
-  uint8_t pickup_pass;
-  uint8_t teleport_seat; /* Select teleport in flight: seat + 1; formerly reserved. */
-  uint8_t select_long[2]; /* Select held, in 2-frame units (255 = spent); formerly reserved. */
+  /* Learner Mode: frames P2 has spent off P1's screen; LEARNER_RESCUE after
+   * a fatal hazard. Formerly reserved. select_long: Select held, per seat, in
+   * 4-frame units (MMX_COOP_TP_SPENT = spent), with MMX_COOP_TP_FLYING set
+   * while that seat's Select teleport is in flight; formerly reserved. */
+  uint8_t pickup_pass, learner_away, select_long[2];
   uint8_t anchor, solo_death[2], respawn_pending; /* Seat bits; formerly reserved. */
   uint8_t death_flags[2][8]; /* Native freeze flags around a partner's death. */
-  /* scene_stay: an independent-view partner away from the scene sits it out
-   * where he stands instead of being beamed to it; formerly reserved. */
-  uint8_t scene_owner, scene_phase, door_pass, scene_stay;
+  /* scene_flags: MMX_COOP_SCENE_*; formerly reserved. */
+  uint8_t scene_owner, scene_phase, door_pass, scene_flags;
   uint16_t door_s, door_d, door_entry;
   uint16_t slime_p2; /* Capture owner bits for $1428 + slot*$40; formerly reserved. */
 } MmxCoopState;
+
+/* scene_flags, meaningful only while scene_owner is set. LIVE transport
+ * (Learner Mode) teleports without freezing the world; WITHDRAW ends in the
+ * absent state instead of a return. */
+enum { MMX_COOP_SCENE_LIVE = 1, MMX_COOP_SCENE_WITHDRAW = 2 };
+/* STAY (independent views): the partner away from the scene sits it out where
+ * he stands instead of being beamed to it. */
+enum { MMX_COOP_SCENE_STAY = 4 };
+/* select_long: the low seven bits count Select held (MMX_COOP_TP_SPENT once a
+ * hold has been used); MMX_COOP_TP_FLYING marks that seat's teleport. */
+enum { MMX_COOP_TP_FLYING = 0x80, MMX_COOP_TP_SPENT = 0x7f };
+/* Learner Mode returns P2 after this long off P1's screen (learner_away). */
+enum { MMX_COOP_LEARNER_AWAY_FRAMES = 120 };
 
 enum { MMX_COOP_LEGACY_STATE_SIZE = 4648 };
 /* v14 saves / v13 captures predate Modern's per-player extension. Keep
@@ -86,9 +100,22 @@ uint8_t MmxCoopSeatShotMask(unsigned seat);
 void MmxCoopSeatCamera(unsigned seat, int *x, int *y);
 void MmxCoopDisable(void);
 bool MmxCoopEnabled(void);
+/* Learner Mode: P2 cannot lose health or die, never drives the world, and
+ * returns beside P1 after a fatal hazard or falling behind. Configuration,
+ * like the roster: it is not serialized; the mod set carries it. */
+void MmxCoopSetLearner(bool active);
+bool MmxCoopLearner(void);
+/* Includes the body projected for a native object/contact replay. */
+bool MmxCoopActorIsX(void);
+/* Owned body for a character's paused action. The caller may edit it only
+ * while holding the scheduler; shared world and another seat stay untouched. */
+uint8_t *MmxCoopCharacterBody(uint8_t *ram,unsigned character);
 void MmxCoopReset(void);
 MmxCoopState MmxCoopGetState(void);
 bool MmxCoopValidState(const MmxCoopState *state);
+/* Saves before chunk v29 kept scene_stay where scene_flags is, teleport_seat
+ * where learner_away is, and Select's hold in 2-frame units: convert. */
+void MmxCoopImportPreMergeLayout(MmxCoopState *state);
 void MmxCoopSetState(const MmxCoopState *state);
 void MmxCoopInitialize(uint8_t ram[0x20000]);
 void MmxCoopCapture(uint8_t ram[0x20000]);

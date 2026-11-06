@@ -83,7 +83,7 @@ void MmxKeyConfigSimFrame(uint8_t ram[0x20000]);
 struct RecompLauncherCGameInfo;
 /* SnesDesktopHostGame.configure_launcher: the modern-pad controller page,
  * then the netplay wiring. */
-void MmxConfigureLauncher(struct RecompLauncherCGameInfo *info);
+void MmxKeyConfigConfigureLauncher(struct RecompLauncherCGameInfo *info);
 
 #ifdef __cplusplus
 }

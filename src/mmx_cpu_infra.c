@@ -2,6 +2,14 @@
 #include "mmx_rtl.h"
 #include "mmx_replay.h"
 #include "mmx_options.h"
+#include "mmx_coop_view.h"
+
+/* Independent views advance their cameras, then Axl and the replay close the frame. */
+static void MmxFrameEnd(void) {
+  MmxCoopState coop=MmxCoopGetState();
+  MmxCoopViewsEndFrame(g_ram,&coop);
+  MmxOptionsFrameEnd();
+}
 
 /* MMX_VARIANT_JP is a per-target compile-def (RockmanXSNESRecomp sets =1;
  * the USA MegaManX target leaves it undefined). Guard so this file compiles
@@ -30,5 +38,5 @@ const RtlGameInfo kMmxGameInfo = {
   .on_state_loaded = &MmxOnStateLoaded,
   .hardware_reset = &MmxOnHardwareReset,
   .frame_begin = &MmxOptionsFrameBegin,
-  .frame_end = &MmxOptionsFrameEnd,
+  .frame_end = &MmxFrameEnd,
 };

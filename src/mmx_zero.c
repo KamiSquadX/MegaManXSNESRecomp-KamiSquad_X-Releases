@@ -1,4 +1,5 @@
 #include "mmx_zero.h"
+#include "mmx_armor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,10 +56,12 @@ static const MmxZeroExtension *live_extension(void) {
   return extension && (!extension_gate || extension_gate()) ? extension : NULL;
 }
 void MmxZeroExtPrePlayer(uint8_t *ram) {
+  MmxArmorPrePlayer(ram);
   const MmxZeroExtension *ext = live_extension();
   if (ext && ext->pre_player) ext->pre_player(ram);
 }
 void MmxZeroExtPlayerEnd(uint8_t *ram) {
+  MmxArmorPlayerEnd(ram);
   const MmxZeroExtension *ext = live_extension();
   if (ext && ext->player_end) ext->player_end(ram);
 }
@@ -272,10 +275,12 @@ static unsigned sequence_offset(unsigned sequence) {
   return sequence < sizeof(map) ? word(animation + map[sequence] * 2) : 0;
 }
 void MmxZeroAnimationStart(unsigned object, unsigned sequence) {
+  MmxArmorAnimationStart(object,sequence);
   if (!poses || object != 0xba8) return;
   animation_record(sequence_offset(sequence));
 }
 void MmxZeroAnimationAdvance(unsigned object) {
+  MmxArmorAnimationAdvance(object);
   if (!poses || object != 0xba8 || !state.anim_valid) return;
   if (--state.anim_timer) return;
   unsigned next = state.anim_offset + 3;
@@ -417,6 +422,7 @@ const uint8_t *MmxZeroBlade(const MmxZeroState *s) {
   return poses + (size_t)(138 + pose + (s->air ? 7 : 0)) * MMX_ZERO_WIDTH * MMX_ZERO_HEIGHT;
 }
 void MmxZeroSetCollisionRom(uint8_t *rom, size_t size) {
+  MmxArmorCollisionRom(rom,size);
   if (!rom || size < 0x37fd8) return;
   /* X3 $86:B40E / B422, translated -8px vertically into X1's player origin.
    * This preserves Zero's full body dimensions and aligns both games' feet.
@@ -495,6 +501,7 @@ void MmxZeroSlideTick(uint8_t r[0x20000]) {
 static const MmxZeroBodyHooks *body_hooks;
 void MmxZeroSetBodyHooks(const MmxZeroBodyHooks *hooks) { body_hooks = hooks; }
 unsigned MmxZeroUpgradeBits(unsigned pc, unsigned original) {
+  original=MmxArmorUpgradeBits(pc,original);
   if (!MmxZeroActive())
     return body_hooks && body_hooks->upgrade ? body_hooks->upgrade(pc, original) : original;
   switch (pc & 0x7fffff) {
@@ -784,6 +791,7 @@ void MmxZeroMovementTick(uint8_t r[0x20000]) {
   }
 }
 void MmxZeroPlayerMotion(uint8_t r[0x20000], unsigned object) {
+  MmxArmorPlayerMotion(r,object);
   if (body_hooks && body_hooks->motion && !MmxZeroActive()) body_hooks->motion(r, object);
   if (!modern_movement() || !r || object != 0xba8 || !state.modern.dash_ticks) return;
   putword(r + 0xc04, 0x0375);
@@ -1031,7 +1039,7 @@ void MmxZeroPlayerEnd(uint8_t r[0x20000]) {
   }
 }
 unsigned MmxZeroWeaponTick(uint8_t r[0x20000], unsigned d, unsigned active) {
-  unsigned value = active;
+  unsigned value = MmxArmorProjectileTick(r,d,active);
   if (own_projectile(r, d)) {
     if (!poses || d != state.projectile || !state.slash) {
       memset(r + d, 0, 64); if (r[0xbdd]) --r[0xbdd];
@@ -1044,6 +1052,7 @@ unsigned MmxZeroWeaponTick(uint8_t r[0x20000], unsigned d, unsigned active) {
 }
 unsigned MmxZeroResponse(uint8_t *r, unsigned enemy, unsigned projectile,
                          unsigned original) {
+  original=MmxArmorResponse(r,enemy,projectile,original);
   if (body_hooks && body_hooks->response)
     original = body_hooks->response(r, enemy, projectile, original);
   const MmxZeroExtension *ext = live_extension();
@@ -1051,6 +1060,7 @@ unsigned MmxZeroResponse(uint8_t *r, unsigned enemy, unsigned projectile,
       ext->response(r, enemy, projectile, original) : original;
 }
 unsigned MmxZeroDamage(uint8_t r[0x20000], unsigned enemy, unsigned projectile, unsigned original) {
+  original = MmxArmorDamage(r,enemy,projectile,original);
   if (body_hooks && body_hooks->damage) original = body_hooks->damage(r, enemy, projectile, original);
   unsigned value = original;
   if (poses && own_projectile(r, projectile) && projectile == state.projectile &&
@@ -1067,6 +1077,7 @@ unsigned MmxZeroDamage(uint8_t r[0x20000], unsigned enemy, unsigned projectile, 
       ext->damage(r, enemy, projectile, value) : value;
 }
 unsigned MmxZeroHitbox(const uint8_t r[0x20000], unsigned enemy, unsigned projectile, unsigned original) {
+  original = MmxArmorHitbox(r,enemy,projectile,original);
   if (body_hooks && body_hooks->hitbox) original = body_hooks->hitbox(r, enemy, projectile, original);
   unsigned value = original;
   if (poses && own_projectile(r, projectile) && projectile == state.projectile &&

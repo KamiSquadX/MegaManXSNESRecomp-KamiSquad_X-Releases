@@ -329,8 +329,8 @@ void MmxKeyConfigSimFrame(uint8_t ram[0x20000]) {
   memcpy(ram + 0xffc0, k_masks, sizeof(k_masks));
 }
 
-void MmxConfigureLauncher(struct RecompLauncherCGameInfo *info) {
+/* The controller page offers a modern pad's extra rows (L2..R-Stick). */
+void MmxKeyConfigConfigureLauncher(struct RecompLauncherCGameInfo *info) {
   if (!info) return;
   info->snes_modern_pad = 1;
-  MmxNetplayConfigureLauncher(info);
 }

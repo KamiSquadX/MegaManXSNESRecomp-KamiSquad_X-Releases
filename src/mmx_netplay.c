@@ -5,6 +5,7 @@
 #include "mod_runtime.h"
 #include "mmx_coop.h"
 #include "mmx_weapons.h"
+#include "mmx_armor.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -41,6 +42,10 @@ static const char *active_coop(void) {
 }
 
 int MmxNetplayReady(char *reason, size_t cap) {
+  if(snes_mod_runtime_feature_enabled_c("megaman-x.armor","armor") && !MmxArmorEnabled()) {
+    snprintf(reason,cap,"The selected X armor could not load. Check its source ROM and cache directory.");
+    return 0;
+  }
   if (!MmxCoopEnabled()) {
     snprintf(reason, cap, "X + Zero co-op could not load. Check the selected X3 ROM and cache directory.");
     return 0;
@@ -97,6 +102,9 @@ static void mode_changed(int enabled) {
   /* Keep the co-op mod the player already chose; otherwise X + Zero. */
   if (!active_coop() && !s_mods->feature_enable(s_mods->ctx, kCoop, "coop", 1))
     fail("The X + Zero co-op mod is missing. Restore the bundled mods.");
+  /* The offline layout is not part of an online room. This temporary plan
+   * restores the player's saved local preference when they leave Netplay. */
+  s_mods->feature_set_option(s_mods->ctx, kCoop, "coop", "local_cameras", "unified");
   /* Preserve an existing fixed choice; Adaptive becomes 16:9 in this
    * temporary plan only. Disabled widescreen remains the native view. */
   char aspect[32] = {0};
@@ -144,12 +152,15 @@ static int set_enabled(void *ctx, const char *pkg, int enabled) {
   s_error[0] = 0;
   return s_mods->set_enabled(ctx, pkg, enabled);
 }
+static int hidden_camera_option(const char *id) {
+  return !strcmp(id, s_active ? "local_cameras" : "cameras");
+}
 static int feature_get(void *ctx, int index, RecompLauncherCModFeature *out) {
   if (!s_mods->feature_get(ctx, index, out)) return 0;
-  if (!s_active && is_coop(out->package_id)) {
+  if (is_coop(out->package_id)) {
     RecompLauncherCModOption option;
     for (int i=0; s_mods->feature_option_get(ctx, out->package_id, out->id, i, &option); ++i)
-      if (!strcmp(option.id, "cameras")) --out->option_count;
+      if (hidden_camera_option(option.id)) --out->option_count;
   }
   if (s_active && is_solo(out->package_id)) out->hidden = 1;
   if (s_active && is_coop(out->package_id) && !out->has_error)
@@ -158,10 +169,10 @@ static int feature_get(void *ctx, int index, RecompLauncherCModFeature *out) {
 }
 static int option_get(void *ctx, const char *pkg, const char *fid, int index,
                       RecompLauncherCModOption *out) {
-  if (!s_active && is_coop(pkg)) {
+  if (is_coop(pkg)) {
     int visible=0, found=0;
     for (int i=0; s_mods->feature_option_get(ctx, pkg, fid, i, out); ++i) {
-      if (!strcmp(out->id, "cameras")) continue;
+      if (hidden_camera_option(out->id)) continue;
       if (visible++==index) { found=1; break; }
     }
     if (!found) return 0;
@@ -188,7 +199,9 @@ static int choice_get(void *ctx, const char *pkg, const char *fid, const char *o
 static int set_option(void *ctx, const char *pkg, const char *fid, const char *option, const char *value) {
   s_error[0] = 0;
   if (!s_active && is_coop(pkg) && !strcmp(option, "cameras"))
-    return fail("Offline play always uses Unified cameras. Open Netplay to choose the room's cameras.");
+    return fail("Choose Local co-op display for offline play. Open Netplay to choose the room's cameras.");
+  if (s_active && is_coop(pkg) && !strcmp(option, "local_cameras"))
+    return fail("Local co-op display is available offline. Choose Netplay cameras for the room.");
   if (!strcmp(option, "behavior") && !strcmp(pkg, kCoopAxl) && !strcmp(fid, "coop")) {
     /* 0.0.2's Zero behavior follows the same shared preference. */
     if (!s_mods->feature_set_option(ctx, pkg, fid, option, value)) return 0;
