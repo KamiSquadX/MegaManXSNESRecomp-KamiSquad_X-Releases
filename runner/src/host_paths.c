@@ -36,6 +36,14 @@ static int get_exe_path(char *out, size_t max_len) {
 #elif defined(__APPLE__)
     uint32_t size = (uint32_t)max_len;
     return _NSGetExecutablePath(out, &size) == 0 ? 1 : 0;
+#elif defined(__ANDROID__)
+    /* /proc/self/exe is the system's app_process. The host makes the app's
+     * external files folder the working directory first (host_main.c), and
+     * that folder is where config, rom.cfg, mods and saves belong, so it
+     * stands in for the executable's folder. */
+    char cwd[1024];
+    if (!getcwd(cwd, sizeof(cwd))) return 0;
+    return snprintf(out, max_len, "%s/libmain.so", cwd) < (int)max_len;
 #elif defined(__linux__)
     /* Inside an AppImage, /proc/self/exe resolves inside the read-only mount.
      * $APPIMAGE instead identifies the user-visible file beside config.ini,

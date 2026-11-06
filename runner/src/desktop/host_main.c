@@ -3199,8 +3199,17 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   /* All relative I/O (config.ini, rom.cfg, saves/, last_run_report.json)
    * lands in the app's external files dir, which is adb-pushable. */
   {
+#if SNESRECOMP_SDL3
+    const char *storage = SDL_GetAndroidExternalStoragePath();
+#else
     const char *storage = SDL_AndroidGetExternalStoragePath();
+#endif
     if (storage) chdir(storage);
+    /* Android discards stdout/stderr. Keep this session's output beside the
+     * replays, where the player can copy it off for a bug report. */
+    mkdir("logs", 0755);
+    if (freopen("logs/android-session.log", "w", stderr)) setvbuf(stderr, NULL, _IOLBF, 0);
+    if (freopen("logs/android-session.log", "a", stdout)) setvbuf(stdout, NULL, _IOLBF, 0);
   }
 #endif
 #ifdef _WIN32
@@ -3602,10 +3611,15 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
     g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
 
+#ifdef __ANDROID__
+  /* A phone or handheld has no desktop: the game always fills the screen. */
+  g_win_flags |= SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP;
+#else
   if (g_config.fullscreen == 1)
     g_win_flags ^= SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP;
   else if (g_config.fullscreen == 2)
     g_win_flags ^= SDL_WINDOW_FULLSCREEN;
+#endif
 
   // Window scale (1=100%, 2=200%, 3=300%, etc.)
   g_current_window_scale = (g_config.window_scale == 0) ? 2 : IntMin(g_config.window_scale, kMaxWindowScale);
