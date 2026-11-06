@@ -12,7 +12,7 @@
 #  endif
 #endif
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__SWITCH__)
 /* Run one shell-wrapped native chooser and read its selected path. */
 static int run_picker_cmd(const char *cmd, char *out, size_t max_len) {
     FILE *p = popen(cmd, "r");
@@ -48,6 +48,10 @@ int snesrecomp_pick_rom_file(char *out, size_t max_len) {
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY |
                 OFN_NOCHANGEDIR;
     return GetOpenFileNameA(&ofn) ? 1 : 0;
+#elif defined(__SWITCH__)
+    /* No shell or system chooser: the launcher's in-app browser picks. */
+    out[0] = '\0';
+    return 0;
 #else
     out[0] = '\0';
     static const char *const pickers[] = {

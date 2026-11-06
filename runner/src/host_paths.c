@@ -36,6 +36,13 @@ static int get_exe_path(char *out, size_t max_len) {
 #elif defined(__APPLE__)
     uint32_t size = (uint32_t)max_len;
     return _NSGetExecutablePath(out, &size) == 0 ? 1 : 0;
+#elif defined(__SWITCH__)
+    /* The host makes sdmc:/switch/MegaManXSNESRecomp the working directory
+     * (host_main.c); config, rom.cfg, mods and saves live there, beside the
+     * .nro the release puts in the same folder. */
+    char cwd[768];
+    if (!getcwd(cwd, sizeof(cwd))) return 0;
+    return snprintf(out, max_len, "%s/MegaManXSNESRecomp.nro", cwd) < (int)max_len;
 #elif defined(__ANDROID__)
     /* /proc/self/exe is the system's app_process. The host makes the app's
      * external files folder the working directory first (host_main.c), and

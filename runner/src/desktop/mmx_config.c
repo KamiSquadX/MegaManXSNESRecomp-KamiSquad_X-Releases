@@ -718,8 +718,10 @@ void ParseConfigFile(const char *filename) {
    * the keyboard, player 2 silent until someone assigns it a device. Leaving
    * these zero would have read as "no slot uses the keyboard" and taken the
    * keyboard away from every existing install. */
-#ifdef __ANDROID__
+#if defined(__ANDROID__)
   g_config.player_src[0] = 3;   /* on-screen gamepad: a phone may have no pad */
+#elif defined(__SWITCH__)
+  g_config.player_src[0] = 2;   /* the Joy-Cons / Pro Controller in player 1's slot */
 #else
   g_config.player_src[0] = 1;   /* keyboard */
 #endif

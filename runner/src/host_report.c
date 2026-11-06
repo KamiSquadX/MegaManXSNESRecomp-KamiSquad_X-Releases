@@ -68,7 +68,18 @@
 #endif
 #else
 #include <pthread.h>
+#if defined(__SWITCH__)
+/* libnx has no uname(); the report names the console. */
+struct utsname { char sysname[16], release[16], machine[16]; };
+static int uname(struct utsname *u) {
+  snprintf(u->sysname, sizeof(u->sysname), "Horizon");
+  snprintf(u->release, sizeof(u->release), "switch");
+  snprintf(u->machine, sizeof(u->machine), "aarch64");
+  return 0;
+}
+#else
 #include <sys/utsname.h>
+#endif
 #include <unistd.h>
 #if defined(__linux__)
 #include <link.h>

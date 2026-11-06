@@ -17,7 +17,7 @@
  * cannot inherit a fix (recomp-ai-rules/PRINCIPLES.md).
  */
 #ifndef _WIN32
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__SWITCH__)   /* no usable ucontext */
 
 #include "fiber_compat.h"
 #include <pthread.h>

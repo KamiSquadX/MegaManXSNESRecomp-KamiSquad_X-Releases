@@ -36,7 +36,12 @@ static void condition_wake(WorkerCondition *c) { pthread_cond_signal(c); }
 static void condition_wake_all(WorkerCondition *c) { pthread_cond_broadcast(c); }
 static void condition_destroy(WorkerCondition *c) { pthread_cond_destroy(c); }
 static void thread_join(WorkerThread t) { pthread_join(t, NULL); }
+#if defined(__SWITCH__)
+/* Applications own CPU cores 0-2 (core 3 belongs to the system). */
+static unsigned available_cpus(void) { return 3; }
+#else
 static unsigned available_cpus(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (unsigned)n : 1; }
+#endif
 #define WORKER_ENTRY void *
 #define WORKER_RETURN NULL
 #endif

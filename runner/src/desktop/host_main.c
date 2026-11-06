@@ -22,6 +22,9 @@
 
 #include "debug_server.h"
 #include "desktop/sdl_compat.h"
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
@@ -3074,7 +3077,7 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
   g_overlay_modal = true;
   SetAudioPaused(true);
   TouchReset();   /* the launcher takes the screen: let go of every button */
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__SWITCH__)
   /* One window only: the launcher draws into the game's. */
   recomp_launcher_set_host_window(g_window);
 #else
@@ -3091,7 +3094,7 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
                                        g_rom_path[0] ? g_rom_path : NULL,
                                        rom, sizeof(rom));
   recomp_launcher_set_preserve_sdl(0);
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__SWITCH__)
   recomp_launcher_set_host_window(NULL);
 #endif
   TouchReset();   /* size, hand or source may have changed */
@@ -3240,6 +3243,21 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     mkdir("logs", 0755);
     if (freopen("logs/android-session.log", "w", stderr)) setvbuf(stderr, NULL, _IOLBF, 0);
     if (freopen("logs/android-session.log", "a", stdout)) setvbuf(stdout, NULL, _IOLBF, 0);
+  }
+#endif
+#ifdef __SWITCH__
+  /* Everything the game reads and writes lives in one SD card folder, the
+   * one the release puts the .nro in: config.ini, rom.cfg, assets/, mods/,
+   * saves/ and logs/. */
+  {
+    mkdir("sdmc:/switch", 0777);
+    mkdir("sdmc:/switch/MegaManXSNESRecomp", 0777);
+    chdir("sdmc:/switch/MegaManXSNESRecomp");
+    mkdir("logs", 0777);
+    if (freopen("logs/switch-session.log", "w", stderr)) setvbuf(stderr, NULL, _IOLBF, 0);
+    if (freopen("logs/switch-session.log", "a", stdout)) setvbuf(stdout, NULL, _IOLBF, 0);
+    /* Full CPU clock while the game runs (handheld mode included). */
+    appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
   }
 #endif
 #ifdef _WIN32
@@ -3641,8 +3659,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
     g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
 
-#ifdef __ANDROID__
-  /* A phone or handheld has no desktop: the game always fills the screen. */
+#if defined(__ANDROID__) || defined(__SWITCH__)
+  /* A phone or console has no desktop: the game always fills the screen. */
   g_win_flags |= SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP;
 #else
   if (g_config.fullscreen == 1)
@@ -3811,6 +3829,14 @@ error_reading:;
   }
 #endif
 
+#ifdef __SWITCH__
+  /* SDL's Switch driver renders one 1280x720 surface; a window of any other
+   * size (or "fullscreen desktop") reports sizes the in-game launcher, which
+   * draws into this window, would lay out against. */
+  window_width = 1280;
+  window_height = 720;
+  g_win_flags = (g_win_flags & ~SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP) | SDL_WINDOW_FULLSCREEN;
+#endif
   /* SDL3 dropped the x/y arguments from SDL_CreateWindow. */
   SDL_Window *window = snesrecomp_sdl_create_window(
       g_window_title, window_width, window_height, g_win_flags);

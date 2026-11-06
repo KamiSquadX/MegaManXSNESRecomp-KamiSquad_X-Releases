@@ -1,10 +1,41 @@
-/* On-screen gamepad: input source 3 (Android). A virtual controller drawn over
- * the game and driven by touch. Its buttons go through HandleGamepadInput as
- * seat 1's controller, so [GamepadMap] binds them exactly like a real pad's:
- * the D-pad and left stick are the pad's d-pad, the right stick its four
- * right-stick buttons, L2/R2/L3/R3 its extra controls. A menu button at the
- * top opens the in-game launcher. Included by host_main.c (SDL3 only). */
+/* On-screen gamepad: input source 3 (Android, Switch). A virtual controller
+ * drawn over the game and driven by touch. Its buttons go through
+ * HandleGamepadInput as seat 1's controller, so [GamepadMap] binds them
+ * exactly like a real pad's: the D-pad and left stick are the pad's d-pad, the
+ * right stick its four right-stick buttons, L2/R2/L3/R3 its extra controls. A
+ * menu button at the top opens the in-game launcher. Included by host_main.c:
+ * SDL3 (Android), or SDL2 on Switch. */
+#if SNESRECOMP_SDL3 || defined(__SWITCH__)
+
+/* ---- SDL2/SDL3 differences ------------------------------------------------ */
 #if SNESRECOMP_SDL3
+typedef SDL_FColor TouchColor;
+#define TOUCH_FINGER_DOWN     SDL_EVENT_FINGER_DOWN
+#define TOUCH_FINGER_UP       SDL_EVENT_FINGER_UP
+#define TOUCH_FINGER_MOTION   SDL_EVENT_FINGER_MOTION
+#define TOUCH_FINGER_CANCELED SDL_EVENT_FINGER_CANCELED
+#define TOUCH_FINGER_ID(e)    ((e)->tfinger.fingerID)
+static SDL_FColor TouchVertexColor(TouchColor c) { return c; }
+static void TouchDrawColor(SDL_Renderer *r, TouchColor c) {
+  SDL_SetRenderDrawColorFloat(r, c.r, c.g, c.b, c.a);
+}
+#define TouchFillRects(r, rects, n) SDL_RenderFillRects(r, rects, n)
+#else
+typedef struct TouchColor { float r, g, b, a; } TouchColor;
+#define TOUCH_FINGER_DOWN     SDL_FINGERDOWN
+#define TOUCH_FINGER_UP       SDL_FINGERUP
+#define TOUCH_FINGER_MOTION   SDL_FINGERMOTION
+#define TOUCH_FINGER_CANCELED 0xffffffffu   /* SDL2 has none */
+#define TOUCH_FINGER_ID(e)    ((e)->tfinger.fingerId)
+static Uint8 TouchByte(float v) { return (Uint8)(v <= 0 ? 0 : v >= 1 ? 255 : v * 255.0f + 0.5f); }
+static SDL_Color TouchVertexColor(TouchColor c) {
+  return (SDL_Color){ TouchByte(c.r), TouchByte(c.g), TouchByte(c.b), TouchByte(c.a) };
+}
+static void TouchDrawColor(SDL_Renderer *r, TouchColor c) {
+  SDL_SetRenderDrawColor(r, TouchByte(c.r), TouchByte(c.g), TouchByte(c.b), TouchByte(c.a));
+}
+#define TouchFillRects(r, rects, n) SDL_RenderFillRectsF(r, rects, n)
+#endif
 
 enum {
   kTouchDpad, kTouchA, kTouchB, kTouchX, kTouchY, kTouchL, kTouchR, kTouchL2, kTouchR2,
@@ -12,9 +43,12 @@ enum {
   kTouchMenu = kTouchControls, kTouchNone = -1,
 };
 /* The controller button behind each simple button (D-pad and sticks are
- * handled separately). */
+ * handled separately). The face buttons sit in SNES/Nintendo positions (A
+ * right, B bottom, X top, Y left), and a pad button is named by where it is on
+ * an SDL pad (A bottom, B right, X left, Y top), the same positional sense the
+ * default [GamepadMap] and the launcher's binding grid use. */
 static const int kTouchPadButton[kTouchControls] = {
-  -1, kGamepadBtn_A, kGamepadBtn_B, kGamepadBtn_X, kGamepadBtn_Y, kGamepadBtn_L1, kGamepadBtn_R1,
+  -1, kGamepadBtn_B, kGamepadBtn_A, kGamepadBtn_Y, kGamepadBtn_X, kGamepadBtn_L1, kGamepadBtn_R1,
   kGamepadBtn_L2, kGamepadBtn_R2, kGamepadBtn_L3, kGamepadBtn_R3, kGamepadBtn_Start,
   kGamepadBtn_Back, -1, -1,
 };
@@ -175,26 +209,28 @@ static void TouchReset(void) {
 /* A finger event. Returns true when the on-screen gamepad took it. */
 static bool TouchPadEvent(const SDL_Event *e) {
   if (!TouchPadActive()) return false;
-  if (e->type != SDL_EVENT_FINGER_DOWN && e->type != SDL_EVENT_FINGER_UP &&
-      e->type != SDL_EVENT_FINGER_MOTION && e->type != SDL_EVENT_FINGER_CANCELED) return false;
+  const Uint32 type = e->type;
+  if (type != TOUCH_FINGER_DOWN && type != TOUCH_FINGER_UP &&
+      type != TOUCH_FINGER_MOTION && type != TOUCH_FINGER_CANCELED) return false;
   int w = 0, h = 0;
   SdlRenderer_GetOutputSize(&w, &h);
   if (w <= 0 || h <= 0) return true;
   TouchLayout(w, h);
   const float x = e->tfinger.x * (float)w, y = e->tfinger.y * (float)h;
+  const SDL_FingerID id = TOUCH_FINGER_ID(e);
   int slot = -1, free_slot = -1;
   for (int i = 0; i < 10; ++i) {
-    if (g_touch_fingers[i].down && g_touch_fingers[i].id == e->tfinger.fingerID) slot = i;
+    if (g_touch_fingers[i].down && g_touch_fingers[i].id == id) slot = i;
     else if (!g_touch_fingers[i].down && free_slot < 0) free_slot = i;
   }
-  if (e->type == SDL_EVENT_FINGER_DOWN) {
+  if (type == TOUCH_FINGER_DOWN) {
     int c = TouchHit(x, y);
     if (c == kTouchMenu) { g_open_launcher_hotkey = 1; return true; }
     if (c == kTouchNone || free_slot < 0) return true;
-    g_touch_fingers[free_slot] = (TouchFinger){ e->tfinger.fingerID, true, c, x, y };
+    g_touch_fingers[free_slot] = (TouchFinger){ id, true, c, x, y };
   } else if (slot >= 0) {
     TouchFinger *f = &g_touch_fingers[slot];
-    if (e->type == SDL_EVENT_FINGER_UP || e->type == SDL_EVENT_FINGER_CANCELED) {
+    if (type == TOUCH_FINGER_UP || type == TOUCH_FINGER_CANCELED) {
       f->down = false;
     } else {
       f->x = x; f->y = y;
@@ -213,30 +249,30 @@ static bool TouchPadEvent(const SDL_Event *e) {
 }
 
 /* ---- drawing -------------------------------------------------------------- */
-static void TouchFillCircle(SDL_Renderer *r, float cx, float cy, float rad, SDL_FColor c) {
+static void TouchFillCircle(SDL_Renderer *r, float cx, float cy, float rad, TouchColor c) {
   enum { kSeg = 40 };
   SDL_Vertex v[kSeg + 2];
   int idx[kSeg * 3];
-  v[0] = (SDL_Vertex){ { cx, cy }, c, { 0, 0 } };
+  v[0] = (SDL_Vertex){ { cx, cy }, TouchVertexColor(c), { 0, 0 } };
   for (int i = 0; i <= kSeg; ++i) {
     float a = (float)i * 6.2831853f / kSeg;
-    v[i + 1] = (SDL_Vertex){ { cx + cosf(a) * rad, cy + sinf(a) * rad }, c, { 0, 0 } };
+    v[i + 1] = (SDL_Vertex){ { cx + cosf(a) * rad, cy + sinf(a) * rad }, TouchVertexColor(c), { 0, 0 } };
   }
   for (int i = 0; i < kSeg; ++i) { idx[i * 3] = 0; idx[i * 3 + 1] = i + 1; idx[i * 3 + 2] = i + 2; }
   SDL_RenderGeometry(r, NULL, v, kSeg + 2, idx, kSeg * 3);
 }
 /* A convex outline filled as one fan, so translucent parts never overlap. */
-static void TouchFillFan(SDL_Renderer *r, float cx, float cy, const SDL_FPoint *pts, int n, SDL_FColor c) {
+static void TouchFillFan(SDL_Renderer *r, float cx, float cy, const SDL_FPoint *pts, int n, TouchColor c) {
   enum { kMax = 48 };
   SDL_Vertex v[kMax + 1];
   int idx[kMax * 3];
   if (n > kMax) n = kMax;
-  v[0] = (SDL_Vertex){ { cx, cy }, c, { 0, 0 } };
-  for (int i = 0; i < n; ++i) v[i + 1] = (SDL_Vertex){ pts[i], c, { 0, 0 } };
+  v[0] = (SDL_Vertex){ { cx, cy }, TouchVertexColor(c), { 0, 0 } };
+  for (int i = 0; i < n; ++i) v[i + 1] = (SDL_Vertex){ pts[i], TouchVertexColor(c), { 0, 0 } };
   for (int i = 0; i < n; ++i) { idx[i * 3] = 0; idx[i * 3 + 1] = i + 1; idx[i * 3 + 2] = (i + 1) % n + 1; }
   SDL_RenderGeometry(r, NULL, v, n + 1, idx, n * 3);
 }
-static void TouchFillPill(SDL_Renderer *r, const TouchShape *s, SDL_FColor c) {
+static void TouchFillPill(SDL_Renderer *r, const TouchShape *s, TouchColor c) {
   enum { kCap = 16 };
   SDL_FPoint pts[2 * (kCap + 1)];
   const float rad = s->h, lx = s->x - s->w + rad, rx = s->x + s->w - rad;
@@ -251,6 +287,8 @@ static void TouchFillPill(SDL_Renderer *r, const TouchShape *s, SDL_FColor c) {
   }
   TouchFillFan(r, s->x, s->y, pts, n, c);
 }
+
+#if SNESRECOMP_SDL3
 static void TouchLabel(SDL_Renderer *r, const char *text, float cx, float cy, float height, float alpha) {
   float scale = height / 8.0f;
   if (scale < 1.0f) scale = 1.0f;
@@ -260,6 +298,42 @@ static void TouchLabel(SDL_Renderer *r, const char *text, float cx, float cy, fl
   SDL_RenderDebugText(r, (cx - tw * 0.5f) / scale, (cy - height * 0.5f) / scale, text);
   SDL_SetRenderScale(r, 1.0f, 1.0f);
 }
+#else
+/* SDL2 has no debug text: a 5x7 font holding just the label letters. */
+static const uint8 *TouchGlyph(char ch) {
+  static const struct { char c; uint8 rows[7]; } kGlyphs[] = {
+    { 'A', { 14, 17, 17, 31, 17, 17, 17 } }, { 'B', { 30, 17, 17, 30, 17, 17, 30 } },
+    { 'C', { 15, 16, 16, 16, 16, 16, 15 } }, { 'E', { 31, 16, 16, 30, 16, 16, 31 } },
+    { 'L', { 16, 16, 16, 16, 16, 16, 31 } }, { 'M', { 17, 27, 21, 21, 17, 17, 17 } },
+    { 'N', { 17, 25, 21, 19, 17, 17, 17 } }, { 'R', { 30, 17, 17, 30, 20, 18, 17 } },
+    { 'S', { 15, 16, 16, 14, 1, 1, 30 } },   { 'T', { 31, 4, 4, 4, 4, 4, 4 } },
+    { 'U', { 17, 17, 17, 17, 17, 17, 14 } }, { 'X', { 17, 17, 10, 4, 10, 17, 17 } },
+    { 'Y', { 17, 17, 10, 4, 4, 4, 4 } },     { '2', { 14, 17, 1, 2, 4, 8, 31 } },
+    { '3', { 30, 1, 1, 14, 1, 1, 30 } },
+  };
+  for (size_t i = 0; i < sizeof(kGlyphs) / sizeof(kGlyphs[0]); ++i)
+    if (kGlyphs[i].c == ch) return kGlyphs[i].rows;
+  return NULL;
+}
+static void TouchLabel(SDL_Renderer *r, const char *text, float cx, float cy, float height, float alpha) {
+  const float px = height / 7.0f;
+  const size_t n = strlen(text);
+  const float tw = (float)n * 6.0f * px - px;
+  float x0 = cx - tw * 0.5f, y0 = cy - height * 0.5f;
+  SDL_FRect cells[7 * 5 * 8];
+  int count = 0;
+  for (size_t i = 0; i < n && i < 8; ++i) {
+    const uint8 *g = TouchGlyph(text[i]);
+    if (!g) continue;
+    for (int row = 0; row < 7; ++row)
+      for (int col = 0; col < 5; ++col)
+        if (g[row] >> (4 - col) & 1)
+          cells[count++] = (SDL_FRect){ x0 + ((float)i * 6.0f + (float)col) * px, y0 + (float)row * px, px, px };
+  }
+  TouchDrawColor(r, (TouchColor){ 0.05f, 0.05f, 0.08f, alpha });
+  if (count) TouchFillRects(r, cells, count);
+}
+#endif
 
 static void TouchPadDraw(void) {
   if (!TouchPadActive() || !g_renderer) return;
@@ -270,9 +344,9 @@ static void TouchPadDraw(void) {
   SDL_Renderer *r = g_renderer;
   SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
   const float alpha = (float)g_config.touch_opacity / 100.0f;
-  const SDL_FColor base = { 0.92f, 0.92f, 0.96f, 0.55f * alpha };
-  const SDL_FColor held = { 0.55f, 0.75f, 1.00f, 0.85f * alpha };
-  const SDL_FColor dark = { 0.10f, 0.10f, 0.14f, 0.45f * alpha };
+  const TouchColor base = { 0.92f, 0.92f, 0.96f, 0.55f * alpha };
+  const TouchColor held = { 0.55f, 0.75f, 1.00f, 0.85f * alpha };
+  const TouchColor dark = { 0.10f, 0.10f, 0.14f, 0.45f * alpha };
   for (int c = 0; c <= kTouchMenu; ++c) {
     if (!TouchShown(c)) continue;
     const TouchShape *s = &g_touch_shape[c];
@@ -283,8 +357,8 @@ static void TouchPadDraw(void) {
       SDL_FRect bars[3] = { { s->x - s->r, s->y - arm, 2 * s->r, 2 * arm },
                             { s->x - arm, s->y - s->r, 2 * arm, s->r - arm },
                             { s->x - arm, s->y + arm, 2 * arm, s->r - arm } };
-      SDL_SetRenderDrawColorFloat(r, base.r, base.g, base.b, base.a);
-      SDL_RenderFillRects(r, bars, 3);
+      TouchDrawColor(r, base);
+      TouchFillRects(r, bars, 3);
       static const struct { int btn; float dx, dy; } kArms[4] = {
         { kGamepadBtn_DpadUp, 0, -1 }, { kGamepadBtn_DpadDown, 0, 1 },
         { kGamepadBtn_DpadLeft, -1, 0 }, { kGamepadBtn_DpadRight, 1, 0 } };

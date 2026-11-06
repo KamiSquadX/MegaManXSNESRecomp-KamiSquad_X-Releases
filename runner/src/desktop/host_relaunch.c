@@ -13,6 +13,8 @@
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#elif defined(__SWITCH__)
+#  include <switch.h>
 #elif !defined(__ANDROID__)
 #  include <spawn.h>
 extern char **environ;
@@ -57,6 +59,20 @@ int snesrecomp_host_relaunch(int argc, const char *const *args) {
   if (!f) return 0;
   for (int i = 0; i < argc; ++i) fprintf(f, "%s\n", args[i]);
   return fclose(f) == 0;
+#elif defined(__SWITCH__)
+  /* hbloader starts the next NRO once this one exits: the same .nro, with the
+   * new arguments (argv[0] is the .nro's own path). */
+  char exe[768];
+  if (!snesrecomp_exe_path(exe, sizeof(exe)) || !envHasNextLoad()) {
+    fprintf(stderr, "[relaunch] this loader cannot chain-load an NRO\n");
+    return 0;
+  }
+  static char line[2048];
+  size_t len = (size_t)snprintf(line, sizeof(line), "\"%s\"", exe);
+  for (int i = 0; i < argc && len < sizeof(line); ++i)
+    len += (size_t)snprintf(line + len, sizeof(line) - len, " \"%s\"", args[i]);
+  if (len >= sizeof(line)) return 0;
+  return R_SUCCEEDED(envSetNextLoad(exe, line)) ? 1 : 0;
 #else
   char exe[1024];
   if (!snesrecomp_exe_path(exe, sizeof(exe))) {
