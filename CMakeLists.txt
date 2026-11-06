@@ -33,7 +33,12 @@ set_property(SOURCE src/mmx_renderer.c APPEND PROPERTY COMPILE_DEFINITIONS
 set(SNESRECOMP_ENABLE_MODS ON CACHE BOOL "Shared mod package runtime" FORCE)
 # Match Gundam Endless Duel's internet-capable lobby build. Per-target netplay
 # keeps the unmodified Japanese edition and small unit tests independent.
-set(SNESRECOMP_NET_ICE ON CACHE BOOL "Internet netplay transport" FORCE)
+if(NINTENDO_SWITCH)
+    # libjuice (ICE) needs ifaddrs.h/endian.h, which libnx lacks.
+    set(SNESRECOMP_NET_ICE OFF CACHE BOOL "Internet netplay transport" FORCE)
+else()
+    set(SNESRECOMP_NET_ICE ON CACHE BOOL "Internet netplay transport" FORCE)
+endif()
 include(${SNESRECOMP_ROOT}/runner/runner.cmake)
 include(${RECOMP_UI_ROOT}/recomp_ui.cmake)
 include(${SNESRECOMP_ROOT}/runner/render_workers.cmake)
@@ -103,6 +108,19 @@ function(add_mmx_variant TARGET GEN_DIR CFG_DIR)
         target_compile_definitions(${TARGET} PRIVATE MMX_DESKTOP_ENTRY=SDL_main)
         target_link_libraries(${TARGET} PRIVATE android log)
     endif()
+    if(NINTENDO_SWITCH)
+        # Homebrew .nro for hbmenu: title, author and version shown there.
+        nx_generate_nacp(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.nacp"
+            NAME "Mega Man X Recomp" AUTHOR "KamiSquad_X"
+            VERSION "${SNESRECOMP_BUILD_VERSION}")
+        set(_mmx_nx_icon "${CMAKE_CURRENT_SOURCE_DIR}/switch/icon.jpg")
+        if(EXISTS "${_mmx_nx_icon}")
+            nx_create_nro(${TARGET} NACP "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.nacp"
+                ICON "${_mmx_nx_icon}")
+        else()
+            nx_create_nro(${TARGET} NACP "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.nacp")
+        endif()
+    endif()
     if(SNESRECOMP_SETUP_HOST)
         target_sources(${TARGET} PRIVATE src/setup_host.c)
     endif()
@@ -166,7 +184,8 @@ function(add_mmx_variant TARGET GEN_DIR CFG_DIR)
     endif()
     recomp_target_launcher_ui(${TARGET} CONSOLE snes
         BOXART ${CMAKE_CURRENT_SOURCE_DIR}/recomp/launcher/boxart.tga)
-    if(NOT "${TARGET}" STREQUAL "RockmanXSNESRecomp")
+    # Switch: recomp-net's sockets are not ported to libnx yet (no netplay).
+    if(NOT "${TARGET}" STREQUAL "RockmanXSNESRecomp" AND NOT NINTENDO_SWITCH)
         snesrecomp_enable_recomp_net(${TARGET})
     endif()
 endfunction()
