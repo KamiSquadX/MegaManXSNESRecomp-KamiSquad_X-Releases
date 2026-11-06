@@ -506,6 +506,9 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       return ParsePlayerSource(key[7] - '1', value);
     } else if (StringEqualsNoCase(key, "TouchButtons")) {
       g_config.touch_buttons = (unsigned)strtoul(value, (char **)NULL, 0) & 0x7fffu;
+      /* 2.3.3-ks.1.2.0 saved its default (no Start/Select) on first run;
+       * read that exact value as today's default, which adds them. */
+      if (g_config.touch_buttons == 0x1ffu) g_config.touch_buttons = 0x19ffu;
       return true;
     } else if (StringEqualsNoCase(key, "TouchSize")) {
       long v = strtol(value, (char **)NULL, 10);
@@ -721,8 +724,9 @@ void ParseConfigFile(const char *filename) {
   g_config.player_src[0] = 1;   /* keyboard */
 #endif
   g_config.player_src[1] = 0;   /* none */
-  /* On-screen gamepad: D-pad, A B X Y, L R, L2 R2 (RECOMP_LAUNCHER_TOUCH_DEFAULT). */
-  g_config.touch_buttons = 0x1ff;
+  /* On-screen gamepad: D-pad, A B X Y, L R, L2 R2, Start, Select
+   * (RECOMP_LAUNCHER_TOUCH_DEFAULT). */
+  g_config.touch_buttons = 0x19ff;
   g_config.touch_size = 100;
   g_config.touch_opacity = 60;
   g_config.touch_left_handed = 0;
