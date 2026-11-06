@@ -14945,7 +14945,13 @@ std::string asset(const char* rel) {
     if (is_absolute_path(path)) return path;
 
 #if defined(__ANDROID__)
-    const char* base = SDL_AndroidGetInternalStoragePath();
+    /* The host's working directory: the app's external files folder, where
+     * the game's setup screen installs the launcher's assets. */
+#if defined(LNG_SDL3)
+    const char* base = SDL_GetAndroidExternalStoragePath();
+#else
+    const char* base = SDL_AndroidGetExternalStoragePath();
+#endif
 #else
     const char* base = SDL_GetBasePath();
 #endif

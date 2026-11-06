@@ -166,9 +166,17 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
                 SDL_VERSIONNUM_MICRO(version), SDL_GetRevision());
     }
 
+    // GL dialect, as in the SDL2 platform: desktop GL 3.3 core by default; an
+    // LNG_GLES2 host (Android) gets the GLES 2 context its ImGui backend uses.
+#ifdef LNG_GLES2
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
@@ -181,6 +189,9 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     /* Automated launcher checks (LNG_SCRIPT + LNG_TEST_HIDDEN, as on SDL2)
      * must not steal the user's desktop/focus. */
     if (getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN")) flags |= SDL_WINDOW_HIDDEN;
+#if defined(__ANDROID__)
+    flags |= SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS;
+#endif
 
     int win_w = logical_w;
     int win_h = logical_h;
