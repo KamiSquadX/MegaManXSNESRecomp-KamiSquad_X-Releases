@@ -1753,6 +1753,13 @@ static bool HandleDeviceEvent(const SDL_Event *event) {
     gi = GetGamepadInfo(SNESRECOMP_SDL_EVENT_BUTTON_DEVICE(*event));
     if (gi) {
       int b = RemapSdlButton(SNESRECOMP_SDL_EVENT_BUTTON(*event));
+      /* A pad reporting buttons by printed letter: put positions back. */
+      if (b >= 0 && gi->index < 8 && (g_config.swap_face >> gi->index & 1)) {
+        if (b == kGamepadBtn_A) b = kGamepadBtn_B;
+        else if (b == kGamepadBtn_B) b = kGamepadBtn_A;
+        else if (b == kGamepadBtn_X) b = kGamepadBtn_Y;
+        else if (b == kGamepadBtn_Y) b = kGamepadBtn_X;
+      }
       if (b >= 0)
         HandleGamepadInput(gi, b, event->type == SDL_CONTROLLERBUTTONDOWN);
     }
@@ -2992,6 +2999,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   ls->touch_size = g_config.touch_size;
   ls->touch_opacity = g_config.touch_opacity;
   ls->touch_left_handed = g_config.touch_left_handed;
+  ls->swap_face_buttons = g_config.swap_face;
   ls->player_src[1] = ConfigHasPlayerSource(1) ? g_config.player_src[1]
                                                : (g_config.enable_gamepad[1] ? 2 : 0);
   for (int seat = 2; seat < kSnesHostPadSeats && seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat)
@@ -3146,6 +3154,7 @@ static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config
   if (ls->touch_size)    g_config.touch_size = ls->touch_size;
   if (ls->touch_opacity) g_config.touch_opacity = ls->touch_opacity;
   g_config.touch_left_handed   = ls->touch_left_handed != 0;
+  g_config.swap_face           = ls->swap_face_buttons & 0xffu;
   g_config.skip_launcher       = ls->skip_launcher != 0;
   g_config.frame_blend         = ls->frame_blend != 0;
   g_config.run_ahead           = ls->run_ahead;
@@ -3322,8 +3331,13 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
   if (g_renderer_funcs.Reconfigure) g_renderer_funcs.Reconfigure();
 
   if (act == RECOMP_LAUNCHER_RESULT_QUIT) {
+    /* QUIT GAME ends the game, not the program: shut down as usual (SRAM,
+     * config) and come back up in the launcher with nothing running. */
     *running = false;
-    *exit_reason = "player quit from the in-game launcher";
+    *exit_reason = "player quit the game from the in-game launcher";
+    g_relaunch.pending = g_relaunch.launcher = true;
+    g_relaunch.with_state = false;
+    snprintf(g_relaunch.rom, sizeof(g_relaunch.rom), "%s", g_rom_path);
   } else if (act == RECOMP_LAUNCHER_RESULT_LAUNCH) {
     const char *why = RestartReason(&before, rom, mods_before, mods_before_len);
     if (!why && HostGetenv("INGAME_LAUNCHER_SELFTEST_RESTART")) {

@@ -99,7 +99,10 @@ int snesrecomp_abspath(const char *path, char *out, size_t max_len) {
     strcpy(out, tmp);
     return 1;
 #else
-    if (path[0] == '/') {
+    /* A device-qualified path ("sdmc:/...", Switch) is already absolute. */
+    const char *colon = strchr(path, ':');
+    const char *slash = strchr(path, '/');
+    if (path[0] == '/' || (colon && colon[1] == '/' && (!slash || colon < slash))) {
         if (strlen(path) >= max_len) return 0;
         strcpy(out, path);
         return 1;

@@ -524,6 +524,9 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       if (!ParseBool(value, &b)) return false;
       g_config.touch_left_handed = b;
       return true;
+    } else if (StringEqualsNoCase(key, "SwapFaceButtons")) {
+      g_config.swap_face = (unsigned)strtoul(value, (char **)NULL, 0) & 0xffu;
+      return true;
     }
     /* GuidPn / DeadzonePn are the launcher's business; accepted silently so
      * the runner does not report the launcher's own keys as unknown. */
@@ -738,6 +741,7 @@ void ParseConfigFile(const char *filename) {
   g_config.touch_size = 100;
   g_config.touch_opacity = 60;
   g_config.touch_left_handed = 0;
+  g_config.swap_face = 0;
   /* Multitap seats 3.. start with no device and no gamepad claim, so an
    * extra controller never lands on a seat nobody asked for. */
   for (int i = 2; i < kSnesHostPadSeats; ++i) {
@@ -966,6 +970,7 @@ void WriteConfigFile(const char *filename) {
     { "Controller", "TouchSize" },
     { "Controller", "TouchOpacity" },
     { "Controller", "TouchLeftHanded" },
+    { "Controller", "SwapFaceButtons" },
     { "GamepadMap", "EnableGamepad3" }, { "Controller", "SourceP3" },
     { "GamepadMap", "EnableGamepad4" }, { "Controller", "SourceP4" },
     { "GamepadMap", "EnableGamepad5" }, { "Controller", "SourceP5" },
@@ -1017,6 +1022,7 @@ void WriteConfigFile(const char *filename) {
   CfgSet(kvs, N, "Controller", "TouchSize", "%d", g_config.touch_size);
   CfgSet(kvs, N, "Controller", "TouchOpacity", "%d", g_config.touch_opacity);
   CfgSet(kvs, N, "Controller", "TouchLeftHanded", "%d", g_config.touch_left_handed ? 1 : 0);
+  CfgSet(kvs, N, "Controller", "SwapFaceButtons", "0x%x", g_config.swap_face);
   for (int seat = 2; seat < kSnesHostPadSeats; ++seat) {
     char gp[24], src[16];
     snprintf(gp, sizeof(gp), "EnableGamepad%d", seat + 1);

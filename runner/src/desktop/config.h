@@ -226,6 +226,12 @@ typedef struct Config {
    * shown (bits as RECOMP_LAUNCHER_TOUCH_*), size and opacity in percent. */
   unsigned touch_buttons;
   int touch_size, touch_opacity, touch_left_handed;
+  /* [Controller] SwapFaceButtons: bit per player. Some pads (AYN, Retroid
+   * and other Android handhelds in their Nintendo button mode) report each
+   * face button by the letter printed on it rather than by its position,
+   * so SDL's "bottom" is really the right button. A set bit swaps A<->B and
+   * X<->Y for that player's gamepad, putting the positions back. */
+  unsigned swap_face;
 
   // Which players have keyboard controls
   uint8 has_keyboard_controls;
