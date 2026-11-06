@@ -13,7 +13,7 @@
  * resized under it, so while it is up the whole UI is drawn shifted upward
  * enough to keep the text box in view (launcher_touch_ime), and touches are
  * shifted to match (launcher_touch_shift_event). */
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__SWITCH__)
 #include "imgui.h"
 #include "imgui_internal.h"
 #include <math.h>
@@ -54,6 +54,57 @@ static void launcher_touch_frame(float unit) {
         ImGui::SetScrollY(w, w->Scroll.y - io.MouseDelta.y);
 }
 
+#endif
+
+#if defined(__SWITCH__)
+#include <switch.h>
+#include <stdio.h>
+
+/* Switch: a text box being typed into opens the system keyboard applet with
+ * the box's current text. The applet blocks while it is up; what it returns
+ * replaces the text (select all, type, Enter), and Cancel leaves the box as
+ * it was (Escape). Call right after ImGui::NewFrame(). */
+static void launcher_switch_keyboard(void) {
+    ImGuiContext& g = *GImGui;
+    ImGuiIO& io = g.IO;
+    static ImGuiID s_shown_for = 0;
+    if (!io.WantTextInput) { s_shown_for = 0; return; }
+    ImGuiInputTextState* st = ImGui::GetInputTextState(g.ActiveId);
+    if (!st || st->ID == s_shown_for) return;
+    s_shown_for = st->ID;
+
+    char initial[512], out[512];
+    snprintf(initial, sizeof(initial), "%.*s", st->TextLen, st->TextA.Data ? st->TextA.Data : "");
+    out[0] = '\0';
+    SwkbdConfig kbd;
+    if (R_FAILED(swkbdCreate(&kbd, 0))) return;
+    swkbdConfigMakePresetDefault(&kbd);
+    swkbdConfigSetInitialText(&kbd, initial);
+    const Result rc = swkbdShow(&kbd, out, sizeof(out));
+    swkbdClose(&kbd);
+    if (R_FAILED(rc)) {
+        io.AddKeyEvent(ImGuiKey_Escape, true);
+        io.AddKeyEvent(ImGuiKey_Escape, false);
+        return;
+    }
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_A, true);
+    io.AddKeyEvent(ImGuiKey_A, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    if (out[0]) {
+        io.AddInputCharactersUTF8(out);
+    } else {
+        io.AddKeyEvent(ImGuiKey_Delete, true);
+        io.AddKeyEvent(ImGuiKey_Delete, false);
+    }
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+}
+#else
+static inline void launcher_switch_keyboard(void) {}
+#endif
+
+#if defined(__ANDROID__)
 static float s_ime_shift;   /* logical units the UI is drawn raised by */
 
 /* After ImGui::Render(): raise the frame when the text box being typed into
@@ -83,7 +134,9 @@ static void launcher_touch_shift_event(SDL_Event& e) {
     }
 }
 #else
+#if !defined(__SWITCH__)
 static inline void launcher_touch_frame(float) {}
+#endif
 static inline void launcher_touch_ime(ImDrawData*, float) {}
 template <typename E> static inline void launcher_touch_shift_event(E&) {}
 #endif

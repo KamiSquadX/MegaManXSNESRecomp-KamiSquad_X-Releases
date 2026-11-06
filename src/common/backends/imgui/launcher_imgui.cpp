@@ -494,6 +494,9 @@ static std::filesystem::path builtin_picker_initial_path(
 /* Prefer native (zenity/kdialog on Linux, tinyfiledialogs elsewhere). Fall
  * back to the in-app browser when native is unavailable or returns -1. */
 static bool prefer_builtin_file_picker(void) {
+#if defined(__ANDROID__) || defined(__SWITCH__)
+    return true;   /* no system chooser: the in-app browser IS the picker */
+#endif
 #if defined(__linux__)
     if (const char* env = std::getenv("RECOMP_UI_BUILTIN_FILE_PICKER")) {
         return env[0] != '\0' && std::strcmp(env, "0") != 0 &&
@@ -543,7 +546,13 @@ static void open_builtin_picker(LauncherModel* m, PickRequest&& req) {
         initial = std::filesystem::current_path(ec);
     std::snprintf(g_picker.directory, sizeof(g_picker.directory), "%s",
                   initial.string().c_str());
+#if defined(__ANDROID__) || defined(__SWITCH__)
+    /* Touch/pad first: focusing the path box would pop the system keyboard
+     * before the player has even seen the list. */
+    g_picker.focus_path = false;
+#else
     g_picker.focus_path = true;
+#endif
 }
 
 /* Close the browser and hand the answer back. State is cleared BEFORE the
@@ -777,7 +786,12 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
     }
     ImGui::SameLine();
     if (ImGui::Button("Home", ImVec2(px(82), px(30)))) {
-        if (const char* home = std::getenv("HOME")) {
+#if defined(__SWITCH__)
+        const char* home = "sdmc:/";   /* the SD card's root */
+#else
+        const char* home = std::getenv("HOME");
+#endif
+        if (home) {
             std::snprintf(g_picker.directory, sizeof(g_picker.directory),
                           "%s", home);
             g_picker.selected[0] = '\0';
@@ -3182,7 +3196,7 @@ void draw_source_selectables(LauncherModel* m, int p) {
                            !strcmp(src_prof->id, "snes");
     const bool n64_prof = src_prof && src_prof->id &&
                           !strcmp(src_prof->id, "n64");
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__SWITCH__)
     /* The on-screen gamepad: drawn over the game, driven by touch. */
     if (p == 0 && ImGui::Selectable(ui_text("On-screen Gamepad"),
                                     m->s.player_src[p] == RECOMP_LAUNCHER_SRC_TOUCH)) {
@@ -15097,6 +15111,15 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 #endif
     g_th = th;
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
+#if defined(__SWITCH__)
+    /* Handheld, detached Joy-Cons and a Pro Controller are separate SDL
+     * pads; any of them navigates. SDL maps Switch buttons by position (its
+     * "A" is the bottom button, Switch B), so swap ImGui's activate/cancel:
+     * Switch A accepts, Switch B cancels. */
+    ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);
+    ImGui::GetIO().ConfigNavSwapGamepadButtons = true;
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
+#endif
 #ifdef LNG_GLES2
     ImGui_ImplOpenGL3_Init("#version 100");   // GLES 2 GLSL (host ANGLE backend)
 #else
@@ -15249,6 +15272,30 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         if (SDL_WaitEventTimeout(&ev, 16)) do {
             /* Window coordinates -> logical units, before anything reads the
              * event. No-op unless the platform layer synthesized the split. */
+#if defined(__SWITCH__)
+            /* SDL2's Switch driver reports touches only as fingers (no
+             * synthesized mouse): the first finger drives ImGui's pointer. */
+            if (ev.type == SDL_FINGERDOWN || ev.type == SDL_FINGERUP ||
+                ev.type == SDL_FINGERMOTION) {
+                static SDL_FingerID s_finger = -1;
+                if (ev.type == SDL_FINGERDOWN && s_finger == -1) s_finger = ev.tfinger.fingerId;
+                if (ev.tfinger.fingerId == s_finger) {
+                    int ww = 0, wh = 0;
+                    SDL_GetWindowSize(p->window, &ww, &wh);
+                    const float sc = p->input_scale > 0.0f ? p->input_scale : 1.0f;
+                    ImGuiIO& tio = ImGui::GetIO();
+                    tio.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+                    tio.AddMousePosEvent(ev.tfinger.x * (float)ww / sc,
+                                         ev.tfinger.y * (float)wh / sc);
+                    if (ev.type != SDL_FINGERMOTION) {
+                        tio.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+                        tio.AddMouseButtonEvent(ImGuiMouseButton_Left, ev.type == SDL_FINGERDOWN);
+                    }
+                    if (ev.type == SDL_FINGERUP) s_finger = -1;
+                }
+                continue;
+            }
+#endif
             scale_mouse_event(ev, p->input_scale);
             launcher_touch_shift_event(ev);   /* keyboard-raised frame (Android) */
             if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
@@ -15411,7 +15458,23 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         LNG_ImplSDL_NewFrame();
         apply_logical_display(p);   // logical DisplaySize + pixel-density frame
         ImGui::NewFrame();
-        launcher_touch_frame(px(1.0f));   /* drag-scroll, long press (Android) */
+        launcher_touch_frame(px(1.0f));   /* drag-scroll, long press (Android, Switch) */
+        launcher_switch_keyboard();       /* text boxes type through the system keyboard */
+#if defined(__SWITCH__)
+        /* Switch B (ImGui's FaceDown: SDL maps by position) steps back: a
+         * dialog or text box cancels itself through ImGui's nav; otherwise B
+         * leaves the page for the dashboard, and on the dashboard of the
+         * in-game launcher goes back to the game. Never while a binding is
+         * being captured (B is then the button being bound). */
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) &&
+            !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+            !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+            !m->capturing && !m->hk_capturing && !m->camera_capturing &&
+            !automap_in_progress() && !launch_commit.job.pending()) {
+            if (m->view != LNG_VIEW_DASHBOARD) launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
+            else if (m->in_session) p->should_quit = true;
+        }
+#endif
         if (launch_commit.job.pending()) draw_launch_commit_progress(*th);
         else draw_ui(m, *th, p->logical_w, p->logical_h);
         ImGui::Render();

@@ -267,10 +267,19 @@ function(recomp_target_launcher_ui TGT)
     elseif(RECOMP_UI_LANGUAGE)
         recomp_target_launcher_language(${TGT} "${RECOMP_UI_LANGUAGE}")
     endif()
-    if(ANDROID)
+    if(ANDROID OR NINTENDO_SWITCH)
         target_compile_definitions(${TGT} PRIVATE
             LNG_GLES2=1
             IMGUI_IMPL_OPENGL_ES2=1)
+    endif()
+    if(NINTENDO_SWITCH)
+        # ImGui's "open URL" default shells out (execvp/waitpid): absent here.
+        target_compile_definitions(${TGT} PRIVATE IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS=1)
+    endif()
+    if(NINTENDO_SWITCH)
+        # No desktop dialogs (or termios) on Switch: the in-app browser picks.
+        set_source_files_properties(${RUI_SRC}/third_party/tinyfiledialogs.c
+            TARGET_DIRECTORY ${TGT} PROPERTIES HEADER_FILE_ONLY ON)
     endif()
     if(RECOMP_UI_SDL3)
         target_compile_definitions(${TGT} PRIVATE LNG_SDL3=1)
@@ -287,7 +296,10 @@ function(recomp_target_launcher_ui TGT)
     # than having to remember to link OpenGL itself — mirrors the standalone
     # CMakeLists.txt. SDL is still the host's to provide (its provenance varies:
     # vendored, find_package, etc.); GL is a uniform system lib, so it lives here.
-    if(ANDROID)
+    if(NINTENDO_SWITCH)
+        # Mesa (switch-mesa): GLES 2 over EGL, nouveau underneath.
+        target_link_libraries(${TGT} PRIVATE GLESv2 EGL glapi drm_nouveau)
+    elseif(ANDROID)
         find_library(RUI_GLES2_LIBRARY GLESv2 REQUIRED)
         find_library(RUI_EGL_LIBRARY EGL REQUIRED)
         find_library(RUI_LOG_LIBRARY log REQUIRED)

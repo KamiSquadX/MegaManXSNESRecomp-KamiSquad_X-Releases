@@ -595,6 +595,18 @@ static void snes_gamepad_write_config_order(int player,
 
 static void snes_gamepad_label(const char* token, char* out, size_t cap) {
     if (!token || !token[0]) { copy_str(out, cap, "(unbound)"); return; }
+#if defined(__SWITCH__)
+    /* What is printed on Joy-Cons and the Pro Controller. */
+    if (token_eq(token, "Back"))      { copy_str(out, cap, "-"); return; }
+    if (token_eq(token, "Start"))     { copy_str(out, cap, "+"); return; }
+    if (token_eq(token, "Guide"))     { copy_str(out, cap, "Home"); return; }
+    if (token_eq(token, "L1") || token_eq(token, "Lb")) { copy_str(out, cap, "L"); return; }
+    if (token_eq(token, "R1") || token_eq(token, "Rb")) { copy_str(out, cap, "R"); return; }
+    if (token_eq(token, "L2"))        { copy_str(out, cap, "ZL"); return; }
+    if (token_eq(token, "R2"))        { copy_str(out, cap, "ZR"); return; }
+    if (token_eq(token, "L3"))        { copy_str(out, cap, "L-Stick Press"); return; }
+    if (token_eq(token, "R3"))        { copy_str(out, cap, "R-Stick Press"); return; }
+#endif
     if (token_eq(token, "DpadUp"))    { copy_str(out, cap, "D-Pad Up"); return; }
     if (token_eq(token, "DpadDown"))  { copy_str(out, cap, "D-Pad Down"); return; }
     if (token_eq(token, "DpadLeft"))  { copy_str(out, cap, "D-Pad Left"); return; }

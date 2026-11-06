@@ -73,7 +73,7 @@ static int launcher_reject_if_pattern_mismatch(const char* title,
     return 1;
 }
 
-#if defined(__linux__) && !defined(__ANDROID__)
+#if defined(__linux__) && !defined(__ANDROID__) && !defined(__SWITCH__)
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -660,9 +660,9 @@ static int linux_pick_folder(const char* title, char* out, size_t out_cap) {
 #endif /* __linux__ */
 
 bool launcher_native_file_picker_available(void) {
-#if defined(__ANDROID__)
-    /* Android hosts import external files through SAF. The shared launcher
-     * browses the imported files in-app; desktop helpers are unavailable. */
+#if defined(__ANDROID__) || defined(__SWITCH__)
+    /* Android hosts import external files through SAF; Switch has no system
+     * picker. The shared launcher browses files in-app on both. */
     return false;
 #elif defined(__linux__)
     return linux_have_cmd("zenity") || linux_have_cmd("kdialog");
@@ -675,7 +675,7 @@ bool launcher_pick_rom(char* out_path, size_t out_cap) {
     if (!out_path || out_cap == 0) return false;
     out_path[0] = '\0';
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__SWITCH__)
     return false;
 #elif defined(__linux__)
     {
@@ -705,7 +705,7 @@ int launcher_try_pick_folder(const char* title, char* out_path, size_t out_cap) 
     if (!out_path || out_cap == 0) return -1;
     out_path[0] = '\0';
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__SWITCH__)
     (void)title;
     return -1;
 #elif defined(__linux__)
@@ -731,7 +731,7 @@ int launcher_try_pick_file(const char* title, const char* const* patterns,
     if (!out_path || out_cap == 0) return -1;
     out_path[0] = '\0';
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__SWITCH__)
     (void)title; (void)patterns; (void)num_patterns; (void)desc;
     return -1;
 #elif defined(__linux__)
@@ -795,7 +795,7 @@ int launcher_try_pick_save_file(const char* title, const char* const* patterns,
     if (!out_path || out_cap == 0) return -1;
     out_path[0] = '\0';
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__SWITCH__)
     (void)title; (void)patterns; (void)num_patterns; (void)desc;
     return -1;
 #elif defined(__linux__)

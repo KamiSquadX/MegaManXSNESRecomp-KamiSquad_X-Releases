@@ -26,8 +26,12 @@
 
 static bool s_quit_sdl = true;
 
-/* One-window platforms (Android) use the SDL3 platform; nothing to borrow here. */
-void launcher_platform_set_host_window(void* window) { (void)window; }
+/* One-window platforms (Switch on SDL2): the in-game launcher draws into the
+ * game's own window instead of opening a second one. */
+static SDL_Window* s_host_window = NULL;
+void launcher_platform_set_host_window(void* window) {
+    s_host_window = (SDL_Window*)window;
+}
 
 void launcher_platform_set_quit_sdl(bool quit_sdl) {
     s_quit_sdl = quit_sdl;
@@ -123,7 +127,7 @@ static void fit_window_to_display(LauncherPlatform* p, int logical_w, int logica
     int want_w, want_h, max_w, max_h, margin;
     float scale;
 
-    if (!p || !p->window || logical_w <= 0 || logical_h <= 0) return;
+    if (!p || !p->window || p->borrowed_window || logical_w <= 0 || logical_h <= 0) return;
     scale = p->input_scale > 0.0f ? p->input_scale : 1.0f;
     want_w = (int)((float)logical_w * scale);
     want_h = (int)((float)logical_h * scale);
@@ -256,11 +260,21 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     if (test_hidden) window_flags |= SDL_WINDOW_HIDDEN;
 #if defined(__ANDROID__)
     window_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_BORDERLESS;
+#elif defined(__SWITCH__)
+    /* The console's one screen, at the size SDL's Switch driver renders. */
+    window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN;
+    win_w = 1280;
+    win_h = 720;
 #endif
-    p->window = SDL_CreateWindow(title ? title : "Launcher",
-                                 SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                 win_w, win_h,
-                                 window_flags);
+    if (s_host_window) {
+        p->window = s_host_window;
+        p->borrowed_window = true;
+    } else {
+        p->window = SDL_CreateWindow(title ? title : "Launcher",
+                                     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                     win_w, win_h,
+                                     window_flags);
+    }
     if (!p->window) {
         fprintf(stderr, "[launcher] SDL_CreateWindow failed: %s\n", SDL_GetError());
         if (s_quit_sdl) SDL_Quit();
@@ -270,7 +284,7 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     p->gl = SDL_GL_CreateContext(p->window);
     if (!p->gl) {
         fprintf(stderr, "[launcher] SDL_GL_CreateContext failed: %s\n", SDL_GetError());
-        SDL_DestroyWindow(p->window);
+        if (!p->borrowed_window) SDL_DestroyWindow(p->window);
         p->window = NULL;
         if (s_quit_sdl) SDL_Quit();
         return false;
@@ -451,7 +465,9 @@ void launcher_platform_present(LauncherPlatform* p) {
 void launcher_platform_close(LauncherPlatform* p) {
     if (!p) return;
     if (p->gl)     { SDL_GL_DeleteContext(p->gl); p->gl = NULL; }
-    if (p->window) { SDL_DestroyWindow(p->window); p->window = NULL; }
+    if (p->window && !p->borrowed_window) SDL_DestroyWindow(p->window);
+    p->window = NULL;
+    p->borrowed_window = false;
     SDL_GL_ResetAttributes();   // leave a clean slate for the game's SDL usage
     /* Soft-return rematch hosts that skip SDL_Quit (s_quit_sdl=false) keep the
      * subsystem alive across launcher↔game transitions. When we do quit, hosts
