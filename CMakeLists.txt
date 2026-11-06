@@ -52,13 +52,24 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/mmx_default_config.h"
 # One source list for Windows, Linux and macOS, with region-specific generated
 # banks and funcs.h. Missing optional JP output does not block a USA build.
 function(add_mmx_variant TARGET GEN_DIR CFG_DIR)
+    # Android packages one game, the USA edition, as libmain.so (android/).
+    if(ANDROID AND "${TARGET}" STREQUAL "RockmanXSNESRecomp")
+        return()
+    endif()
     if(NOT SNESRECOMP_SETUP_HOST AND NOT EXISTS "${GEN_DIR}/dispatch_v2.c")
         if("${TARGET}" STREQUAL "RockmanXSNESRecomp")
             message(STATUS "Rockman X: generate variants/jp/gen to enable this target")
             return()
         endif()
     endif()
-    add_executable(${TARGET} ${SNESRECOMP_RUNNER_SOURCES}
+    if(ANDROID)
+        # SDLActivity loads libmain.so and calls its SDL_main.
+        add_library(${TARGET} SHARED)
+        set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME main)
+    else()
+        add_executable(${TARGET})
+    endif()
+    target_sources(${TARGET} PRIVATE ${SNESRECOMP_RUNNER_SOURCES}
         src/main.c src/mmx_startup.c src/mmx_netplay.c src/mmx_key_config.c src/mmx_options.c src/mmx_display.c src/mmx_renderer.c src/mmx_render_assets.c src/mmx_wide_policy.c
         src/mmx_00.c src/gen_stubs.c src/mmx_cpu_infra.c src/mmx_rtl.c
         src/mmx_spc_player.c src/mmx_replay.c src/mods/mmx_diagnostics_plugin.c
@@ -88,17 +99,29 @@ function(add_mmx_variant TARGET GEN_DIR CFG_DIR)
     snesrecomp_target_fiber_compat(${TARGET})
     snesrecomp_target_desktop_host(${TARGET} TIER2)
     snesrecomp_target_generated_code(${TARGET} ${GEN_DIR})
+    if(ANDROID)
+        target_compile_definitions(${TARGET} PRIVATE MMX_DESKTOP_ENTRY=SDL_main)
+        target_link_libraries(${TARGET} PRIVATE android log)
+    endif()
     if(SNESRECOMP_SETUP_HOST)
         target_sources(${TARGET} PRIVATE src/setup_host.c)
     endif()
-    snesrecomp_target_config_seed(${TARGET})
-    snesrecomp_target_shader_presets(${TARGET})
+    if(NOT ANDROID)
+        # Desktop files staged beside the executable; the APK carries its own.
+        snesrecomp_target_config_seed(${TARGET})
+        snesrecomp_target_shader_presets(${TARGET})
+    endif()
     if("${TARGET}" STREQUAL "RockmanXSNESRecomp")
         # JP remains authentic 4:3, with no mod provider.
         snesrecomp_target_mod_catalog(${TARGET} NONE)
     else()
-        snesrecomp_target_mod_catalog(${TARGET} "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded")
-        snesrecomp_target_rom_cache(${TARGET})
+        if(ANDROID)
+            # The APK carries the catalog; its setup screen installs it.
+            snesrecomp_target_mod_catalog(${TARGET} NONE)
+        else()
+            snesrecomp_target_mod_catalog(${TARGET} "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded")
+            snesrecomp_target_rom_cache(${TARGET})
+        endif()
         if(NOT SNESRECOMP_SETUP_HOST)
             # Invalidate generated objects before Ninja plans this build.
             file(GLOB mmx_generated ${GEN_DIR}/*.c)
@@ -158,8 +181,10 @@ add_mmx_variant(RockmanXSNESRecomp "${CMAKE_CURRENT_SOURCE_DIR}/variants/jp/gen"
     "${CMAKE_CURRENT_SOURCE_DIR}/variants/jp/config"
     MMX_VARIANT_JP=1 SNESRECOMP_LLE_BOUNCE_DEFAULT=0)
 
+if(NOT ANDROID)
 include(CTest)
-if(BUILD_TESTING)
+endif()
+if(BUILD_TESTING AND NOT ANDROID)
     add_subdirectory(${SNESRECOMP_ROOT}/runner/tests/raster_snapshot raster-snapshot-tests)
     add_subdirectory(${SNESRECOMP_ROOT}/runner/tests/diagnostics diagnostic-writer-tests)
     add_executable(mmx_boss_rush_test tests/mmx_boss_rush_test.c src/mmx_boss_rush.c src/mmx_boss_rush_draw.c src/mmx_boss_rush_foreign_art.c)

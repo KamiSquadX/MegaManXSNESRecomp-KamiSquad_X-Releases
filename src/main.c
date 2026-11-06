@@ -322,6 +322,10 @@ static const SnesRomRevision kMmxRomCatalog[] = {
 #undef MMX_X2_NOTE
 #undef MMX_X3_NOTE
 
+#ifdef __ANDROID__
+/* SDLActivity resolves SDL_main from libmain.so by name. */
+__attribute__((visibility("default")))
+#endif
 int MMX_DESKTOP_ENTRY(int argc, char **argv) {
   MmxStartupLogging();
   for(int arg=1;arg+1<argc;++arg)

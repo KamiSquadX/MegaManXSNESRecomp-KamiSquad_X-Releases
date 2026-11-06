@@ -1,0 +1,133 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Release stamp shared with the desktop build (crash reports, netplay).
+def buildVersion = project.findProperty('mmxVersion') ?: '2.3.3-ks.1.1.3'
+def sdl3Dir = file("${rootDir}/SDL3")
+// Build-time tools run on this PC, not the device (android/host-tools).
+def hostToolsDir = file("${rootDir}/build/host-tools")
+def hostExe = System.getProperty('os.name').toLowerCase().contains('windows') ? '.exe' : ''
+def sfxConverter = new File(hostToolsDir, "bin/mmx_saber_sfx_convert${hostExe}")
+// A desktop CMake with a host C compiler (-PhostCmake=<path> if not on PATH).
+def hostCmake = project.findProperty('hostCmake') ?: 'cmake'
+
+android {
+    namespace 'com.kamisquadx.megamanxrecomp'
+    buildFeatures { buildConfig true }
+    compileSdk 34
+    ndkVersion '27.0.12077973'
+
+    defaultConfig {
+        applicationId 'com.kamisquadx.megamanxrecomp'
+        minSdk 28
+        targetSdk 34
+        versionCode 10103
+        versionName buildVersion
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static',
+                          '-DCMAKE_BUILD_TYPE=Release',
+                          "-DSNESRECOMP_BUILD_VERSION=${buildVersion}",
+                          "-DSNESRECOMP_SDL3_SOURCE_DIR=${sdl3Dir.absolutePath.replace('\\', '/')}",
+                          "-DMMX_SABER_SFX_CONVERTER=${sfxConverter.absolutePath.replace('\\', '/')}"
+                // arm64-v8a for phones and handhelds; x86_64 for the emulator.
+                abiFilters 'arm64-v8a', 'x86_64'
+                targets 'MegaManXSNESRecomp'
+            }
+        }
+    }
+
+    signingConfigs {
+        // A stable key so an update installs over the previous APK. Set
+        // MMX_ANDROID_KEYSTORE (and its passwords) for releases; otherwise
+        // the local debug key signs it.
+        release {
+            def ks = System.getenv('MMX_ANDROID_KEYSTORE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('MMX_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('MMX_ANDROID_KEY_ALIAS') ?: 'mmx'
+                keyPassword System.getenv('MMX_ANDROID_KEY_PASSWORD') ?: System.getenv('MMX_ANDROID_KEYSTORE_PASSWORD')
+            } else {
+                def debug = signingConfigs.debug
+                storeFile debug.storeFile
+                storePassword debug.storePassword
+                keyAlias debug.keyAlias
+                keyPassword debug.keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            // The game is unplayable unoptimized; keep native code at Release.
+            debuggable true
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'jni/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            // SDL3's own Java glue, from the same release as libSDL3.so.
+            java.srcDirs += new File(sdl3Dir, "android-project/app/src/main/java")
+            assets.srcDirs += new File(buildDir, 'generated/runtimeAssets')
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+tasks.register('fetchSdl3', Exec) {
+    workingDir rootDir
+    commandLine 'python', 'fetch_sdl3.py'
+    outputs.dir sdl3Dir
+}
+
+// recomp-ui stages these beside the desktop executable. The APK carries the
+// same tree; SetupActivity copies it into the app's files folder, which the
+// native host makes its working directory. Metadata only: no ROM data.
+tasks.register('prepareRuntimeAssets', Copy) {
+    def root = "${rootDir}/.."
+    into new File(buildDir, 'generated/runtimeAssets')
+    from("${root}/recomp-ui/assets/common/fonts") { into 'payload/assets/fonts' }
+    from("${root}/recomp-ui/assets/common/img") { into 'payload/assets/img' }
+    from("${root}/recomp-ui/assets/consoles/snes/img") { into 'payload/assets/img' }
+    from("${root}/recomp/launcher/boxart.tga") { into 'payload/assets/img' }
+    from("${root}/mods/preloaded/packages") { into 'payload/mods/preloaded/packages' }
+    from("${root}/logging.ini") { into 'payload' }
+}
+
+tasks.register('configureHostTools', Exec) {
+    workingDir rootDir
+    commandLine hostCmake, '-S', 'host-tools', '-B', hostToolsDir.absolutePath, '-DCMAKE_BUILD_TYPE=Release'
+}
+tasks.register('buildHostTools', Exec) {
+    dependsOn 'configureHostTools'
+    workingDir rootDir
+    commandLine hostCmake, '--build', hostToolsDir.absolutePath, '--config', 'Release'
+    outputs.file sfxConverter
+}
+
+tasks.named('preBuild').configure {
+    dependsOn 'fetchSdl3', 'prepareRuntimeAssets', 'buildHostTools'
+}

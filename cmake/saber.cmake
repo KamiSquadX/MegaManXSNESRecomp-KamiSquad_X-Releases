@@ -49,13 +49,28 @@ if(NOT (EXISTS "${_saber_sfx_source_dir}/saber_1.ogg" AND
         EXISTS "${_saber_sfx_source_dir}/saber_3.ogg" AND _saber_sfx_inputs))
     message(FATAL_ERROR "Saber Zero sound sources missing from ${_saber_sfx_source_dir}")
 endif()
+# A cross build (Android) cannot run the converter it compiles for the
+# device; it takes a host-built one instead (android/host-tools).
+set(MMX_SABER_SFX_CONVERTER "" CACHE FILEPATH
+    "Host-built mmx_saber_sfx_convert, required when cross-compiling")
+if(CMAKE_CROSSCOMPILING)
+    if(NOT EXISTS "${MMX_SABER_SFX_CONVERTER}")
+        message(FATAL_ERROR "Cross-compiling: set MMX_SABER_SFX_CONVERTER to a host build of "
+            "mmx_saber_sfx_convert (android/host-tools builds one)")
+    endif()
+    set(_saber_sfx_convert_command "${MMX_SABER_SFX_CONVERTER}")
+    set(_saber_sfx_convert_depends "${MMX_SABER_SFX_CONVERTER}")
+else()
+    set(_saber_sfx_convert_command "$<TARGET_FILE:mmx_saber_sfx_convert>")
+    set(_saber_sfx_convert_depends mmx_saber_sfx_convert)
+endif()
 add_custom_command(
     OUTPUT "${_saber_sfx_cache}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${_saber_cache_dir}"
-    COMMAND "$<TARGET_FILE:mmx_saber_sfx_convert>"
+    COMMAND "${_saber_sfx_convert_command}"
         --source-dir "${_saber_sfx_source_dir}"
         --out "${_saber_sfx_cache}"
-    DEPENDS mmx_saber_sfx_convert ${_saber_sfx_inputs}
+    DEPENDS ${_saber_sfx_convert_depends} ${_saber_sfx_inputs}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     VERBATIM)
 add_custom_target(saber_sfx_cache DEPENDS "${_saber_sfx_cache}")

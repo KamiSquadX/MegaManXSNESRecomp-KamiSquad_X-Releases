@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mega Man X Recompiled</string>
+    <string name="setup_short">ROM setup</string>
+    <string name="setup_long">Select ROMs</string>
+</resources>
