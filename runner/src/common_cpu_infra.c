@@ -68,6 +68,7 @@ static void rtl_snes_charge_master_cycles(Snes *snes, uint64_t clocks) {
 
 void RtlRegisterGame(const RtlGameInfo *info) {
   g_rtl_game_info = info;
+  RtlSetStateExtraBound(NULL);
   tier2_capture_set_default_enabled(info && info->tier2_capture);
   /* Arm MSU-1 from the environment for every game, with no per-game
    * wiring. Inert (default-OFF) unless SNESRECOMP_MSU1 is set. A game's
@@ -125,7 +126,7 @@ int g_recomp_stack_top = 0;
  * Used by cpu_resolve_ancestor_skip() to turn a return-to-ancestor RTS
  * (manual PLA/PLX/PLB rebalance to an ancestor's entry level, then RTS)
  * into a SKIP_N non-local return through the existing call-site
- * decrement contract. See ISSUES.md "shared-tail multi-level non-local
+ * decrement contract. See the historical issue notes "shared-tail multi-level non-local
  * return" (the fish-explosion OAM wipe). */
 uint16_t g_cpu_entry_s[RECOMP_STACK_DEPTH];
 /* HLE forwarding and interpreter attribution scopes are not generated guest
@@ -156,6 +157,12 @@ void cpu_interrupt_context_leave(void) {
 
 int cpu_interrupt_context_active(void) {
   return g_interrupt_context_depth != 0;
+}
+
+void cpu_guest_scope_unwind(void) {
+  g_recomp_stack_top = 0;
+  g_interrupt_context_depth = 0;
+  g_tailcall_context_valid = 0;
 }
 
 void cpu_tailcall_inherit_return_context(uint16_t entry_s, uint8_t hrv) {
@@ -931,6 +938,10 @@ void snes_refresh_state_set(uint64_t phase, uint64_t charged_upto) {
 
 // Called at loop headers in generated code — detect infinite loops
 void WatchdogCheck(void) {
+  RtlGuestScopeCheckpoint();
+  /* The scoped budget owns aborts here; the ordinary watchdog's longjmp
+   * would bypass scope cleanup and strand the audio lock. */
+  if (RtlGuestScopeActive()) return;
   snes_refresh_charge();
 #ifdef SNES_COSIM
   /* Co-sim WRAM watchpoint (dev, env-gated): name the recompiled function that

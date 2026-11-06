@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $gcc = (Get-Command gcc).Source
-$tests = @("ppu_sprite_limit_test", "ppu_world_mirror_test", "ppu_elastic_band_test", "ppu_mode7_hd_test", "ppu_raster_journal_test")
+$tests = @("ppu_sprite_limit_test", "ppu_world_mirror_test", "ppu_elastic_band_test", "ppu_mode7_hd_test", "ppu_raster_journal_test", "ppu_hires_mode_test")
 $failed = @()
 
 foreach ($test in $tests) {
@@ -12,6 +12,7 @@ foreach ($test in $tests) {
         "-I$root\runner\src", "-I$root\runner\src\snes",
         "$root\tests\ppu\$test.c",
         "$root\runner\src\snes\ppu.c",
+        "$root\runner\src\snes\hd_jobs.c",
         "$root\runner\src\snes\ppu_legacy.c",
         "-o", $out
     )

@@ -38,10 +38,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "display_aspect.h"
+#include "local_views.h"
 #include "rom_identity.h"
-
-/* Compositor surfaces may be wider than the guest PPU's own line buffer. */
-enum { kSnesDesktopMaxFrameWidth = 1024 };
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +48,7 @@ extern "C" {
 struct RtlGameInfo;
 struct SpcPlayer;
 struct RecompLauncherCModProvider;
+struct SnesHdFrame;
 struct RecompLauncherCGameInfo;
 
 /* Per-frame numbers a game's after_run_frame hook may want. Wall-clock
@@ -106,6 +105,11 @@ typedef struct SnesDesktopHostGame {
    * (SNESRECOMP_ENABLE_MODS) the framework's mod runtime provider is used
    * unless this returns one, in which case this one wins. */
   const struct RecompLauncherCModProvider *(*mods_provider)(void);
+
+  /* Optional immutable jobs for a game-owned compositor. Without this hook,
+   * the host lazily captures ordinary PPU frames. Native/custom output and
+   * adaptive widescreen remain authoritative. */
+  const struct SnesHdFrame *(*hd_frame)(void);
 
   /* After config.ini (+config.local.ini) is parsed and before the launcher
    * opens. Load per-title settings here. */
@@ -219,6 +223,10 @@ typedef struct SnesDesktopHostGame {
   /* One line added to every refusal. NULL: a note that headered (.smc) and
    * headerless (.sfc) copies of the right dump both work. */
   const char *rom_help;
+  /* Optional native producer publishes the primary 256x224 ARGB field after
+   * raster-state capture. The host owns this writable surface. A separate
+   * draw_frame may retain a wider image for presentation. */
+  void (*publish_native_field)(uint8_t *field, unsigned number);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */
@@ -229,6 +237,10 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
 int snesrecomp_desktop_frame_width(void);
 int snesrecomp_desktop_frame_height(void);
 void snesrecomp_desktop_set_widescreen(int enabled);
+/* Selected PPU renderer, shared by hotkeys and diagnostic playback. Setting
+ * this also updates the live config; it does not write the user's file. */
+int snesrecomp_desktop_new_renderer(void);
+void snesrecomp_desktop_set_new_renderer(int enabled);
 
 /* Ask the host to reset its pacing clock at the next opportunity (a title
  * that just changed its presentation settings). */

@@ -59,6 +59,12 @@ case "$(uname -s)" in
     *) echo "  (skipped: Windows only)" ;;
 esac
 
+echo "=== DSP capture cursor ==="
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" "$ROOT/tests/audio_capture_cursor_test.c" \
+    -o "$OUT/audio_capture_cursor_test"
+"$OUT/audio_capture_cursor_test"
+
 echo "=== MSU soundtrack routing ==="
 "$CC" -std=c11 -Wall -Wextra -O1 \
     -D_POSIX_C_SOURCE=200809L -I "$ROOT/runner/src" \
@@ -71,17 +77,21 @@ echo "=== PPU sprite limits ==="
     -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/ppu/ppu_sprite_limit_test.c" \
-    "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
     "$ROOT/runner/src/snes/ppu_legacy.c" \
     -lm -o "$OUT/ppu_sprite_limit_test"
 "$OUT/ppu_sprite_limit_test"
 
+echo "=== PPU modes 4-6 fall back to the compatibility renderer ==="
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_hires_mode_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_hires_mode_test"
+"$OUT/ppu_hires_mode_test"
+
 echo "=== PPU widescreen world-mirror band ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_world_mirror_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_world_mirror_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_world_mirror_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_world_mirror_test"
 "$OUT/ppu_world_mirror_test"
 
 echo "=== PPU widescreen elastic anchor band ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_elastic_band_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_elastic_band_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_elastic_band_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_elastic_band_test"
 "$OUT/ppu_elastic_band_test"
 
 echo "=== HD Mode 7 sampling and composition ==="
@@ -89,13 +99,13 @@ echo "=== HD Mode 7 sampling and composition ==="
     -DSNESRECOMP_REVERSE_DEBUG=0 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
     "$ROOT/tests/ppu/ppu_mode7_hd_test.c" \
-    "$ROOT/runner/src/snes/ppu.c" \
+    "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c" \
     "$ROOT/runner/src/snes/ppu_legacy.c" \
     -lm -o "$OUT/ppu_mode7_hd_test"
 "$OUT/ppu_mode7_hd_test"
 
 echo "=== PPU raster journal ==="
-"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_raster_journal_test.c"     "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_raster_journal_test"
+"$CC" -std=c11 -Wall -Wextra -O1     -DSNESRECOMP_REVERSE_DEBUG=0     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes"     "$ROOT/tests/ppu/ppu_raster_journal_test.c"     "$ROOT/runner/src/snes/hd_jobs.c" "$ROOT/runner/src/snes/ppu.c"     "$ROOT/runner/src/snes/ppu_legacy.c"     -lm -o "$OUT/ppu_raster_journal_test"
 "$OUT/ppu_raster_journal_test"
 
 echo "=== DMA / HDMA ==="
@@ -199,6 +209,7 @@ echo "=== DSP-1 bus/core shell ==="
 
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
     -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    -DSNESRECOMP_DSP1_HLE=1 \
     "$ROOT/tests/dsp1/dsp1_hle_host_test.c" \
     "$ROOT/runner/src/snes/dsp1.c" \
     "$ROOT/runner/src/snes/dsp1_hle.c" \
@@ -231,6 +242,24 @@ echo "=== SA-1 CPU, mapping and peripherals ==="
     "$ROOT/runner/src/snes/interp816.c" \
     -o "$OUT/sa1_test"
 "$OUT/sa1_test"
+
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -DSNESRECOMP_SA1_TIMER_NATIVE=1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/sa1/sa1_test.c" \
+    "$ROOT/runner/src/snes/sa1.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/snes/interp816.c" \
+    -o "$OUT/sa1_test_native"
+"$OUT/sa1_test_native"
+
+"$CC" -std=c11 -Wall -Wextra -Werror -O1 \
+    -I "$ROOT/runner/src" -I "$ROOT/runner/src/snes" \
+    "$ROOT/tests/sa1/timer_span_test.c" \
+    "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+    "$ROOT/runner/src/snes/interp816.c" \
+    -o "$OUT/sa1_timer_span_test"
+"$OUT/sa1_timer_span_test"
 
 echo "=== manual joypad serial protocol ==="
 "$CC" -std=c11 -Wall -Wextra -Werror -O1 \
@@ -472,6 +501,33 @@ echo "=== mod runtime: exceptions stay inside the C boundary ==="
     "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
     -o "$OUT/mod_c_boundary_test"
 (cd "$OUT" && ./mod_c_boundary_test)
+
+echo "=== mod runtime: feature requirements enable and drop together ==="
+# The launcher provider needs recomp-ui's header, which a game checkout
+# carries beside this one (or RECOMP_UI_DIR names).
+RECOMP_UI_SRC="${RECOMP_UI_DIR:-$ROOT/../recomp-ui}/src"
+if [ -f "$RECOMP_UI_SRC/recomp_launcher.h" ]; then
+    "${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 -DRECOMP_LAUNCHER \
+        -I "$ROOT/runner/src" -I "$RECOMP_UI_SRC" \
+        "$ROOT/tests/mod_resources/feature_requires_test.cpp" \
+        -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+        "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+        "$ROOT/runner/src/crc32.c" \
+        "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
+        -o "$OUT/mod_feature_requires_test"
+    "$OUT/mod_feature_requires_test" "$OUT/mod_feature_requires_fixture"
+    "${CXX:-g++}" -std=c++17 -Wall -Wextra -O1 -DRECOMP_LAUNCHER \
+        -I "$ROOT/runner/src" -I "$RECOMP_UI_SRC" \
+        "$ROOT/tests/mod_resources/exclusive_plugin_test.cpp" \
+        -x c++ "$ROOT/runner/src/mod_runtime.cpp" \
+        "$ROOT/runner/src/sha256.c" "$ROOT/runner/src/snes/tier2_capture.c" \
+        "$ROOT/runner/src/crc32.c" \
+        "$ROOT/runner/src/rom_identity.c" "$ROOT/runner/src/sha1.c" \
+        -o "$OUT/mod_exclusive_plugin_test"
+    "$OUT/mod_exclusive_plugin_test" "$OUT/mod_exclusive_plugin_fixture"
+else
+    echo "  (skipped: no recomp-ui; set RECOMP_UI_DIR)"
+fi
 
 echo "=== host OSD (FPS readout / turbo / toasts) ==="
 # Needs SDL for its clock only (no window; SDL_INIT_TIMER). Skipped rather than

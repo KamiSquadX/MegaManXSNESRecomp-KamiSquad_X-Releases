@@ -6,6 +6,7 @@
 #include "types.h"
 #include "sdl_compat.h"
 #include "display_aspect.h"
+#include "snes/hd_jobs.h"
 
 /* Controller seats the desktop host can drive: two console ports, or up to
  * eight with a Super Multitap in each (docs/MULTITAP.md). */
@@ -84,6 +85,10 @@ enum {
   kKeys_ControlsExtP7_Last = kKeys_ControlsExtP7 + 7,
   kKeys_ControlsExtP8,
   kKeys_ControlsExtP8_Last = kKeys_ControlsExtP8 + 7,
+  /* Append commands so existing ids and positional defaults stay intact. */
+  kKeys_ToggleVSync,
+  kKeys_ToggleFrameBlend,
+  kKeys_ToggleRunAhead,
   kKeys_Total,
 };
 
@@ -124,6 +129,7 @@ typedef struct Config {
   uint8 window_scale;
   bool enable_audio;
   bool linear_filtering;
+  SnesHdSettings mode7; /* Local presentation; defaults to GPU 8x. */
   uint8 output_method;
   uint16 audio_freq;
   uint8 audio_channels;
@@ -254,6 +260,16 @@ enum {
 };
 
 extern Config g_config;
+
+/* Set when a config parameter has been changed live this session: the
+ * volume/fullscreen hotkeys, any snesrecomp_set_* helper (host_api.h), or a
+ * game that writes a g_config field directly (e.g. the pause menu's Display
+ * rows). The shutdown path rewrites config.ini from it so the launcher opens
+ * on the settings the player left. If you write a g_config field yourself,
+ * set this or the write will not be persisted. Declared here rather than in
+ * host_api.h so a game that only includes config.h can mark its writes
+ * without pulling in the desktop host's API header. */
+extern bool g_config_dirty;
 
 void ConfigUseStateMenuDefaults(void);
 /* Opt in before parsing: binds [KeyMap] OpenLauncher to Ctrl+L by default. */

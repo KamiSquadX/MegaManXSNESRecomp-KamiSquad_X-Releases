@@ -16,8 +16,76 @@ set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/desktop/host_main.c"
     APPEND PROPERTY COMPILE_DEFINITIONS
     SNESRECOMP_FRAME_STAGING_HLE=$<STREQUAL:${SNESRECOMP_FRAME_IMPL},HLE>)
 message(STATUS "SNES desktop frame composition: ${SNESRECOMP_FRAME_IMPL}")
+# Game-by-game qualification covers Windows x64. Other targets keep the
+# portable reference defaults; both implementations remain selectable.
+set(_SNESRECOMP_APU_DEFAULT "LLE")
+set(_SNESRECOMP_CRC_DEFAULT "BYTE")
+if(_SNESRECOMP_FRAME_DEFAULT STREQUAL "HLE")
+    set(_SNESRECOMP_APU_DEFAULT "NATIVE")
+    set(_SNESRECOMP_CRC_DEFAULT "SLICE8")
+endif()
+set(SNESRECOMP_APU_TIME_IMPL "${_SNESRECOMP_APU_DEFAULT}" CACHE STRING
+    "Audio time advancement (LLE or NATIVE)")
+set_property(CACHE SNESRECOMP_APU_TIME_IMPL PROPERTY STRINGS LLE NATIVE)
+if(NOT SNESRECOMP_APU_TIME_IMPL MATCHES "^(LLE|NATIVE)$")
+    message(FATAL_ERROR "SNESRECOMP_APU_TIME_IMPL must be LLE or NATIVE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/apu.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_APU_NATIVE=$<STREQUAL:${SNESRECOMP_APU_TIME_IMPL},NATIVE>)
+message(STATUS "SNES audio time advancement: ${SNESRECOMP_APU_TIME_IMPL}")
+set(SNESRECOMP_DSP_MIX_IMPL "LLE" CACHE STRING "DSP voice mixing (LLE or NATIVE)")
+set_property(CACHE SNESRECOMP_DSP_MIX_IMPL PROPERTY STRINGS LLE NATIVE)
+if(NOT SNESRECOMP_DSP_MIX_IMPL MATCHES "^(LLE|NATIVE)$")
+    message(FATAL_ERROR "SNESRECOMP_DSP_MIX_IMPL must be LLE or NATIVE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/dsp.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_DSP_NATIVE_MIX=$<STREQUAL:${SNESRECOMP_DSP_MIX_IMPL},NATIVE>)
+message(STATUS "SNES DSP voice mixing: ${SNESRECOMP_DSP_MIX_IMPL}")
+set(SNESRECOMP_INTERP_READ_IMPL "REFERENCE" CACHE STRING
+    "Interpreter ROM read decoding (REFERENCE or FUSED)")
+set_property(CACHE SNESRECOMP_INTERP_READ_IMPL PROPERTY STRINGS REFERENCE FUSED)
+if(NOT SNESRECOMP_INTERP_READ_IMPL MATCHES "^(REFERENCE|FUSED)$")
+    message(FATAL_ERROR "SNESRECOMP_INTERP_READ_IMPL must be REFERENCE or FUSED")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/interp_bridge.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_INTERP_FUSED_ROM_READ=$<STREQUAL:${SNESRECOMP_INTERP_READ_IMPL},FUSED>)
+message(STATUS "SNES interpreter ROM read decoding: ${SNESRECOMP_INTERP_READ_IMPL}")
+set(SNESRECOMP_LEGACY_MODE7_IMPL "REFERENCE" CACHE STRING
+    "Legacy Mode 7 line image service (REFERENCE or NATIVE)")
+set_property(CACHE SNESRECOMP_LEGACY_MODE7_IMPL PROPERTY STRINGS REFERENCE NATIVE)
+if(NOT SNESRECOMP_LEGACY_MODE7_IMPL MATCHES "^(REFERENCE|NATIVE)$")
+    message(FATAL_ERROR "SNESRECOMP_LEGACY_MODE7_IMPL must be REFERENCE or NATIVE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/ppu_legacy.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_LEGACY_MODE7_NATIVE=$<STREQUAL:${SNESRECOMP_LEGACY_MODE7_IMPL},NATIVE>)
+message(STATUS "SNES legacy Mode 7 line image: ${SNESRECOMP_LEGACY_MODE7_IMPL}")
+set(SNESRECOMP_SA1_TIMER_IMPL "REFERENCE" CACHE STRING
+    "SA-1 timer advancement (REFERENCE or NATIVE event spans)")
+set_property(CACHE SNESRECOMP_SA1_TIMER_IMPL PROPERTY STRINGS REFERENCE NATIVE)
+if(NOT SNESRECOMP_SA1_TIMER_IMPL MATCHES "^(REFERENCE|NATIVE)$")
+    message(FATAL_ERROR "SNESRECOMP_SA1_TIMER_IMPL must be REFERENCE or NATIVE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/sa1.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_SA1_TIMER_NATIVE=$<STREQUAL:${SNESRECOMP_SA1_TIMER_IMPL},NATIVE>)
+message(STATUS "SA-1 timer advancement: ${SNESRECOMP_SA1_TIMER_IMPL}")
+set(SNESRECOMP_SUPERFX_IDLE_IMPL "LLE" CACHE STRING
+    "Super FX halted clock advancement (LLE or NATIVE)")
+set_property(CACHE SNESRECOMP_SUPERFX_IDLE_IMPL PROPERTY STRINGS LLE NATIVE)
+if(NOT SNESRECOMP_SUPERFX_IDLE_IMPL MATCHES "^(LLE|NATIVE)$")
+    message(FATAL_ERROR "SNESRECOMP_SUPERFX_IDLE_IMPL must be LLE or NATIVE")
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/snes/superfx.c"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    SNESRECOMP_SUPERFX_IDLE_NATIVE=$<STREQUAL:${SNESRECOMP_SUPERFX_IDLE_IMPL},NATIVE>)
+message(STATUS "SNES Super FX halted clocks: ${SNESRECOMP_SUPERFX_IDLE_IMPL}")
 option(SNESRECOMP_EXPOSE_COVERAGE_MOD "Show the default-off Coverage Capture mod" OFF)
 add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOSE_COVERAGE_MOD}>)
+include(${CMAKE_CURRENT_LIST_DIR}/ppu_8bpp_backend.cmake)
 
 # runner.cmake — shared source list for snesrecomp game projects.
 #
@@ -33,6 +101,20 @@ add_compile_definitions(SNESRECOMP_EXPOSE_COVERAGE_MOD=$<BOOL:${SNESRECOMP_EXPOS
 # of this list — it is a developer-only verify backend, off for normal builds.
 
 set(SNESRECOMP_RUNNER_ROOT ${CMAKE_CURRENT_LIST_DIR})
+set(SNESRECOMP_CRC32_IMPL "${_SNESRECOMP_CRC_DEFAULT}" CACHE STRING "IEEE CRC implementation (BYTE or SLICE8)")
+set_property(CACHE SNESRECOMP_CRC32_IMPL PROPERTY STRINGS BYTE SLICE8)
+if(SNESRECOMP_CRC32_IMPL STREQUAL "SLICE8")
+    set(_SNESRECOMP_CRC32_SLICES 8)
+elseif(SNESRECOMP_CRC32_IMPL STREQUAL "BYTE")
+    set(_SNESRECOMP_CRC32_SLICES 1)
+else()
+    message(FATAL_ERROR "SNESRECOMP_CRC32_IMPL must be BYTE or SLICE8")
+endif()
+set_property(SOURCE "${SNESRECOMP_RUNNER_ROOT}/src/crc32.c" APPEND PROPERTY
+    COMPILE_DEFINITIONS SNESRECOMP_CRC32_SLICES=${_SNESRECOMP_CRC32_SLICES})
+message(STATUS "SNES IEEE CRC: ${SNESRECOMP_CRC32_IMPL}")
+unset(_SNESRECOMP_CRC32_SLICES)
+include(${SNESRECOMP_RUNNER_ROOT}/dsp1_backend.cmake)
 # The framework checkout itself (runner/..). Derived, not taken from the
 # caller's SNESRECOMP_ROOT: that one is the includer's own spelling and a
 # project is free not to define it at all.
@@ -245,6 +327,7 @@ set(SNESRECOMP_RUNNER_SOURCES
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/msu1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/color_lut.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/ppu.c
+    ${SNESRECOMP_RUNNER_ROOT}/src/snes/hd_jobs.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/ppu_legacy.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/sa1.c
     ${SNESRECOMP_RUNNER_ROOT}/src/snes/sdd1.c
@@ -405,7 +488,7 @@ if(SNESRECOMP_ENABLE_TRACE AND WIN32)
     list(APPEND SNESRECOMP_RUNNER_LIBRARIES ws2_32 dbghelp)
 endif()
 
-# Differential co-simulation (SNES_COSIM.md): full-state first-divergence oracle.
+# Differential co-simulation (docs/COSIM.md): full-state first-divergence oracle.
 # DEV/DIAGNOSTICS ONLY — must NEVER be enabled in a shipping Production config.
 # Adds the frame-keyed park/step engine (cosim.c) + canonical state hash
 # (cosim_state.c) + a loopback TCP server; needs ws2_32 on Windows. Defines
@@ -1053,6 +1136,8 @@ endfunction()
 # enabled together.
 function(snesrecomp_target_opengl target)
     snesrecomp_target_glsl_shader(${target})
+    include(${SNESRECOMP_RUNNER_ROOT}/hd_gpu.cmake)
+    snesrecomp_target_hd_gpu(${target} EXTERNAL_GL_LOADER)
     target_sources(${target} PRIVATE
         ${SNESRECOMP_RUNNER_ROOT}/src/desktop/opengl.c
         ${SNESRECOMP_FRAMEWORK_ROOT}/third_party/gl_core/gl_core_3_1.c)

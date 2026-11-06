@@ -1,5 +1,8 @@
 # SNESRecomp mod packages and trusted plugins
 
+For a hands-on guide to making mods with ordinary tools, start with
+[`MOD_AUTHORING.md`](MOD_AUTHORING.md).
+
 SNES mod support is an explicit per-game build feature:
 
 ```cmake
@@ -111,6 +114,23 @@ follows one choice of another feature). A choice may carry
 enabled, greyed out otherwise; naming a feature that does not exist keeps a
 listed choice greyed out. A choice's `description` is shown when the pointer
 rests on it.
+A feature that only works on top of another declares it with `requires`, a
+comma-separated list of `package-id/feature-id`:
+
+```toml
+[[feature]]
+id = "learner"
+name = "Learner Mode"
+requires = "example.coop/coop"
+```
+
+Enabling the feature enables everything it requires (transitively, each one
+settling its own plugin rivals). Turning a requirement off, or deselecting it
+because a rival claimed the same plugin, turns its dependents off too. The
+launcher appends "Requires <name>." to the feature's description. A
+requirement that is not installed, or a saved state that holds a dependent
+without its requirement, is a validation error, so the plan is refused rather
+than run partly.
 
 Options use the same feature-oriented concepts exposed by recomp-ui:
 
@@ -180,6 +200,10 @@ callbacks make the package state authoritative over old config files: disabling
 widescreen restores native 4:3 on the next launch even if a legacy config once
 stored `Widescreen = 1`.
 
+An optional `experimental = true` in a `[[feature]]` marks it with the
+launcher's Experimental channel badge. Omitted or false remains Stable;
+this metadata does not change activation, defaults or network identity.
+
 Features that claim the same plugin ID are alternatives. Enabling one, by
 feature or by package, deselects every other enabled feature claiming any of
 its plugins, so a package can declare mutual exclusion by also claiming its
@@ -210,13 +234,16 @@ network start never silently falls back to offline play. Netplay cold boots
 without local SRAM/autosaves and blocks state-changing emulator shortcuts;
 the synchronized game's own pause controls remain available.
 
-## Content variants: `[[variant]]`, `[[patch]]`, `external_rom.sha256`
+## Deprecated patched-ROM recompilation path
 
-A package may declare selectable **content variants** -- another program run
-from a user-supplied image, or a ROM hack -- each with its own recompiled
-module and isolated saves. The manifest vocabulary, the runtime registry and
-the in-game Left/Right picker are documented in `CONTENT_VARIANTS.md`. Two
-rules carry over from the trust model above: an `[[external_rom]]` that a
-variant runs must declare `sha256`, and the engine (not a plugin) verifies it
-before any use; a `[[patch]]` is applied in memory to the verified source and
-its `target_sha256` is checked before a module may run the result.
+Do not recompile ROM hacks or use the legacy `[[patch]]` plus recompiled
+content-variant path for new mods. Reimplement the hack's intended behavior
+and data through a `.snesmod` against the supported stock ROM. See
+[the authoring guide](MOD_AUTHORING.md#reimplement-an-existing-rom-hack).
+
+The engine retains legacy manifest parsing for compatibility and reports a
+deprecation warning when a package declares `[[patch]]`. This is not an
+authoring recommendation. The remaining program-module and selector internals
+are described in [Content Variants](CONTENT_VARIANTS.md) for maintainers.
+Title-specific ingestion/import engines, including Super Mario World's and
+F-Zero Forever's, are separate work and are not deprecated by this notice.

@@ -136,7 +136,8 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
       ppu_header[0] == 0x30555050u &&
       ppu_header[1] == PPU_SAVESTATE_REGS_SIZE + PPU_SAVESTATE_MEM_SIZE;
   if (legacy_layout) {
-    uint8_t saved[216];
+    /* A validation stream counts bytes without filling destinations. */
+    uint8_t saved[216] = {0};
     sli->func(sli, saved, sizeof(saved));
     _Static_assert(sizeof(snes->dma->channel) == 208, "legacy DMA channel layout");
     memcpy(snes->dma->channel, saved, 208);
@@ -171,7 +172,7 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
      * the explanation for anyone who tries to lower that bound again. */
     assert(!"savestate format 4/5 is no longer supported");
   } else if (legacy_layout) {
-    uint8_t saved[40];
+    uint8_t saved[40] = {0};
     sli->func(sli, saved, sizeof(saved));
     memset(&snes->hPos, 0, sizeof(*snes) - offsetof(Snes, hPos));
     memcpy(&snes->hPos, saved, 26); /* hPos through inIrq */
@@ -291,9 +292,7 @@ void snes_catchupApu(Snes* snes) {
   apucyc_prof_calls++;
   clock_t _t1 = clock();
 #endif
-  for(int i = 0; i < catchupCycles; i++) {
-    apu_cycle(snes->apu);
-  }
+  apu_runCycles(snes->apu, (uint32_t)catchupCycles);
 #ifdef SNESRECOMP_INTERP_PROFILE
   apucyc_prof_ms += 1000.0 * ((double)(clock() - _t1)) / CLOCKS_PER_SEC;
 #endif
@@ -408,11 +407,14 @@ static uint32_t snes_advance_beam(Snes *snes, uint32_t clocks, bool check_irq) {
   uint32_t consumed = 0;
   while (clocks) {
     uint32_t span = 1364u - h;
-    /* Stop at HBlank so the HDMA transfer occurs at its hardware edge rather
-     * than after the rest of the scanline has already been consumed. */
-    if (check_irq && v < 225u && h < 1024u && span > 1024u - h)
-      span = 1024u - h;
     if (span > clocks) span = clocks;
+    /* Only beam-owned HDMA needs an HBlank boundary. Frame-model hosts walk
+     * those tables themselves, so their beam can cross HBlank in one span.
+     * Keep the original split with an active automatic-read timer: an IRQ
+     * below can consume only part of a span after that timer was charged. */
+    if (check_irq && v < 225u && h < 1024u && span > 1024u - h &&
+        (!snes->hdmaBeamOff || snes->autoJoyTimer))
+      span = 1024u - h;
 
     /* Automatic joypad polling begins at vblank and keeps HVBJOY.0 asserted
      * for roughly 4224 master clocks.  The input registers are already backed
