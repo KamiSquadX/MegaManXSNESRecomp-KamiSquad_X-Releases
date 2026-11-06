@@ -1618,7 +1618,8 @@ enum {
     RECOMP_LAUNCHER_TOUCH_LSTICK = 1u << 13,
     RECOMP_LAUNCHER_TOUCH_RSTICK = 1u << 14,
     RECOMP_LAUNCHER_TOUCH_COUNT  = 15,
-    RECOMP_LAUNCHER_TOUCH_DEFAULT = (1u << 9) - 1u, /* D-pad, ABXY, L, R, L2, R2 */
+    /* D-pad, ABXY, L, R, L2, R2, Start, Select */
+    RECOMP_LAUNCHER_TOUCH_DEFAULT = ((1u << 9) - 1u) | (1u << 11) | (1u << 12),
 };
 #define RECOMP_LAUNCHER_HAS_TOUCH_GAMEPAD 1
 
