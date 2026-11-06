@@ -20,19 +20,16 @@ Everything the game writes (config, saves, mod settings, replays and
 ## Controls
 
 **On-screen Gamepad** is player 1's default input source on Android. It draws a
-D-pad, A B X Y, L R and L2 R2 over the game, plus a **MENU** button at the top
+D-pad, A B X Y, L R, L2 R2, Start and Select over the game, plus a **MENU** button at the top
 that opens the launcher. In the launcher, go to **Settings → Controllers →
 Configure**. With **Input source** set to **On-screen Gamepad**, the **INPUT
 BINDINGS - PLAYER 1** card lets you:
 
-- choose which controls show: also L3, R3, Start, Select, and the L-Stick and
-  R-Stick;
+- choose which controls show (L3, R3 and the L-Stick and R-Stick are off by
+  default; any control can be hidden);
 - set their size (50–200%) and opacity (10–100%);
 - swap sides (left-handed);
 - bind each on-screen button like a controller's.
-
-A plain SNES start has no Start button on screen by default. Turn on **Start**
-(and **Select**) there, or bind one of the shown buttons to Start.
 
 A Bluetooth/USB controller or a keyboard still works. Pick **Gamepad** or
 **Keyboard** as the input source.
