@@ -61,7 +61,7 @@ static const char* kViewNames[8] = {
     "Dashboard", "Settings", "Controller", "Netplay", "Mods",
     "Assist Tools", "Credits", "Lobby"
 };
-static const char* kSrcNames[3]  = { "None", "Keyboard", "Gamepad" };
+static const char* kSrcNames[4]  = { "None", "Keyboard", "Gamepad", "On-screen Gamepad" };
 
 static void safe_copy(char* dst, size_t cap, const char* src) {
     if (!dst || cap == 0) return;
@@ -918,6 +918,12 @@ void launcher_model_init(LauncherModel* m,
             m->s.mouse_sensitivity = clampf(m->s.mouse_sensitivity, 0.01f, 0.50f);
         }
     }
+    /* On-screen gamepad: 0 = unset (a host that predates it), so seed. */
+    if (!m->s.touch_size) m->s.touch_size = 100;
+    if (!m->s.touch_opacity) m->s.touch_opacity = 60;
+    m->s.touch_size = clampi(m->s.touch_size, 50, 200);
+    m->s.touch_opacity = clampi(m->s.touch_opacity, 10, 100);
+    m->s.touch_buttons &= (1u << RECOMP_LAUNCHER_TOUCH_COUNT) - 1u;
     if (m->has_gyro_controls) {
         m->s.gyro_sensitivity =
             m->s.gyro_sensitivity > 0.0f
@@ -4599,7 +4605,7 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
                                uint32_t pad_id, const char* pad_name,
                                const char* pad_guid) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
-    m->s.player_src[player] = clampi(kind, 0, 2);
+    m->s.player_src[player] = clampi(kind, 0, RECOMP_LAUNCHER_SRC_TOUCH);
     if (kind == 2) {
         m->player_pad_id[player] = pad_id;
         m->s.player_gamepad_instance[player] = pad_id + 1;
@@ -4640,6 +4646,28 @@ void launcher_model_toggle_mouse_invert_y(LauncherModel* m) {
 void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index) {
     if (which < 0 || which > 2) return;
     m->s.mouse_bind[which] = (button_index < 0) ? -1 : button_index;
+}
+
+void launcher_model_set_touch_button(LauncherModel* m, unsigned bit, int shown) {
+    if (!m) return;
+    if (shown) m->s.touch_buttons |= bit;
+    else       m->s.touch_buttons &= ~bit;
+}
+void launcher_model_set_touch_size(LauncherModel* m, int percent) {
+    if (m) m->s.touch_size = clampi(percent, 50, 200);
+}
+void launcher_model_set_touch_opacity(LauncherModel* m, int percent) {
+    if (m) m->s.touch_opacity = clampi(percent, 10, 100);
+}
+void launcher_model_set_touch_left_handed(LauncherModel* m, int on) {
+    if (m) m->s.touch_left_handed = on ? 1 : 0;
+}
+void launcher_model_reset_touch_layout(LauncherModel* m) {
+    if (!m) return;
+    m->s.touch_buttons = RECOMP_LAUNCHER_TOUCH_DEFAULT;
+    m->s.touch_size = 100;
+    m->s.touch_opacity = 60;
+    m->s.touch_left_handed = 0;
 }
 
 void launcher_model_set_gyro_sensitivity(LauncherModel* m, float value) {
@@ -4841,7 +4869,7 @@ const char* launcher_model_freq_label(const LauncherModel* m) {
 
 const char* launcher_model_player_src_label(const LauncherModel* m, int player) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
-    int src = clampi(m->s.player_src[player], 0, 2);
+    int src = clampi(m->s.player_src[player], 0, RECOMP_LAUNCHER_SRC_TOUCH);
     if (src == 2) {
         // Never show the generic "Gamepad" placeholder when we have a concrete
         // pad name (or at least a GUID-backed label filled by sync/hydrate).

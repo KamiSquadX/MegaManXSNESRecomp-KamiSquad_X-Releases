@@ -26,6 +26,9 @@
 
 static bool s_quit_sdl = true;
 
+/* One-window platforms (Android) use the SDL3 platform; nothing to borrow here. */
+void launcher_platform_set_host_window(void* window) { (void)window; }
+
 void launcher_platform_set_quit_sdl(bool quit_sdl) {
     s_quit_sdl = quit_sdl;
 }

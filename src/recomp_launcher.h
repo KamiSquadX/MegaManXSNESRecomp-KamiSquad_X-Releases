@@ -1587,8 +1587,40 @@ struct RecompLauncherCSettings {
      * additively; a zero-initialized host reads as unset. */
     int  quality_preset;
     int  quality_base;
+    /* On-screen gamepad (player_src == 3, offered on Android only): which
+     * controls show (RECOMP_LAUNCHER_TOUCH_* bits), their size and opacity in
+     * percent, and left-handed (D-pad and left stick on the right). Appended
+     * additively; 0 for size/opacity means unset (the host's defaults). */
+    unsigned touch_buttons;
+    int  touch_size;           /* 50..200 */
+    int  touch_opacity;        /* 10..100 */
+    int  touch_left_handed;
 };
 #define RECOMP_LAUNCHER_HAS_ZAPPER_SETTINGS 1
+
+/* Input source 3: the on-screen gamepad (a virtual controller drawn over the
+ * game and driven by touch). Its buttons bind like a controller's. */
+#define RECOMP_LAUNCHER_SRC_TOUCH 3
+enum {
+    RECOMP_LAUNCHER_TOUCH_DPAD   = 1u << 0,
+    RECOMP_LAUNCHER_TOUCH_A      = 1u << 1,
+    RECOMP_LAUNCHER_TOUCH_B      = 1u << 2,
+    RECOMP_LAUNCHER_TOUCH_X      = 1u << 3,
+    RECOMP_LAUNCHER_TOUCH_Y      = 1u << 4,
+    RECOMP_LAUNCHER_TOUCH_L      = 1u << 5,
+    RECOMP_LAUNCHER_TOUCH_R      = 1u << 6,
+    RECOMP_LAUNCHER_TOUCH_L2     = 1u << 7,
+    RECOMP_LAUNCHER_TOUCH_R2     = 1u << 8,
+    RECOMP_LAUNCHER_TOUCH_L3     = 1u << 9,
+    RECOMP_LAUNCHER_TOUCH_R3     = 1u << 10,
+    RECOMP_LAUNCHER_TOUCH_START  = 1u << 11,
+    RECOMP_LAUNCHER_TOUCH_SELECT = 1u << 12,
+    RECOMP_LAUNCHER_TOUCH_LSTICK = 1u << 13,
+    RECOMP_LAUNCHER_TOUCH_RSTICK = 1u << 14,
+    RECOMP_LAUNCHER_TOUCH_COUNT  = 15,
+    RECOMP_LAUNCHER_TOUCH_DEFAULT = (1u << 9) - 1u, /* D-pad, ABXY, L, R, L2, R2 */
+};
+#define RECOMP_LAUNCHER_HAS_TOUCH_GAMEPAD 1
 
 /* Largest run-ahead depth the launcher will offer for
  * RecompLauncherCSettings.run_ahead. Deeper than this and the cost (one full
@@ -2493,6 +2525,10 @@ int recomp_launcher_relaunch_exe(char* out, size_t out_cap);
  * launcher → game (and rematch soft-return). Default is 0 (full Quit). */
 #define RECOMP_LAUNCHER_HAS_PRESERVE_SDL 1
 void recomp_launcher_set_preserve_sdl(int preserve);
+/* Draw the launcher into the host's existing SDL_Window instead of opening
+ * one (NULL: open its own). For platforms with a single window (Android);
+ * the SDL3 platform only. Pair with set_preserve_sdl(1). */
+void recomp_launcher_set_host_window(void* sdl_window);
 
 #ifdef __cplusplus
 }

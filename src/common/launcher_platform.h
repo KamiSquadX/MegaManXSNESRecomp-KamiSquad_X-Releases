@@ -30,6 +30,9 @@ extern "C" {
 typedef struct LauncherPlatform {
     SDL_Window*   window;
     SDL_GLContext gl;
+    // The host's own window, lent for the in-game launcher where a platform
+    // allows only one window (Android). Never moved, resized or destroyed.
+    bool          borrowed_window;
 
     // Logical (DPI-independent) UI size — what layout & hit-testing use.
     int   logical_w, logical_h;

@@ -1190,6 +1190,12 @@ void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index
 // ---- controller motion (has_gyro_controls games only) ---------------------
 // Set the host-owned angular-rate multiplier; clamped to [0.25, 4.00].
 void launcher_model_set_gyro_sensitivity(LauncherModel* m, float value);
+/* On-screen gamepad (input source 3): shown controls, size, opacity, hand. */
+void launcher_model_set_touch_button(LauncherModel* m, unsigned bit, int shown);
+void launcher_model_set_touch_size(LauncherModel* m, int percent);
+void launcher_model_set_touch_opacity(LauncherModel* m, int percent);
+void launcher_model_set_touch_left_handed(LauncherModel* m, int on);
+void launcher_model_reset_touch_layout(LauncherModel* m);
 
 // ---- first-run setup wizard ----
 // True when the wizard should ask only for BIOS/disc confirmation: prepare

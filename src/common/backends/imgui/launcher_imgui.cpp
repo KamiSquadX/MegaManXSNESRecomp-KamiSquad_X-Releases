@@ -31,6 +31,7 @@
 
 #include "imgui.h"
 #include "launcher_nav.h"
+#include "launcher_touch.h"
 #if defined(LNG_SDL3)
   #include "imgui_impl_sdl3.h"
   #define LNG_ImplSDL_InitForOpenGL  ImGui_ImplSDL3_InitForOpenGL
@@ -3181,6 +3182,14 @@ void draw_source_selectables(LauncherModel* m, int p) {
                            !strcmp(src_prof->id, "snes");
     const bool n64_prof = src_prof && src_prof->id &&
                           !strcmp(src_prof->id, "n64");
+#if defined(__ANDROID__)
+    /* The on-screen gamepad: drawn over the game, driven by touch. */
+    if (p == 0 && ImGui::Selectable(ui_text("On-screen Gamepad"),
+                                    m->s.player_src[p] == RECOMP_LAUNCHER_SRC_TOUCH)) {
+        launcher_model_set_source(m, p, RECOMP_LAUNCHER_SRC_TOUCH, 0, nullptr, nullptr);
+        launcher_binds_refresh(m);
+    }
+#endif
     if (ImGui::Selectable(ui_text("None"), m->s.player_src[p] == 0)) {
         launcher_model_set_source(m, p, 0, 0, nullptr, nullptr);
         if (psx) launcher_binds_refresh(m);
@@ -5528,6 +5537,61 @@ static void bind_row_label(const char* label, const ImVec4& colour,
 // ControllerSpec.buttons[]/button_count (launcher_system.h) so each system
 // renders its own real vocabulary (SNES: A/B/X/Y/L/R/...; PSX: Triangle/
 // Circle/Cross/Square/L1/L2/R1/R2/L3/R3/...) instead of a hardcoded SNES set.
+// On-screen gamepad (input source 3): which controls show over the game, their
+// size and opacity, and which hand holds the D-pad. Its buttons bind like a
+// controller's in the grid below.
+void draw_touch_gamepad_options(LauncherModel* m, const LauncherTheme& th) {
+    static const struct { unsigned bit; const char* label; } kControls[] = {
+        { RECOMP_LAUNCHER_TOUCH_DPAD,   "D-Pad" },
+        { RECOMP_LAUNCHER_TOUCH_A,      "A" },
+        { RECOMP_LAUNCHER_TOUCH_B,      "B" },
+        { RECOMP_LAUNCHER_TOUCH_X,      "X" },
+        { RECOMP_LAUNCHER_TOUCH_Y,      "Y" },
+        { RECOMP_LAUNCHER_TOUCH_L,      "L" },
+        { RECOMP_LAUNCHER_TOUCH_R,      "R" },
+        { RECOMP_LAUNCHER_TOUCH_L2,     "L2" },
+        { RECOMP_LAUNCHER_TOUCH_R2,     "R2" },
+        { RECOMP_LAUNCHER_TOUCH_L3,     "L3" },
+        { RECOMP_LAUNCHER_TOUCH_R3,     "R3" },
+        { RECOMP_LAUNCHER_TOUCH_START,  "Start" },
+        { RECOMP_LAUNCHER_TOUCH_SELECT, "Select" },
+        { RECOMP_LAUNCHER_TOUCH_LSTICK, "L-Stick" },
+        { RECOMP_LAUNCHER_TOUCH_RSTICK, "R-Stick" },
+    };
+    eyebrow("ON-SCREEN GAMEPAD");
+    ImGui::TextColored(col(th.text_muted),
+        "Shown on screen (the MENU button at the top is always there):");
+    const float cell = px(110.0f);
+    const int per_row = std::max(1, (int)(ImGui::GetContentRegionAvail().x / cell));
+    for (int i = 0; i < (int)(sizeof(kControls) / sizeof(kControls[0])); ++i) {
+        ImGui::PushID(i);
+        if (i % per_row) ImGui::SameLine(ImGui::GetCursorStartPos().x + (i % per_row) * cell);
+        bool on = (m->s.touch_buttons & kControls[i].bit) != 0;
+        if (ImGui::Checkbox(kControls[i].label, &on))
+            launcher_model_set_touch_button(m, kControls[i].bit, on);
+        ImGui::PopID();
+    }
+    ImGui::Spacing();
+    row_label("Size", th);
+    ImGui::SetNextItemWidth(px(220));
+    int size = m->s.touch_size;
+    if (ImGui::SliderInt("##touchsize", &size, 50, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp))
+        launcher_model_set_touch_size(m, size);
+    row_label("Opacity", th);
+    ImGui::SetNextItemWidth(px(220));
+    int opacity = m->s.touch_opacity;
+    if (ImGui::SliderInt("##touchopacity", &opacity, 10, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp))
+        launcher_model_set_touch_opacity(m, opacity);
+    bool left = m->s.touch_left_handed != 0;
+    if (ImGui::Checkbox("Left-handed (D-pad and left stick on the right)", &left))
+        launcher_model_set_touch_left_handed(m, left);
+    if (ImGui::Button("Reset On-screen Gamepad"))
+        launcher_model_reset_touch_layout(m);
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+}
+
 void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     const int p = m->cfg_player;
     const SystemProfile* cfg_prof = (const SystemProfile*)m->profile;
@@ -6449,7 +6513,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // earlier version did, and because that question was N64-only, a SNES
         // player on a controller was shown the KEYBOARD row and Auto Map
         // listened for keys, so pressing the controller did nothing at all.
-        const bool pad_src = has_pad && m->s.player_src[p] == 2;
+        const bool pad_src = has_pad && (m->s.player_src[p] == 2 ||
+                                         m->s.player_src[p] == RECOMP_LAUNCHER_SRC_TOUCH);
 
         // Heading uses accent2 so each console's title tints in ITS logo colour
         // (N64 blue; single-accent consoles set accent2 == accent).
@@ -6457,6 +6522,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (has_pad) ImGui::Text("INPUT BINDINGS - PLAYER %d", p + 1);
         else         ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
         ImGui::PopStyleColor(); ImGui::Spacing();
+        if (m->s.player_src[p] == RECOMP_LAUNCHER_SRC_TOUCH)
+            draw_touch_gamepad_options(m, th);
 
         // Rows shown follow the player's ACTIVE pad mode (Genesis 3-Button hides
         // X/Y/Z/Mode); non-mode systems get their full button_count.
@@ -15003,6 +15070,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     s_pad_nav_armed = false;
 #if defined(__ANDROID__)
     io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
+    /* Back steps out of the launcher's pages (below) instead of closing the
+     * activity. */
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
 #endif
     io.IniFilename = nullptr;
     // Test hook: force the focus ring always-on so scripted screenshots can
@@ -15180,6 +15250,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             /* Window coordinates -> logical units, before anything reads the
              * event. No-op unless the platform layer synthesized the split. */
             scale_mouse_event(ev, p->input_scale);
+            launcher_touch_shift_event(ev);   /* keyboard-raised frame (Android) */
             if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
                 if (launch_commit.job.pending()) launch_commit.close_requested = true;
                 else p->should_quit = true;
@@ -15189,6 +15260,26 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                 continue;
             }
             if (try_capture(m, ev)) continue;
+#if defined(__ANDROID__)
+            /* Android Back: cancels a text box or dialog (as Esc), else leaves
+             * the current page for the dashboard, else closes the launcher
+             * (back to the game when it was opened in-game). */
+            if ((ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP) &&
+                ev.key.key == SDLK_AC_BACK) {
+                const bool busy = ImGui::GetIO().WantTextInput ||
+                                  ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+                if (busy || ev.type == SDL_EVENT_KEY_UP) {
+                    ev.key.key = SDLK_ESCAPE;
+                    ev.key.scancode = SDL_SCANCODE_ESCAPE;
+                } else if (!ev.key.repeat) {
+                    if (m->view != LNG_VIEW_DASHBOARD) launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
+                    else p->should_quit = true;
+                    continue;
+                } else {
+                    continue;
+                }
+            }
+#endif
             /* Arm gamepad navigation on the first REAL pad input.
              *
              * A control that is already asserted when the launcher opens
@@ -15320,6 +15411,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         LNG_ImplSDL_NewFrame();
         apply_logical_display(p);   // logical DisplaySize + pixel-density frame
         ImGui::NewFrame();
+        launcher_touch_frame(px(1.0f));   /* drag-scroll, long press (Android) */
         if (launch_commit.job.pending()) draw_launch_commit_progress(*th);
         else draw_ui(m, *th, p->logical_w, p->logical_h);
         ImGui::Render();
@@ -15356,6 +15448,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         const LngColor bg = th->background;
         glClearColor(bg.r, bg.g, bg.b, bg.a);
         glClear(GL_COLOR_BUFFER_BIT);
+        launcher_touch_ime(ImGui::GetDrawData(), (float)p->logical_h);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (launch_commit.job.pending()) {
             if (launcher_debug_step_pending(p)) launch_commit.close_requested = true;
