@@ -23,6 +23,9 @@ struct SnesTraceWriter {
   char *header;
   size_t segment_bytes;
   unsigned keep;
+  /* Worker-only scratch, kept off the worker's stack (SDL threads get 128 KB
+   * on the Switch; these alone are 80 KB). */
+  char directory[2048], file_buffer[FILE_BUFFER_BYTES], row[ROW_BYTES];
   unsigned char bytes[QUEUE_BYTES];
 };
 
@@ -68,12 +71,12 @@ static FILE *open_segment(SnesTraceWriter *w, unsigned segment,
 }
 static int SDLCALL writer_main(void *opaque) {
   SnesTraceWriter *w=opaque;
-  char directory[2048];
-  snprintf(directory,sizeof(directory),"%s",w->stem);
+  char *const directory=w->directory;
+  snprintf(directory,sizeof(w->directory),"%s",w->stem);
   char *slash=strrchr(directory,'/'), *backslash=strrchr(directory,'\\');
   if(backslash && (!slash || backslash>slash)) slash=backslash;
   if(slash) { *slash=0; writer_mkdir(directory); }
-  char buffer[FILE_BUFFER_BYTES];
+  char *const buffer=w->file_buffer;
   size_t bytes=0;
   unsigned segment=1, tail=0;
   FILE *file=open_segment(w,segment,buffer,&bytes);
@@ -88,7 +91,7 @@ static int SDLCALL writer_main(void *opaque) {
   for(;;) {
     if((unsigned)SDL_AtomicGet(&w->write_pos)!=tail) {
       uint32_t size;
-      char row[ROW_BYTES];
+      char *const row=w->row;
       ring_read(w,tail,&size,sizeof(size));
       if(!size || size>ROW_BYTES) { writer_error(w,WRITER_ROW); break; }
       ring_read(w,(tail+sizeof(size))%QUEUE_BYTES,row,size);

@@ -3482,6 +3482,9 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     if (freopen("logs/switch-session.log", "a", stdout)) setvbuf(stdout, NULL, _IOLBF, 0);
     /* Full CPU clock while the game runs (handheld mode included). */
     appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
+    /* SDL threads otherwise get libnx's 128 KB default stack, which the
+     * replay writer overflowed on real hardware (yuzu does not catch it). */
+    SDL_SetHint(SDL_HINT_THREAD_STACK_SIZE, "1048576");
   }
 #endif
 #ifdef _WIN32

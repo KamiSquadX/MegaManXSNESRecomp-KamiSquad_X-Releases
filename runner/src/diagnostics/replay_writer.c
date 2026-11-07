@@ -16,6 +16,11 @@ struct SnesReplayWriter {
   SDL_Thread *thread;
   SDL_atomic_t stop, error, read_pos, write_pos;
   unsigned head; /* Producer only. */
+  /* Worker-only scratch. It lives here, not on the worker's stack: about
+   * 150 KB of buffers overflowed the 128 KB stack SDL threads get on the
+   * Switch the moment a replay began. */
+  char text_buffer[FILE_BUFFER_BYTES],state_buffer[FILE_BUFFER_BYTES];
+  Begin begin;
   unsigned char bytes[QUEUE_BYTES];
 };
 static void fail(SnesReplayWriter *w,int error) { SDL_AtomicCAS(&w->error,OK,error); }
@@ -83,7 +88,7 @@ static bool copy_optional(const char *source,const char *dest) {
 static int SDLCALL worker(void *opaque) {
   SnesReplayWriter *w=opaque;
   FILE *text=NULL,*states=NULL;
-  char text_buffer[FILE_BUFFER_BYTES],state_buffer[FILE_BUFFER_BYTES];
+  char *text_buffer=w->text_buffer,*state_buffer=w->state_buffer;
   unsigned tail=0;size_t offset=0;
   uint32_t last_flush=(uint32_t)SDL_GetTicks();bool dirty=false;
 #ifdef SNES_REPLAY_WRITER_TEST
@@ -95,20 +100,20 @@ static int SDLCALL worker(void *opaque) {
       bool ok=true;
       switch(c.op) {
       case BEGIN: {
-        Begin b;get(w,at,&b,sizeof(b));char path[1400];
+        Begin *const b=&w->begin;get(w,at,b,sizeof(*b));char path[1400];
         ok=close_files(&text,&states);offset=0;
         if(!ok)break;
-        text=fopen(b.path,"wb");snprintf(path,sizeof(path),"%s.sav",b.path);states=fopen(path,"wb");
-        ok=text && states && !setvbuf(text,text_buffer,_IOFBF,sizeof(text_buffer)) &&
-            !setvbuf(states,state_buffer,_IOFBF,sizeof(state_buffer));
+        text=fopen(b->path,"wb");snprintf(path,sizeof(path),"%s.sav",b->path);states=fopen(path,"wb");
+        ok=text && states && !setvbuf(text,text_buffer,_IOFBF,FILE_BUFFER_BYTES) &&
+            !setvbuf(states,state_buffer,_IOFBF,FILE_BUFFER_BYTES);
         if(!ok)break;
-        ok=fputs(b.header,text)!=EOF;
-        snprintf(path,sizeof(path),"%s.config.ini",b.path);ok=copy_optional(b.config,path)&&ok;
-        snprintf(path,sizeof(path),"%s.mods.toml",b.path);ok=copy_optional(b.mods,path)&&ok;
-        snprintf(path,sizeof(path),"%s.mods.txt",b.path);
+        ok=fputs(b->header,text)!=EOF;
+        snprintf(path,sizeof(path),"%s.config.ini",b->path);ok=copy_optional(b->config,path)&&ok;
+        snprintf(path,sizeof(path),"%s.mods.toml",b->path);ok=copy_optional(b->mods,path)&&ok;
+        snprintf(path,sizeof(path),"%s.mods.txt",b->path);
         FILE *selected=fopen(path,"wb");
         if(!selected)ok=false;
-        else {if(fputs(b.effective,selected)==EOF)ok=false;if(fclose(selected))ok=false;}
+        else {if(fputs(b->effective,selected)==EOF)ok=false;if(fclose(selected))ok=false;}
         break;
       }
       case SNAPSHOT:

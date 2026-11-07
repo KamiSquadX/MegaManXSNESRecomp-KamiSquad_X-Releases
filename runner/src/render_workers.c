@@ -118,6 +118,15 @@ static bool thread_start(Worker *worker) {
 #ifdef _WIN32
   worker->thread = (HANDLE)_beginthreadex(NULL, 0, worker_entry, worker, 0, NULL);
   return worker->thread != NULL;
+#elif defined(__SWITCH__)
+  /* libnx gives a thread 128 KB by default and has no guard page to turn an
+   * overflow into a clear error; give the renderer room. */
+  pthread_attr_t attr;
+  if (pthread_attr_init(&attr) != 0) return false;
+  pthread_attr_setstacksize(&attr, 1024 * 1024);
+  bool ok = pthread_create(&worker->thread, &attr, worker_entry, worker) == 0;
+  pthread_attr_destroy(&attr);
+  return ok;
 #else
   return pthread_create(&worker->thread, NULL, worker_entry, worker) == 0;
 #endif
