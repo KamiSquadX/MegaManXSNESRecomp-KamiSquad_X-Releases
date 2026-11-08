@@ -88,6 +88,12 @@ float snes_rewind_selected_seconds(void);
 /* ARGB8888 filmstrip. Valid until the next snes_rewind_* call. */
 int snes_rewind_overlay_image(const uint32_t **pixels, int *w, int *h);
 
+/* A click or tap at (x, y) in the filmstrip image's own pixels, as last drawn
+ * by snes_rewind_overlay_image. A thumbnail selects that moment, and the
+ * already selected one commits; the SELECT and BACK hints act as buttons.
+ * Returns 1 when it hit something. */
+int snes_rewind_pointer(int x, int y);
+
 #ifdef __cplusplus
 }
 #endif

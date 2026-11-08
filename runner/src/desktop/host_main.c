@@ -1834,11 +1834,33 @@ static uint32 OverlayFilterGuestInput(uint32 inputs) {
  * reaches HandleInput so a direction held across the close does not stick
  * in the guest afterwards; and every controller event is handled exactly as
  * the main loop handles it. */
+static void RewindKeyDown(int key, int repeat);
+static void RewindPointer(float wx, float wy);
 static void PumpOverlayEvents(bool *running, void (*key_down)(int key, int repeat)) {
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
     if (HandleDeviceEvent(&event))
       continue;
+    if (key_down == RewindKeyDown) {
+      /* The filmstrip answers the mouse and touch too: a tap picks a moment
+       * or a hint button, the wheel scrubs. Touches arrive once, as fingers;
+       * the mouse events SDL synthesizes from them are skipped. */
+      if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT &&
+          event.button.which != SDL_TOUCH_MOUSEID) {
+        RewindPointer((float)event.button.x, (float)event.button.y);
+        continue;
+      }
+      if (event.type == SDL_FINGERDOWN) {
+        int ww = 0, wh = 0;
+        SDL_GetWindowSize(g_window, &ww, &wh);
+        RewindPointer(event.tfinger.x * (float)ww, event.tfinger.y * (float)wh);
+        continue;
+      }
+      if (event.type == SDL_MOUSEWHEEL && event.wheel.y != 0) {
+        snes_rewind_step(event.wheel.y > 0 ? +1 : -1);
+        continue;
+      }
+    }
     switch (event.type) {
     case SDL_QUIT:
       *running = false;
@@ -1846,7 +1868,7 @@ static void PumpOverlayEvents(bool *running, void (*key_down)(int key, int repea
     case SDL_KEYDOWN:
       /* The browser consumes SNES control bits too. Dispatch only controls;
        * slot/reset hotkeys must not change the guest behind a modal panel. */
-      if (key_down == snes_savestate_menu_handle_key) {
+      if (key_down == snes_savestate_menu_handle_key || key_down == RewindKeyDown) {
         int cmd = FindCmdForSdlKey(SNESRECOMP_SDL_EVENT_KEY(event),
                                   SNESRECOMP_SDL_EVENT_MOD(event));
         if (cmd >= kKeys_Controls && cmd <= kKeys_Controls_Last)
@@ -2194,6 +2216,33 @@ static void RunSavestateMenuLoop(bool *running) {
                          frames);
 }
 
+/* A window point onto the filmstrip, through the same placement
+ * PresentFrozenWithOverlay uses: the frozen frame at twice its size, letter-
+ * boxed by the display aspect, with the strip across its bottom. */
+static void RewindPointer(float wx, float wy) {
+  const uint32_t *panel = NULL;
+  int pw = 0, ph = 0, ww = 0, wh = 0;
+  if (!snes_rewind_overlay_image(&panel, &pw, &ph) || pw <= 0 || ph <= 0) return;
+  SDL_GetWindowSize(g_window, &ww, &wh);
+  const int base_w = g_frozen_w > 0 ? g_frozen_w : g_snes_width;
+  const int base_h = g_frozen_h > 0 ? g_frozen_h : g_snes_height;
+  const int draw_w = base_w * 2, draw_h = base_h * 2;
+  SnesDisplayViewport viewport;
+  SnesDisplayAspect_ComputeViewport(draw_w, draw_h, ww, wh,
+                                    SnesDisplayAspect_Clamp(g_config.display_aspect),
+                                    g_config.ignore_aspect_ratio, false, &viewport);
+  if (g_game->compute_viewport)
+    g_game->compute_viewport(draw_w, draw_h, ww, wh, &viewport);
+  if (viewport.width <= 0 || viewport.height <= 0) return;
+  const float fx = (wx - (float)viewport.x) * (float)draw_w / (float)viewport.width;
+  const float fy = (wy - (float)viewport.y) * (float)draw_h / (float)viewport.height;
+  const int strip_h = ph <= draw_h / 2 ? ph : draw_h / 3;
+  const int strip_y = draw_h - strip_h;
+  if (fx < 0 || fx >= (float)draw_w || fy < (float)strip_y || fy >= (float)draw_h) return;
+  snes_rewind_pointer((int)(fx * (float)pw / (float)draw_w),
+                      (int)((fy - (float)strip_y) * (float)ph / (float)strip_h));
+}
+
 static void RewindKeyDown(int key, int repeat) {
   (void)repeat;
   switch (key) {
@@ -2212,6 +2261,8 @@ static void RewindKeyDown(int key, int repeat) {
  * Escape cancels, and the pad mirrors them. */
 static void RunRewindLoop(bool *running) {
   uint32 prev_pad = 0;
+  /* Held on entry (the opening gesture) does not count as a press. */
+  uint32 prev_raw = g_gamepad[0].modifiers;
   uint32 held_dir = 0;
   uint32 held_since = 0, last_repeat = 0;
   unsigned frames = 0;
@@ -2231,10 +2282,19 @@ static void RunRewindLoop(bool *running) {
       const uint32 pad = OverlayNavInputs();
       const uint32 pressed = pad & ~prev_pad;
       const uint32 dir = pad & (SNES_PAD_LEFT | SNES_PAD_RIGHT);
+      /* Face buttons by position as well, whatever the game's own mapping
+       * gives them (Mega Man X's modern layout puts the SNES A on L2): the
+       * right button commits and the bottom one goes back, as the hints say
+       * and as everywhere else in the menus. */
+      const uint32 raw = g_gamepad[0].modifiers;
+      const uint32 raw_pressed = raw & ~prev_raw;
+      prev_raw = raw;
       if (pressed & SNES_PAD_LEFT)  snes_rewind_step(-1);
       if (pressed & SNES_PAD_RIGHT) snes_rewind_step(+1);
-      if (pressed & SNES_PAD_A)     snes_rewind_commit();
-      if (pressed & SNES_PAD_B)     snes_rewind_close();
+      if ((pressed & SNES_PAD_A) || (raw_pressed & (1u << kGamepadBtn_B)))
+        snes_rewind_commit();
+      else if ((pressed & SNES_PAD_B) || (raw_pressed & (1u << kGamepadBtn_A)))
+        snes_rewind_close();
       if (dir && dir != (SNES_PAD_LEFT | SNES_PAD_RIGHT)) {
         if (dir != held_dir) {
           held_dir = dir;
@@ -3044,6 +3104,9 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
   /* In session the running game holds SRAM in memory and writes it at exit,
    * so the SAVES panel's import/delete would be silently overwritten. */
   gi->sram_path = in_session ? NULL : game->sram_path;
+#ifdef RECOMP_LAUNCHER_HAS_BUILD_VERSION
+  gi->build_version = game->build_version;
+#endif
   gi->num_players = game->num_players > 0 ? game->num_players : 1;
   gi->expected_crc = g_rom_crc32;
   gi->has_expected_crc = g_rom_identity_ok;

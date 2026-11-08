@@ -271,6 +271,7 @@ void snes_rewind_commit(void) {
 
 void snes_rewind_close(void) { s_open = 0; s_sel = 0; }
 
+
 /* ---- filmstrip ---------------------------------------------------------- */
 
 /*
@@ -286,6 +287,11 @@ void snes_rewind_close(void) { s_open = 0; s_sel = 0; }
 #define RW_CAPTION_Y  10
 
 static uint32_t s_strip[RW_STRIP_W * RW_STRIP_H];
+/* The cell window and hint buttons as last drawn, for pointer hits. */
+static int s_drawn_first, s_drawn_visible;
+#define RW_STRIP_Y   (RW_CAPTION_Y + 32)
+#define RW_BAND_Y    (RW_STRIP_H - 44)
+#define RW_BTN_Y     (RW_BAND_Y + (44 - 18) / 2)
 
 /* Text and face buttons come from snes_overlay_draw.c.
  *
@@ -407,6 +413,8 @@ int snes_rewind_overlay_image(const uint32_t **pixels, int *w, int *h) {
     if (first + visible > s_count) first = s_count - visible;
     if (first < 0) first = 0;
 
+    s_drawn_first = first;
+    s_drawn_visible = visible;
     x = 12;
     for (i = 0; i < visible && first + i < s_count; i++) {
         /* Rightmost cell is the newest, so draw the window in reverse. */
@@ -427,4 +435,25 @@ int snes_rewind_overlay_image(const uint32_t **pixels, int *w, int *h) {
     if (w) *w = RW_STRIP_W;
     if (h) *h = RW_STRIP_H;
     return 1;
+}
+
+int snes_rewind_pointer(int x, int y) {
+    int i;
+    if (!s_open) return 0;
+    if (y >= RW_BTN_Y - 4 && y < RW_BTN_Y + 22) {
+        /* The hint glyphs plus their labels: A SELECT at 12, B BACK at 120. */
+        if (x >= 8 && x < 36 + 6 * 8 + 4) { snes_rewind_commit(); return 1; }
+        if (x >= 116 && x < 144 + 4 * 8 + 4) { snes_rewind_close(); return 1; }
+        return 0;
+    }
+    if (y < RW_STRIP_Y - 2 || y >= RW_STRIP_Y + RW_CELL_H + 2) return 0;
+    for (i = 0; i < s_drawn_visible && s_drawn_first + i < s_count; i++) {
+        const int cx = 12 + i * (RW_CELL_W + RW_CELL_GAP);
+        const int sel = s_drawn_first + (s_drawn_visible - 1 - i);
+        if (x < cx - 2 || x >= cx + RW_CELL_W + 2 || sel < 0 || sel >= s_count) continue;
+        if (sel == s_sel) snes_rewind_commit();
+        else s_sel = sel;
+        return 1;
+    }
+    return 0;
 }
