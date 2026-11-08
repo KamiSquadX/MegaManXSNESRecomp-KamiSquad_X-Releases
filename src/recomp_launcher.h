@@ -2502,7 +2502,13 @@ typedef struct RecompLauncherCGameInfo {
      * Image Filtering mod) sets this so no control that nothing applies is
      * drawn. Appended for ABI stability; zero keeps the row. */
     int                linear_filter_hidden;
+
+    /* The game's release version (e.g. "2.3.12-ks.1.2.4"), shown small under
+     * the dashboard footer's "Skip launcher on boot". NULL/empty => none.
+     * Borrowed. Appended for ABI stability. */
+    const char*        build_version;
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_BUILD_VERSION 1
 /* RecompLauncherCGameInfo carries linear_filter_hidden. */
 #define RECOMP_LAUNCHER_HAS_LINEAR_FILTER_HIDDEN 1
 #define RECOMP_LAUNCHER_HAS_ARTWORK_GALLERY 1

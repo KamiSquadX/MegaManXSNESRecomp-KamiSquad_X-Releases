@@ -13313,9 +13313,27 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     const ImVec2 win = ImGui::GetWindowPos();
     if (m->view == LNG_VIEW_DASHBOARD) {
         bool skip = m->s.skip_launcher != 0;
-        ImGui::SetCursorScreenPos(ImVec2(origin.x, cta_y + (play_h - ImGui::GetFrameHeight()) * 0.5f));
+        const bool has_version = m->build_version && m->build_version[0];
+        /* With a version line the pair is centred on the CTA instead. */
+        const float line_h = ImGui::GetTextLineHeight();
+        const float pair_h = ImGui::GetFrameHeight() + (has_version ? px(2) + line_h : 0.0f);
+        const float skip_y = cta_y + (play_h - pair_h) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(origin.x, skip_y));
         if (ImGui::Checkbox(ui_text("Skip launcher on boot"), &skip))
             launcher_model_request_skip_toggle(m);
+        if (has_version) {
+            /* "2.3.12-ks.1.2.4" reads as "v2.3.12-ksx1.2.4". */
+            char ver[64];
+            const char* v = m->build_version;
+            const char* ks = std::strstr(v, "-ks.");
+            if (ks)
+                std::snprintf(ver, sizeof(ver), "v%.*s-ksx%s", (int)(ks - v), v, ks + 4);
+            else
+                std::snprintf(ver, sizeof(ver), "v%s", v);
+            ImGui::SetCursorScreenPos(ImVec2(origin.x + px(2),
+                                             skip_y + ImGui::GetFrameHeight() + px(2)));
+            ImGui::TextColored(col(th.text_muted), "%s", ver);
+        }
     } else if (m->view == LNG_VIEW_SETTINGS &&
                launcher_model_can_restore_defaults(m)) {
         ImGui::SetCursorScreenPos(

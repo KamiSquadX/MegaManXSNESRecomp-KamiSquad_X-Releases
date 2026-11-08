@@ -173,6 +173,7 @@ typedef struct {
     const char* game_name;          // e.g. "Mega Man X"
     const char* region;             // e.g. "USA"
     const char* platform;           // console subtitle, e.g. "PLAYSTATION" (NULL => none)
+    const char* build_version;      // release version for the footer (NULL => none)
     const char* rom_cache_path;     // borrowed; NULL => rom.cfg beside cwd/exe
     bool        widescreen_supported;
     bool        msu1_supported;      // sram-like: show the MSU-1 module when true

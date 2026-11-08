@@ -375,6 +375,7 @@ void launcher_model_init(LauncherModel* m,
         m->game_name            = game->name ? game->name : "Unknown Game";
         m->region               = game->region ? game->region : "";
         m->platform             = game->platform;   // NULL => no subtitle
+        m->build_version        = game->build_version;
         m->widescreen_supported = game->widescreen_supported != 0;
         m->msu1_supported       = game->msu1_supported != 0;
         m->msu1_note            = game->msu1_note;
@@ -613,6 +614,7 @@ void launcher_model_init(LauncherModel* m,
         m->game_name    = "Unknown Game";
         m->region       = "";
         m->platform     = NULL;
+        m->build_version = NULL;
         m->player_count = 2;
         m->rom_noun     = "ROM";
         m->assist_direct_pad_bind_action = -1;
