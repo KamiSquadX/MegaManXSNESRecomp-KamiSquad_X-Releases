@@ -99,12 +99,15 @@ static void mode_changed(int enabled) {
   s_mods->feature_enable(s_mods->ctx, kZero, "zero", 0);
   s_mods->feature_enable(s_mods->ctx, kAxl, "axl", 0);
   s_mods->feature_enable(s_mods->ctx, kTeam, "team", 0);
-  /* Keep the co-op mod the player already chose; otherwise X + Zero. */
-  if (!active_coop() && !s_mods->feature_enable(s_mods->ctx, kCoop, "coop", 1))
-    fail("The X + Zero co-op mod is missing. Restore the bundled mods.");
+  /* Keep the co-op mod the player already chose; otherwise Co-op 0.0.2
+   * (X / Zero / Axl), falling back to 0.0.1 only when it is missing. */
+  if (!active_coop() && !s_mods->feature_enable(s_mods->ctx, kCoopAxl, "coop", 1) &&
+      !s_mods->feature_enable(s_mods->ctx, kCoop, "coop", 1))
+    fail("The co-op mods are missing. Restore the bundled mods.");
   /* The offline layout is not part of an online room. This temporary plan
    * restores the player's saved local preference when they leave Netplay. */
   s_mods->feature_set_option(s_mods->ctx, kCoop, "coop", "local_cameras", "unified");
+  s_mods->feature_set_option(s_mods->ctx, kCoopAxl, "coop", "local_cameras", "unified");
   /* Preserve an existing fixed choice; Adaptive becomes 16:9 in this
    * temporary plan only. Disabled widescreen remains the native view. */
   char aspect[32] = {0};
@@ -133,8 +136,23 @@ static int validate_plan(void) {
   return 1;
 }
 
+/* Co-op camera settings (0.0.2's "views") is offered only while Co-op 0.0.2
+ * is ticked; its Select teleport only with split screens or Independent
+ * netplay cameras. */
+static int coop_axl_on(void) { return snes_mod_runtime_feature_enabled_c(kCoopAxl, "coop"); }
+static int views_feature(const char *pkg, const char *feature) {
+  return !strcmp(pkg, kCoopAxl) && !strcmp(feature, "views");
+}
+static int teleport_allowed(void) {
+  char value[32] = {0};
+  snes_mod_runtime_feature_option_value_c(kCoopAxl, "coop", s_active ? "cameras" : "local_cameras",
+                                          value, sizeof(value));
+  return !strcmp(value, s_active ? "independent" : "split");
+}
 static int feature_enable(void *ctx, const char *pkg, const char *feature, int enabled) {
   s_error[0] = 0;
+  if (enabled && views_feature(pkg, feature) && !coop_axl_on())
+    return fail("Tick Co-op 0.0.2 (X / Zero / Axl) first.");
   if (s_active && is_solo(pkg) && enabled)
     return fail("Netplay always uses co-op; Add Zero, Add Axl and Solo Team select are unavailable.");
   if (s_active && is_coop(pkg) && !enabled) {
@@ -163,6 +181,10 @@ static int feature_get(void *ctx, int index, RecompLauncherCModFeature *out) {
       if (hidden_camera_option(option.id)) --out->option_count;
   }
   if (s_active && is_solo(out->package_id)) out->hidden = 1;
+  if (views_feature(out->package_id, out->id) && !coop_axl_on()) {
+    out->locked = 1;
+    snprintf(out->status, sizeof(out->status), "Tick Co-op 0.0.2 first");
+  }
   if (s_active && is_coop(out->package_id) && !out->has_error)
     snprintf(out->status, sizeof(out->status), "Netplay uses one co-op mod");
   return 1;
@@ -177,6 +199,8 @@ static int option_get(void *ctx, const char *pkg, const char *fid, int index,
     }
     if (!found) return 0;
   } else if (!s_mods->feature_option_get(ctx, pkg, fid, index, out)) return 0;
+  if (views_feature(pkg, fid) && !strcmp(out->id, "select_teleport") && !teleport_allowed())
+    out->disabled = 1;
   if (s_active && !strcmp(pkg, kWide) && !strcmp(out->id, "aspect")) {
     out->choice_count = 3;
     snprintf(out->default_value, sizeof(out->default_value), "16:9");
@@ -198,6 +222,10 @@ static int choice_get(void *ctx, const char *pkg, const char *fid, const char *o
 }
 static int set_option(void *ctx, const char *pkg, const char *fid, const char *option, const char *value) {
   s_error[0] = 0;
+  if (views_feature(pkg, fid) && !strcmp(option, "select_teleport") && !strcmp(value, "true") &&
+      !teleport_allowed())
+    return fail(s_active ? "Select teleport needs Netplay cameras: Independent (Experimental)."
+                         : "Select teleport needs Local co-op display: Side by side (Experimental).");
   if (!s_active && is_coop(pkg) && !strcmp(option, "cameras"))
     return fail("Choose Local co-op display for offline play. Open Netplay to choose the room's cameras.");
   if (s_active && is_coop(pkg) && !strcmp(option, "local_cameras"))

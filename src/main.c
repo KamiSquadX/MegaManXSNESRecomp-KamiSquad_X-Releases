@@ -12,6 +12,7 @@
 #include "mmx_rtl.h"
 #include "mmx_display.h"
 #include "mmx_renderer.h"
+#include "mmx_render_assets.h"
 #include "mmx_axl.h"
 #include "mmx_armor.h"
 #include "mmx_zero.h"
@@ -142,6 +143,46 @@ static void MmxResetRenderer(void) {
   s_composed_ready=false;
 #endif
 }
+/* Co-op Superstars: the fallen player's life head for the respawn badge.
+ * X's comes from the ROM's pause menu, Axl's from his X8 lives icon; Zero
+ * has no original life head, so his original X3 health badge stands in. */
+static void MmxRespawnBadgeFrame(const MmxCoopState *s) {
+  static MmxRenderRespawnBadge badge;
+  badge.show = false;
+  int seat = -1;
+  if (s && s->initialized && MmxCoopSuperstars())
+    for (unsigned i = 0; i < 2; ++i) if (s->players[i].status == MMX_COOP_FALLEN) { seat = (int)i; break; }
+  if (seat < 0) { MmxRendererSetRespawnBadge(NULL); return; }
+  badge.show = true;
+  badge.wait = s->death_flags[seat][MMX_COOP_RESPAWN_WAIT_BYTE];
+  badge.blocked = MmxCoopRespawnBlocked(g_ram);
+  memset(badge.pixels, 0, sizeof(badge.pixels));
+  badge.width = badge.height = 16;
+  badge.origin_x = badge.origin_y = -8;
+  MmxRenderPlayerOverlayPlane axl;
+  const uint16_t *axl_palette = NULL;
+  unsigned axl_count = 0;
+  if (((MmxAxlCoopSeats() >> seat) & 1) && MmxAxlLifeHead(&axl, &axl_palette, &axl_count) &&
+      axl.width <= 32 && axl.height <= 32) {
+    badge.width = axl.width; badge.height = axl.height;
+    badge.origin_x = -(int)axl.width / 2; badge.origin_y = -(int)axl.height / 2;
+    for (unsigned i = 0; i < (unsigned)axl.width * axl.height; ++i) {
+      unsigned c = axl.pixels[i];
+      if (c && c < axl_count) badge.pixels[i] = (uint16_t)(axl_palette[c] | 0x8000);
+    }
+  } else if (s->players[seat].character == MMX_COOP_ZERO) {
+    for (unsigned y = 0; y < 16; ++y) for (unsigned x = 0; x < 16; ++x) {
+      int c = MmxZeroHudColor(x, y);
+      if (c >= 0) badge.pixels[y * 16 + x] = (uint16_t)(c | 0x8000);
+    }
+  } else {
+    const uint16_t *colors = NULL;
+    const uint8_t *head = MmxRenderAssetsLifeHeadX(&colors);
+    if (head) for (unsigned i = 0; i < 256; ++i)
+      if (head[i]) badge.pixels[i] = (uint16_t)(colors[head[i]] | 0x8000);
+  }
+  MmxRendererSetRespawnBadge(&badge);
+}
 static void MmxBeginFrame(unsigned number) {
   (void)number;
   if (!g_mmx_custom_renderer) { MmxHitboxOverlayBeginStockFrame(); return; }
@@ -159,6 +200,7 @@ static void MmxBeginFrame(unsigned number) {
   MmxRendererBeginFrame(g_ram);
   MmxCoopState coop = MmxCoopGetState();
   MmxRendererCoopFrame(MmxCoopEnabled() ? &coop : NULL);
+  MmxRespawnBadgeFrame(MmxCoopEnabled() ? &coop : NULL);
 }
 static void MmxEndFrame(const uint8_t *field, unsigned number) {
   if (!g_mmx_custom_renderer) return;

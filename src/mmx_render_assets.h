@@ -29,6 +29,9 @@ const MmxSpriteAsset *MmxRenderAssetsRushObjectSprite(const uint8_t ram[0x20000]
 const MmxSpriteAsset *MmxRenderAssetsCaptiveZero(void);
 /* Original X1 body/beam CHR and blue palette, decoded without touching VRAM. */
 const MmxSpriteAsset *MmxRenderAssetsTeleportX(unsigned pose);
+/* X's original life head (16x16 colour indices, 0 = clear) from the pause
+ * menu graphics, with its menu palette. NULL when the ROM lacks them. */
+const uint8_t *MmxRenderAssetsLifeHeadX(const uint16_t **colors);
 /* Native X1 weapon-selection DMA and palettes, isolated from the other seat. */
 const MmxSpriteAsset *MmxRenderAssetsWeaponX(unsigned weapon, bool body);
 /* Full native buster pose, independent of another co-op shot's CHR upload. */

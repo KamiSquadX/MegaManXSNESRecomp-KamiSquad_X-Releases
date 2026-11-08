@@ -217,6 +217,50 @@ bool MmxRenderAssetsStingPalette(unsigned phase,uint16_t colors[16]) {
   }
   return false;
 }
+const uint8_t *MmxRenderAssetsLifeHeadX(const uint16_t **colors) {
+  /* Resource $52 of the X1 graphics table at $86:F6F7 (records: length,
+   * address, bank) holds the pause menu; X's life head is its tiles
+   * $DA/$DB/$EA/$EB, drawn with the menu's BG palette 1 from $85:DF00. Each
+   * group of eight output bytes starts with a mask byte (set bit = next
+   * literal) and a fill byte for the clear bits ($00:B26x). */
+  static uint8_t pixels[256];
+  static uint16_t palette[16];
+  static int ready; /* 0 untried, 1 ready, -1 unavailable */
+  if (!ready && rom) {
+    static uint8_t graphics[0x2000];
+    ready = -1;
+    size_t record = lorom(0x86f6f7 + 0x52 * 5);
+    if (!range(record, 5)) return NULL;
+    unsigned length = word(record);
+    size_t source = lorom(word(record + 2) | ((unsigned)rom[record + 4] << 16));
+    if (length < 0xec * 32 || length > sizeof(graphics)) return NULL;
+    for (unsigned n = 0; n < length;) {
+      if (!range(source, 2)) return NULL;
+      unsigned mask = rom[source], fill = rom[source + 1];
+      source += 2;
+      for (unsigned bit = 0; bit < 8 && n < length; ++bit, mask <<= 1) {
+        if (mask & 0x80) {
+          if (!range(source, 1)) return NULL;
+          graphics[n++] = rom[source++];
+        } else graphics[n++] = (uint8_t)fill;
+      }
+    }
+    static const unsigned tiles[4] = {0xda, 0xdb, 0xea, 0xeb};
+    for (unsigned y = 0; y < 16; ++y) for (unsigned x = 0; x < 16; ++x) {
+      const uint8_t *p = graphics + tiles[(y / 8) * 2 + x / 8] * 32 + (y & 7) * 2;
+      unsigned shift = 7 - (x & 7);
+      pixels[y * 16 + x] = (uint8_t)(((p[0] >> shift) & 1) | (((p[1] >> shift) & 1) << 1) |
+          (((p[16] >> shift) & 1) << 2) | (((p[17] >> shift) & 1) << 3));
+    }
+    size_t colors_at = lorom(0x85df00);
+    if (!range(colors_at, 32)) return NULL;
+    for (unsigned i = 0; i < 16; ++i) palette[i] = (uint16_t)word(colors_at + i * 2);
+    ready = 1;
+  }
+  if (ready != 1) return NULL;
+  if (colors) *colors = palette;
+  return pixels;
+}
 const MmxSpriteAsset *MmxRenderAssetsTeleportX(unsigned pose) {
   unsigned index = pose == 0 ? 7 : pose >= 0x3c && pose <= 0x42 ? pose - 0x3c : 8;
   if (index >= 8 || !rom) return NULL;

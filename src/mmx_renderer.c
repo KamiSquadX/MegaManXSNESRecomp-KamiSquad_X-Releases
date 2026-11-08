@@ -999,6 +999,12 @@ static void capture_primary_weapon_pieces(Piece *pieces,unsigned *count) {
     *count+=add;
   }
 }
+/* Co-op Superstars' respawn badge, handed over each frame by the host
+ * (MmxRendererSetRespawnBadge); the row workers only read this copy. */
+static MmxRenderRespawnBadge frame_respawn;
+void MmxRendererSetRespawnBadge(const MmxRenderRespawnBadge *badge) {
+  if (badge) frame_respawn = *badge; else frame_respawn.show = false;
+}
 void MmxRendererCoopFrame(const MmxCoopState *s) {
   if (!s || !s->initialized) { memset(&frame_coop,0,sizeof(frame_coop)); return; }
   frame_coop = *s;
@@ -2360,17 +2366,55 @@ static void coop_inverted_badge_row(const SnesRenderRegisters *ppu,const Raster 
     objects[dx]=0xe6a1;colors[dx]=color;
   }
 }
+/* Dialogue's panel setup ($81:915E): BG1/BG2 masked inside the colour
+ * window, white subtracted from the exposed backdrop. */
+static bool dialogue_row(const SnesRenderRegisters *p) {
+  return p->cgadsub == 0xa0 && p->cgwsel == 0x80 && p->fixedColor == 0x7fff &&
+      p->windowsel == 0x22 && p->screenWindowed[0] == 3 && (p->screenEnabled[0] & 7) == 7;
+}
+static void coop_hud_seat_row(const SnesRenderRegisters *ppu,const Raster *r,int y,MmxRenderView view,bool anchored,
+                              uint16_t *objects,int *colors,unsigned seat);
 static void coop_hud_row(const SnesRenderRegisters *ppu,const Raster *r,int y,MmxRenderView view,bool anchored,
                          uint16_t *objects,int *colors) {
+  const bool dialogue=dialogue_row(ppu);
   for(unsigned seat=0;seat<2;++seat) {
+    /* Horizontal layout: P2's meters sit where the dialogue panel opens.
+     * The panel's text must stay readable, so they go under it. */
+    if(seat && dialogue && !coop_hud_compact && !local_pane) {
+      enum { SPAN=MMX_RENDER_MAX_WIDTH };
+      static _Thread_local uint16_t keep_objects[SPAN];
+      static _Thread_local int keep_colors[SPAN];
+      memcpy(keep_objects,objects,(size_t)view.width*sizeof(*objects));
+      memcpy(keep_colors,colors,(size_t)view.width*sizeof(*colors));
+      coop_hud_seat_row(ppu,r,y,view,anchored,objects,colors,seat);
+      for(int dx=0;dx<view.width;++dx)
+        if(objects[dx]!=keep_objects[dx] && window(ppu,5,dx-view.extra,view.extra)) {
+          objects[dx]=keep_objects[dx];colors[dx]=keep_colors[dx];
+        }
+      continue;
+    }
+    coop_hud_seat_row(ppu,r,y,view,anchored,objects,colors,seat);
+  }
+}
+static void coop_hud_seat_row(const SnesRenderRegisters *ppu,const Raster *r,int y,MmxRenderView view,bool anchored,
+                              uint16_t *objects,int *colors,unsigned seat) {
+  {
     const MmxCoopPlayer *player=&frame_coop.players[seat];
-    if(local_pane && peer_seat>=0 && seat!=(unsigned)peer_seat) continue;
-    if(seat && player->status==MMX_COOP_ABSENT) continue;
-    /* Compact: Zero's meter hangs below X's; with two X bodies (an Axl
-     * seat) P2's does. A local pane shows its own player only. */
-    bool inverted=!local_pane && coop_hud_compact && (player->character==MMX_COOP_ZERO ||
+    if(local_pane && peer_seat>=0 && seat!=(unsigned)peer_seat) return;
+    if(seat && player->status==MMX_COOP_ABSENT) return;
+    /* Compact: Zero's meters sit below X's; with two X bodies (an Axl
+     * seat) P2's do. A local pane shows its own player only. The lower pair
+     * is drawn upright like the upper one, letter at the bottom, with its
+     * top fixed under the upper letter: a Heart Tank lengthens it downward,
+     * never into the meters above. Each native meter is 2*max + 16 tall
+     * (coop_meter_row), so both badges share the taller meter's baseline. */
+    bool lower=!local_pane && coop_hud_compact && (player->character==MMX_COOP_ZERO ||
         (seat && frame_coop.players[0].character==player->character));
-    int x=8+(coop_hud_compact || local_pane?0:(int)seat*32)-(anchored?view.extra:0),icon_y=inverted?100:80;
+    const bool inverted=false;
+    unsigned tallest=frame.ram[0x1f9a]>32?32u:frame.ram[0x1f9a];
+    if(tallest<28) tallest=28;
+    int x=8+(coop_hud_compact || local_pane?0:(int)seat*32)-(anchored?view.extra:0);
+    int icon_y=lower?100+16+2*(int)tallest:80;
     unsigned hp=player->status==MMX_COOP_FALLEN?0:player->body[0x27]&127;
     /* A hidden learner meter leaves the weapon column in its place. */
     if(!seat || !coop_hide_learner_health) {
@@ -2382,7 +2426,7 @@ static void coop_hud_row(const SnesRenderRegisters *ppu,const Raster *r,int y,Mm
     }
     unsigned page=player->weapons.page;
     unsigned weapon=page?player->weapons.weapon:player->body[0x33]/2;
-    if(!weapon || weapon>8) continue; /* Keep this seat's reserved blank column. */
+    if(!weapon || weapon>8) return; /* Keep this seat's reserved blank column. */
     unsigned energy=page?player->weapons.energy[(page-1)*8+weapon-1]:player->energy[weapon*2-1];
     const MmxSpriteAsset *native=page?NULL:MmxRenderAssetsWeaponX(weapon,false);
     const uint16_t *palette=page?MmxWeaponsPalette(page,weapon,false):native?native->colors:NULL;
@@ -2421,6 +2465,70 @@ static void player_overlay_plane_row(
       objects[dx] = (uint16_t)(z | (pixel & 15));
       object_colors[dx] = palette[pixel];
     }
+  }
+}
+/* 5x7 capitals for the badge's prompt. */
+static const uint8_t *badge_glyph(char c) {
+  static const uint8_t P[7]={0x1e,0x11,0x11,0x1e,0x10,0x10,0x10}, R[7]={0x1e,0x11,0x11,0x1e,0x14,0x12,0x11},
+      E[7]={0x1f,0x10,0x10,0x1e,0x10,0x10,0x1f}, S[7]={0x0f,0x10,0x10,0x0e,0x01,0x01,0x1e},
+      T[7]={0x1f,0x04,0x04,0x04,0x04,0x04,0x04}, A[7]={0x0e,0x11,0x11,0x1f,0x11,0x11,0x11};
+  switch (c) { case 'P': return P; case 'R': return R; case 'E': return E;
+    case 'S': return S; case 'T': return T; case 'A': return A; default: return NULL; }
+}
+static bool badge_text_pixel(const char *text, int x, int y) {
+  if (y < 0 || y >= 7 || x < 0) return false;
+  int index = x / 6, col = x % 6;
+  if (index >= (int)strlen(text) || col == 5) return false;
+  const uint8_t *g = badge_glyph(text[index]);
+  return g && ((g[y] >> (4 - col)) & 1);
+}
+static uint16_t bgr(unsigned r, unsigned g, unsigned b) { return (uint16_t)(r | g << 5 | b << 10); }
+static uint16_t dim_color(uint16_t c) {
+  return (uint16_t)(((c & 31) * 2 / 5) | (((c >> 5 & 31) * 2 / 5) << 5) | (((c >> 10 & 31) * 2 / 5) << 10));
+}
+static void coop_respawn_row(int y, MmxRenderView view, uint16_t *objects, int *colors) {
+  if (!frame_respawn.show) return;
+  enum { CX = 128, CY = 194, TEXT_Y = 212 };
+  static const char kPrompt[] = "PRESS START";
+  const bool ready = !frame_respawn.wait && !frame_respawn.blocked;
+  const int centre = view.width / 2;
+  for (int sx = CX - 40; sx < CX + 40; ++sx) {
+    int dx = centre + sx - CX;
+    if (dx < 0 || dx >= view.width) continue;
+    int px = sx - CX, py = y - CY;
+    /* Pixel centres: distances in half pixels keep the circle symmetric. */
+    float fx = (float)px + 0.5f, fy = (float)py + 0.5f, r = sqrtf(fx * fx + fy * fy);
+    int color = -1;
+    if (r < 15.0f) {
+      if (r >= 12.5f) {
+        /* The clock: fills clockwise from 12 o'clock as the wait runs out. */
+        float done = 1.0f - (float)frame_respawn.wait / (float)MMX_COOP_RESPAWN_WAIT;
+        float angle = atan2f(fx, -fy);
+        if (angle < 0) angle += 6.2831853f;
+        bool lit = ready || angle < done * 6.2831853f;
+        color = r >= 14.0f ? bgr(1, 1, 3) : lit ? bgr(31, 25, 3) : bgr(9, 9, 12);
+      } else {
+        color = bgr(2, 3, 8);
+        int hx = px - frame_respawn.origin_x, hy = py - frame_respawn.origin_y;
+        if (hx >= 0 && hy >= 0 && hx < (int)frame_respawn.width && hy < (int)frame_respawn.height) {
+          uint16_t c = frame_respawn.pixels[hy * frame_respawn.width + hx];
+          if (c) color = ready ? (c & 0x7fff) : dim_color(c & 0x7fff);
+        }
+        if (frame_respawn.blocked) {
+          /* No entry: a red ring with a top-left to bottom-right bar. */
+          float bar = fabsf(fx - fy) * 0.70710678f;
+          if ((r >= 9.0f && r < 11.5f) || (r < 10.0f && bar < 1.6f))
+            color = bgr(29, 3, 3);
+        }
+      }
+    } else if (ready) {
+      int tx = sx - (CX - (int)(sizeof(kPrompt) - 1) * 3), ty = y - TEXT_Y;
+      if (badge_text_pixel(kPrompt, tx, ty)) color = bgr(31, 31, 31);
+      else for (int oy = -1; oy <= 1 && color < 0; ++oy) for (int ox = -1; ox <= 1; ++ox)
+        if (badge_text_pixel(kPrompt, tx + ox, ty + oy)) { color = bgr(1, 1, 3); break; }
+    }
+    if (color < 0) continue;
+    objects[dx] = 0xe6a1; colors[dx] = color;
   }
 }
 static void world_sprite_row(const MmxRenderWorldSprite *sprite, int y,
@@ -3344,6 +3452,7 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
     if(stage)armor_giga_row(y,view,objects,object_colors);
     if (swapping) teleport_actor_row(frame.ram,&frame_zero,&p,r,y,view,objects,object_colors);
     if(coop_hud) coop_hud_row(&p,r,y,view,hud,objects,object_colors);
+    if(stage) coop_respawn_row(y,view,objects,object_colors);
     if(rush_hud) rush_hud_row(&p,r,y,view,objects,object_colors);
     row_compose[y] = true;
 #if MMX_NATIVE_RASTER

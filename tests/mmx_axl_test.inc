@@ -222,27 +222,25 @@ static void axl_launcher_checks(const char *root) {
   check(p->feature_enable(p->ctx,coop,"coop",1),"Co-op 0.0.2 enables");
   check(!axl_feature_on(p,zero,"zero") && !axl_feature_on(p,axl,"axl") && !axl_feature_on(p,team,"team"),
       "Co-op turns off Add Zero, Add Axl and Solo Team select");
-  /* Independent netplay cameras settings follows Netplay cameras. */
+  /* Co-op camera settings: its own switch, offered with Co-op 0.0.2, for
+   * local co-op and netplay alike. */
   check(!strcmp(axl_option_value(p,coop,"coop","hud"),"horizontal"),"the co-op HUD defaults to Horizontal");
-  check(p->feature_set_option(p->ctx,coop,"coop","cameras","unified") && !axl_feature_on(p,coop,"views"),
-      "Unified cameras leave the settings feature off");
-  p->feature_enable(p->ctx,coop,"views",1);
-  check(!axl_feature_on(p,coop,"views"),"the settings feature has no switch of its own");
-  check(p->feature_set_option(p->ctx,coop,"coop","cameras","independent") && axl_feature_on(p,coop,"views"),
-      "Independent cameras turn the settings feature on");
+  check(!axl_feature_on(p,coop,"views"),"Co-op camera settings start off");
+  check(p->feature_enable(p->ctx,coop,"views",1) && axl_feature_on(p,coop,"views"),
+      "Co-op camera settings tick on beside Co-op 0.0.2");
   check(!strcmp(axl_option_value(p,coop,"views","select_teleport"),"false") &&
-      !strcmp(axl_option_value(p,coop,"views","death"),"normal") &&
-      !strcmp(axl_option_value(p,coop,"views","death_falls"),"normal"),"the settings default to off and Normal");
+      !strcmp(axl_option_value(p,coop,"views","death"),"normal"),"the settings default to off and Normal");
   check(axl_choice_disabled(p,coop,"views","death","shared")==0 &&
-      axl_choice_disabled(p,coop,"views","death","respawn")==1 &&
-      axl_choice_disabled(p,coop,"views","death_falls","teleports")==1,"Respawn and Teleports are greyed out");
+      axl_choice_disabled(p,coop,"views","death","superstars")==0,"Shared and Superstars are offered");
   {
     RecompLauncherCModChoice c;memset(&c,0,sizeof(c));
     check(p->feature_choice_get(p->ctx,coop,"views","death",0,&c) &&
         strstr(c.description,"other player continues"),"Normal explains itself on hover");
   }
-  check(p->feature_set_option(p->ctx,coop,"coop","cameras","unified") && !axl_feature_on(p,coop,"views"),
-      "back to Unified turns it off again");
+  check(p->feature_set_option(p->ctx,coop,"views","death","superstars") &&
+      !strcmp(axl_option_value(p,coop,"views","death"),"superstars"),"Superstars can be chosen");
+  check(p->feature_enable(p->ctx,coop,"coop",0) && !axl_feature_on(p,coop,"views"),
+      "turning Co-op 0.0.2 off turns its camera settings off");
   puts("MMX AXL LAUNCHER CHECKS PASSED");
 }
 /* MMX_AXL_HIGHWAY: Game Start, then rapid fire through the intro stage's

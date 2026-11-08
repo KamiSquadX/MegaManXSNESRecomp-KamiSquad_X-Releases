@@ -104,10 +104,12 @@ static void diagnostic_close(DiagnosticFile *t) {
 static void diagnostic_shutdown(void) {
   diagnostic_close(&physics_file);diagnostic_close(&netplay_file);
 }
-static bool rule_select_teleport, rule_shared_death;
-void MmxCoopSetViewRules(bool select_teleport, bool shared_death) {
-  rule_select_teleport=select_teleport;rule_shared_death=shared_death;
+static bool rule_select_teleport, rule_shared_death, rule_superstars;
+void MmxCoopSetViewRules(bool select_teleport, unsigned death) {
+  rule_select_teleport=select_teleport;
+  rule_shared_death=death==MMX_COOP_DEATH_SHARED;rule_superstars=death==MMX_COOP_DEATH_SUPERSTARS;
 }
+bool MmxCoopSuperstars(void) { return enabled && rule_superstars; }
 void MmxCoopSetDiagnosticsEnabled(bool active) {
   diagnostic_shutdown();
   diagnostic_stamp[0]=0;
@@ -495,7 +497,7 @@ bool MmxCoopSelect(uint8_t *r, unsigned player) {
 #define MmxCoopSelect(r,player) (select_line=__LINE__,MmxCoopSelect((r),(player)))
 static void select_world_survivor(uint8_t *r) {
   /* Shared death: the dying player keeps the world; the team restarts. */
-  if(rule_shared_death && MmxCoopViewsOnline()) return;
+  if(rule_shared_death) return;
   unsigned other=state.anchor^1;
   /* A learner never takes over the stage: P1's death is the team's. */
   if(learner_seat(other)) return;
@@ -733,6 +735,10 @@ bool MmxCoopFrameTick(uint8_t *r) {
   /* Two staggered half-speed effects must not alternate into a permanent
    * freeze. Advance one shared display-frame cadence, while both ages tick. */
   ++state.time_tick;
+  if(!(state.time_tick&3)) for(unsigned seat=0;seat<2;++seat) {
+    uint8_t *wait=&state.death_flags[seat][MMX_COOP_RESPAWN_WAIT_BYTE];
+    if(state.players[seat].status==MMX_COOP_FALLEN && *wait) --*wait;
+  }
   bool frozen=phases[0]==1 || phases[1]==1 ||
       ((phases[0]==2 || phases[1]==2) && !(state.time_tick&1));
   if (frozen) r[0xb9d]=r[0xba0]=0;
@@ -1065,6 +1071,17 @@ static void begin_scene(uint8_t *r) {
     return;
   }
   MmxCoopSelect(r,other);MmxZeroCancel(r);MmxWeaponsCancelShots(r);
+  if(r[0xbaa]==0x2c && r[0xe18] && (r[0xe22]&0x40)) {
+    /* He rides Ride Armor ($0E18, pilot action $2C) and is beamed to the
+     * other player, who has gone through a door or into a scene. The armor
+     * is this room's object and cannot follow; left occupied, its pilot
+     * script kept moving the absent body and dragged the armor into the next
+     * room, which then soft-locked (netplay, P2 X riding as P1 Zero took the
+     * boss door). He leaves it first: the pilot stands, the armor is gone. */
+    r[0xe18]=0;r[0xe22]&=(uint8_t)~0x40;
+    r[0xbaa]=r[0xbab]=0;
+    TRACE(SCENE,0,5,other,NULL);
+  }
   memset(r+0xc98,0,0x180);MmxCoopSelect(r,state.anchor);
   MmxZeroState *z=&state.players[other].zero;
   z->swap_phase=1;z->swap_tick=z->swap_fraction=0;z->swap_y=0;
@@ -2077,21 +2094,31 @@ static void door_cross(uint8_t *r,unsigned d,bool vertical) {
  * 1-up adds one at $81:E4B3). Never during a boss or miniboss fight. The
  * request waits for both that and a spare life, so a 1-up collected while
  * none were left brings him straight back. */
+bool MmxCoopRespawnBlocked(const uint8_t *r) { return boss_fight(r); }
 static bool respawn_tick(uint8_t *r,unsigned seat) {
   if(MmxBossRushActive()) return false;
   MmxCoopPlayer *p=&state.players[seat];
   unsigned bit=1u<<seat;
+  if(rule_superstars) {
+    /* Superstars: after the wait, Start or Select beams him back beside the
+     * partner for free; never during a boss or miniboss fight. */
+    if(!(p->pressed&0x0c)) return false;
+    if(state.death_flags[seat][MMX_COOP_RESPAWN_WAIT_BYTE] || boss_fight(r) ||
+        !living_on_screen(r,seat^1)) {sound(r,0x74);return false;}
+  } else {
   bool ready=living_on_screen(r,seat^1) && r[0x1f80] && !boss_fight(r);
   if(p->pressed&4) {
     state.respawn_pending|=(uint8_t)bit;
     if(!ready) sound(r,0x74); /* $00:F1E4 password rejection: queued, not yet. */
   }
   if(!(state.respawn_pending&bit) || !ready) return false;
+  }
   MmxCoopSelect(r,seat^1);
   uint16_t x,y;
   if(!MmxCoopFindLanding(r,&x,&y)) return false;
   place_other(r,x,y,false); /* full HP and the buster; inventory is kept */
-  --r[0x1f80];state.respawn_pending&=(uint8_t)~bit;
+  if(!rule_superstars) --r[0x1f80];
+  state.respawn_pending&=(uint8_t)~bit;
   MmxZeroState *z=&p->zero;z->swap_phase=4;z->swap_y=(int16_t)(word(r+0x1e50)-(int)y-40);
   z->swap_tick=z->swap_fraction=0;
   state.select_armed=state.select_hold=state.p1_select_armed=state.p1_select_hold=0;
@@ -2814,7 +2841,7 @@ static void death_hook(CpuState *cpu,uint32_t pc) {
     /* Main stage mode 6 assumes the whole team is dead and stops input/pause
      * polling. Keep mode 4 when another player still has HP. */
     if(state.players[other].status==MMX_COOP_ALIVE && (state.players[other].body[0x27]&127) &&
-        !learner_seat(other) && !(rule_shared_death && MmxCoopViewsOnline())) {
+        !learner_seat(other) && !(rule_shared_death)) {
       TRACE(DEATH,pc,pc,seat,cpu);
       interp_bridge_pre_opcode_redirect((pc&0xff0000)|0x9ad9);
     }
@@ -2833,7 +2860,7 @@ static void death_hook(CpuState *cpu,uint32_t pc) {
         state.learner_away=LEARNER_RESCUE;
         interp_bridge_pre_opcode_redirect(0x818a91);return;
       }
-      if(rule_shared_death && MmxCoopViewsOnline() && state.players[other].status==MMX_COOP_ALIVE) {
+      if(rule_shared_death && state.players[other].status==MMX_COOP_ALIVE) {
         /* Shared death: the team falls back to the checkpoint, as a single
          * player's death does. The dying player drives that native death,
          * so a partner's death takes the world (and its camera) first. */
@@ -2857,6 +2884,8 @@ static void death_hook(CpuState *cpu,uint32_t pc) {
     case 0x8b0b:
       if(state.solo_death[seat]) {
         state.solo_death[seat]=0;state.players[seat].status=MMX_COOP_FALLEN;
+        /* Superstars: the 10-second wait before Start/Select may respawn. */
+        state.death_flags[seat][MMX_COOP_RESPAWN_WAIT_BYTE]=MMX_COOP_RESPAWN_WAIT;
         MmxZeroCancel(g_ram);MmxWeaponsCancelShots(g_ram);
         memset(g_ram+0xc38,0,0x1e0);g_ram[0xbb6]=0;g_ram[0xbcf]=128;
         MmxCoopCapture(g_ram);
@@ -2940,7 +2969,7 @@ static void controller_hook(CpuState *cpu, uint32_t pc) {
     state.return_s = cpu->S; state.return_db = cpu->DB;
     cpu_mirrors_to_p(cpu); state.return_p = cpu->P;
     if(!(g_ram[0xbcf]&127) && (state.players[other].body[0x27]&127) && !learner_seat(other) &&
-        !(rule_shared_death && MmxCoopViewsOnline())) {
+        !(rule_shared_death)) {
       MmxCoopViewsAdoptSeatView(g_ram,&state,other);state.anchor=(uint8_t)other;
     }
     MmxCoopSelect(g_ram,other); MmxCoopApplyInput(g_ram);

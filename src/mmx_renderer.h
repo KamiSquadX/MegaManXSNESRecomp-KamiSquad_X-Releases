@@ -152,6 +152,18 @@ extern bool g_mmx_render_asset_repairs;
 extern MmxRenderAspect g_mmx_custom_aspect;
 extern MmxRenderView g_mmx_custom_view;
 void MmxRendererSetCompactCoopHud(bool compact);
+/* Co-op Superstars: the fallen player's head at the bottom of the screen with
+ * a clock ring for the wait, a red sign while a fight forbids the respawn, and
+ * "PRESS START" once it is allowed. pixels are BGR555 with bit 15 set where
+ * drawn; origin_x/y place pixel (0,0) relative to the badge centre. */
+typedef struct MmxRenderRespawnBadge {
+  bool show, blocked;
+  unsigned wait;              /* 4-frame units left of MMX_COOP_RESPAWN_WAIT */
+  unsigned width, height;
+  int origin_x, origin_y;
+  uint16_t pixels[32 * 32];
+} MmxRenderRespawnBadge;
+void MmxRendererSetRespawnBadge(const MmxRenderRespawnBadge *badge);
 /* Learner Mode: P2 cannot lose health, so the mod hides its meter unless the
  * player shows it. The weapon column keeps its place. */
 void MmxRendererSetHideLearnerHealth(bool hide);

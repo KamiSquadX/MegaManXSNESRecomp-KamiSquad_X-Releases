@@ -887,6 +887,16 @@ static void art(unsigned anim, MmxRenderPlayerOverlayPlane *out) {
   out->pixels = f->body.pixels; out->width = f->body.width; out->height = f->body.height;
   out->origin_x = f->body.origin_x; out->origin_y = f->body.origin_y;
 }
+bool MmxAxlLifeHead(MmxRenderPlayerOverlayPlane *out, const uint16_t **palette,
+                    unsigned *palette_count) {
+  if (!assets || !out) return false;
+  memset(out, 0, sizeof(*out));
+  art(MMX_AXL_ANIM_HUD_LIFE, out);
+  if (!out->pixels) return false;
+  *palette = MmxSaberAssetsPalette(assets);
+  *palette_count = MmxSaberAssetsPaletteCount(assets);
+  return true;
+}
 /* X1's pause menu: X's portrait object at $1988 (group $00 or $18). */
 static bool pause_menu(const uint8_t *ram) {
   return ram[0x1989] == 1 && word(ram, 0x198d) == 128 && word(ram, 0x1990) == 160 &&

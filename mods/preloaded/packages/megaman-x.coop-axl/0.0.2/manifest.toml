@@ -117,58 +117,40 @@ label = "Horizontal"
 
 [[feature]]
 id = "views"
-name = "Independent netplay cameras settings"
-description = "Rules for Co-op's Netplay cameras: Independent (Experimental). This turns on by itself while the room uses Independent cameras and off for any other camera setting. The host chooses for both players."
+name = "Co-op camera settings"
+description = "Extra rules for co-op, in local co-op and netplay alike. In netplay the host chooses for both players."
 group = "Characters"
 order = 3
 default_enabled = false
-follows_any = "megaman-x.coop-axl:coop:cameras=independent"
+requires = "megaman-x.coop-axl/coop"
 
 [[option]]
 feature = "views"
 id = "select_teleport"
 label = "Select button teleports to other player"
-description = "Tap Select to beam to the other player. From off their screen you land at the edge you came from; on their screen, beside them at their level. Tap again before moving to try the next spot: left edge, right edge, their level, then right where they stand. Hold Select for 5 seconds to beam back to the start of the stage. Only on the ground, outside boss and miniboss fights, and not attacking, hurt, collecting an item or in a Dr. Light capsule. The beam can't be hurt. While on, holding Select no longer leaves the game. Off: Select works as before."
+description = "Available with Local co-op display: Side by side (Experimental) for local co-op, or Netplay cameras: Independent (Experimental) for netplay. Tap Select to beam to the other player. From off their screen you land at the edge you came from; on their screen, beside them at their level. Tap again before moving to try the next spot: left edge, right edge, their level, then right where they stand. Hold Select for 5 seconds to beam back to the start of the stage. Only on the ground, outside boss and miniboss fights, and not attacking, hurt, collecting an item or in a Dr. Light capsule. The beam can't be hurt. While on, holding Select no longer leaves the game. Off: Select works as before."
 type = "boolean"
 default = false
 
 [[option]]
 feature = "views"
-id = "death_falls"
-label = "Death-falls behavior"
-description = "What happens when a player falls into a pit."
-type = "choice"
-default = "normal"
-[[option.choice]]
-value = "normal"
-label = "Normal"
-description = "Falling into a pit costs that player's life, as in the original game."
-[[option.choice]]
-value = "teleports"
-label = "Teleports"
-description = "Not available yet."
-requires = "megaman-x.coop-axl:coming-soon"
-
-[[option]]
-feature = "views"
 id = "death"
 label = "Death behavior"
-description = "What happens when one player dies."
+description = "What happens when one player dies or falls into a pit."
 type = "choice"
 default = "normal"
 [[option.choice]]
 value = "normal"
 label = "Normal"
-description = "If a player dies, the other player continues the game."
+description = "The other player continues. The fallen player presses Select to return beside them for one of the team's lives, outside boss and miniboss fights."
 [[option.choice]]
 value = "shared"
 label = "Shared"
 description = "If either player dies, the game restarts from the checkpoint, as a single-player death does."
 [[option.choice]]
-value = "respawn"
-label = "Respawn"
-description = "Not available yet."
-requires = "megaman-x.coop-axl:coming-soon"
+value = "superstars"
+label = "Superstars"
+description = "The other player continues, and the fallen player's head appears at the bottom of the screen with a 10-second timer. When it runs out, Start or Select beams them back beside the other player without spending a life. A red sign shows while respawning is not allowed: during a boss or miniboss fight, until its explosion ends."
 
 [[resource]]
 feature = "coop"

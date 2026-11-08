@@ -122,9 +122,16 @@ void MmxCoopCapture(uint8_t ram[0x20000]);
 /* Developer mod opt-in; host-only logging, outside save/netplay state. */
 bool MmxCoopDiagnosticsEnabled(void);
 void MmxCoopSetDiagnosticsEnabled(bool active);
-/* Independent netplay cameras settings (co-op 0.0.2): Select teleports to the
- * other player; Shared death sends the team to the checkpoint. */
-void MmxCoopSetViewRules(bool select_teleport, bool shared_death);
+/* Co-op camera settings (co-op 0.0.2): Select teleports to the other player
+ * (split screens / Independent netplay cameras); the death behavior. */
+enum { MMX_COOP_DEATH_NORMAL, MMX_COOP_DEATH_SHARED, MMX_COOP_DEATH_SUPERSTARS };
+void MmxCoopSetViewRules(bool select_teleport, unsigned death);
+/* Superstars: a fallen seat waits MMX_COOP_RESPAWN_WAIT 4-frame units (10 s),
+ * counted down in death_flags[seat][7] (the native freeze flags use 0..6). */
+enum { MMX_COOP_RESPAWN_WAIT_BYTE = 7, MMX_COOP_RESPAWN_WAIT = 150 };
+bool MmxCoopSuperstars(void);
+/* Respawning is refused now (a boss or miniboss fight is running). */
+bool MmxCoopRespawnBlocked(const uint8_t *ram);
 void MmxCoopDiagnosticFrame(const uint8_t ram[0x20000]);
 bool MmxCoopSelect(uint8_t ram[0x20000], unsigned player);
 void MmxCoopPoll(uint16_t p1, uint16_t p2);

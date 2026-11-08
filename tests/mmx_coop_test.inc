@@ -313,6 +313,30 @@ static void coop_join_checks(unsigned character,const char *fixture,uint8_t *sta
   coop_frames(1,0,SNES_PAD_SELECT);
   check(MmxCoopGetState().players[1].status==MMX_COOP_FALLEN && !MmxCoopTransitionActive(),
       "Select cannot revive a fallen player mid-stage");
+  {
+    /* Superstars: a 10-second wait, then Start (or Select) beams the fallen
+     * player back beside the partner without spending a life. */
+    size_t before=RtlSaveSnapshotToMemory(start,cap);
+    MmxCoopSetViewRules(false,MMX_COOP_DEATH_SUPERSTARS);
+    s=MmxCoopGetState();s.death_flags[1][MMX_COOP_RESPAWN_WAIT_BYTE]=MMX_COOP_RESPAWN_WAIT;MmxCoopSetState(&s);
+    unsigned spare=g_ram[0x1f80];
+    coop_frames(1,0,SNES_PAD_START);coop_frames(1,0,0);
+    check(MmxCoopGetState().players[1].status==MMX_COOP_FALLEN && !MmxCoopTransitionActive(),
+        "Superstars: Start during the wait does not respawn");
+    unsigned waited=0;
+    while(MmxCoopGetState().death_flags[1][MMX_COOP_RESPAWN_WAIT_BYTE] && waited<700) {coop_frames(1,0,0);++waited;}
+    check(waited>=590 && waited<=600,"Superstars: the respawn wait lasts 10 seconds");
+    coop_frames(1,0,SNES_PAD_START);
+    bool back=false;
+    for(unsigned i=0;i<120 && !back;++i) {
+      coop_frames(1,0,0);s=MmxCoopGetState();
+      back=s.players[1].status==MMX_COOP_ALIVE && !s.players[1].zero.swap_phase;
+    }
+    fprintf(stderr,"superstars: waited %u frames, back=%d lives %u -> %u\n",waited,back,spare,g_ram[0x1f80]);
+    check(back && g_ram[0x1f80]==spare,"Superstars: Start respawns the fallen player without spending a life");
+    MmxCoopSetViewRules(false,MMX_COOP_DEATH_NORMAL);
+    check(RtlLoadSnapshotFromMemory(start,before),"Superstars check restores");
+  }
   unsigned lives=g_ram[0x1f80];g_ram[0xbcf]=128;g_ram[0xbaa]=12;g_ram[0xbab]=0;
   bool returned=false;
   for (unsigned i=0;i<1000;++i) {

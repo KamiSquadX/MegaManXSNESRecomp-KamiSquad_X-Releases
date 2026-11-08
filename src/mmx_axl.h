@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 struct MmxRenderAxlFrame;
+struct MmxRenderPlayerOverlayPlane;
 
 /* Animation ids, as in tools/axl/make_axl_manifest.py. */
 enum {
@@ -110,5 +111,8 @@ void MmxAxlSetSoundHook(void (*play)(unsigned cue));
 
 /* Renderer provider. */
 bool MmxAxlFrame(const uint8_t *ram, struct MmxRenderAxlFrame *out);
+/* Axl's life head and the palette it indexes; false until his art loads. */
+bool MmxAxlLifeHead(struct MmxRenderPlayerOverlayPlane *out, const uint16_t **palette,
+                    unsigned *palette_count);
 /* A co-op partner seat that plays Axl, from RAM with its body projected. */
 bool MmxAxlSeatFrame(unsigned seat, const uint8_t *ram, struct MmxRenderAxlFrame *out);

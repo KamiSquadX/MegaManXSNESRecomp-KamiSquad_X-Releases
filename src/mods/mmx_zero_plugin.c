@@ -336,18 +336,18 @@ static void start_coop(const char *package) {
   MmxCoopViewsSetLocalSplit(!strcmp(cameras,"split"));
   snes_mod_runtime_feature_option_value_c(package,"coop","hud",hud,sizeof(hud));
   MmxRendererSetCompactCoopHud(strcmp(hud,"horizontal")!=0);
-  /* Independent netplay cameras settings follows Netplay cameras =
-   * Independent; a package without it keeps every rule at Normal. */
-  bool teleport=false,shared=false;
+  /* Co-op camera settings; a package without it keeps every rule at Normal. */
+  bool teleport=false;unsigned death=MMX_COOP_DEATH_NORMAL;
   if(snes_mod_runtime_feature_enabled_c(package,"views")) {
     char value[32]={0};
     snes_mod_runtime_feature_option_value_c(package,"views","select_teleport",value,sizeof(value));
     teleport=!strcmp(value,"true") || !strcmp(value,"1");
     value[0]=0;
     snes_mod_runtime_feature_option_value_c(package,"views","death",value,sizeof(value));
-    shared=!strcmp(value,"shared");
+    death=!strcmp(value,"shared")?MMX_COOP_DEATH_SHARED:
+          !strcmp(value,"superstars")?MMX_COOP_DEATH_SUPERSTARS:MMX_COOP_DEATH_NORMAL;
   }
-  MmxCoopSetViewRules(teleport,shared);
+  MmxCoopSetViewRules(teleport,death);
   /* Axl plays on an X body, in either seat, beside X or Zero. A partner
    * left unset (older settings) is the other of X and Zero. */
   unsigned axl=(!strcmp(character,"axl")?1u:0u)|(!strcmp(partner,"axl")?2u:0u);
