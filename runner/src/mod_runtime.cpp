@@ -84,6 +84,11 @@ struct Option {
     /* Another choice option of the same feature whose current value this
      * one may not take (two players cannot both pick the same character). */
     std::string distinct_from;
+    /* "option=value": shown only while another option of the same feature
+     * holds that value (one settings view among several). */
+    std::string shown_when;
+    /* Drawn on the same row as this option of the same feature. */
+    std::string inline_after;
 };
 
 struct Feature {
@@ -779,6 +784,11 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                     parsed = parse_int(value, option->step);
                 } else if (key == "distinct_from") {
                     parsed = string_field(option->distinct_from);
+                } else if (key == "shown_when") {
+                    parsed = string_field(option->shown_when) &&
+                        option->shown_when.find('=') != std::string::npos;
+                } else if (key == "inline_after") {
+                    parsed = string_field(option->inline_after);
                 } else known = false;
                 break;
             case Section::Choice:
@@ -2955,6 +2965,15 @@ int provider_feature_option_get(
     out->max_value = option.max_value;
     out->step = option.step;
     out->choice_count = (int)option.choices.size();
+    copy_text(out->inline_after, option.inline_after);
+    if (!option.shown_when.empty()) {
+        const size_t eq = option.shown_when.find('=');
+        const std::string other_id = option.shown_when.substr(0, eq);
+        const Option* other = find_option(*package, feature_id, other_id.c_str());
+        out->hidden = !other ||
+            option_value(state(), *package, feature, *other) !=
+                option.shown_when.substr(eq + 1);
+    }
     return 1;
     SNES_MOD_C_END(0)
 }
