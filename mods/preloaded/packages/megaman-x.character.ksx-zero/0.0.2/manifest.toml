@@ -1,0 +1,1053 @@
+format_version = 1
+id = "megaman-x.character.ksx-zero"
+version = "0.0.2"
+name = "KSX Zero settings"
+author = "KamiSquad_X; with RaphaelAzev as the base"
+description = "KSX Zero settings for the Add Zero or Co-op Zero behavior: Saber Zero by RaphaelAzev as the base, plus Special Moves and a Giga Attack learned from the Mavericks. Saber sprites and sounds from the Zashiko Mod; Special Move art from the Mega Man X Engine (Dragon-Developer and team) and X8 16-bit by Alysson da Paz. For non-commercial use."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "megaman-x-us"
+rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
+
+[[feature]]
+id = "ksx-zero"
+name = "KSX Zero settings"
+description = "Applies when Zero behavior is KSX Zero in Add Zero or Co-op. Includes X1 armor upgrades and Black Zero; without these settings, KSX Zero uses the defaults shown here."
+group = "Characters"
+order = 1
+default_enabled = false
+
+[[option]]
+feature = "ksx-zero"
+id = "show_hitboxes"
+label = "Show hitboxes"
+description = "Debug: outline enemy, Zero and saber attack hitboxes (custom renderer only)"
+type = "boolean"
+default = false
+
+[[option]]
+feature = "ksx-zero"
+id = "armor_view"
+label = "Values shown"
+description = "Which damage values the list shows and edits: Unarmored Zero's (with only the arm parts, these get +2, or +1 against bosses) or Black Zero's (all four armor parts), which replace them while Black Zero is worn. Only changes what this page shows."
+type = "choice"
+default = "unarmored"
+inline_after = "show_hitboxes"
+[[option.choice]]
+value = "unarmored"
+label = "Unarmored Zero"
+[[option.choice]]
+value = "black"
+label = "Black Zero"
+
+[[option]]
+feature = "ksx-zero"
+id = "start_all_upgrades"
+label = "Start with all upgrades"
+description = "Gives all four armor parts at stage start; meant for testing and stored in the password like collected parts."
+type = "boolean"
+default = false
+
+[[option]]
+feature = "ksx-zero"
+id = "stagger_combos"
+label = "Stagger Combos"
+description = "While a Maverick is staggered by any player's hit, each different KSX Zero move that lands restaggers it. Repeating a move in the same combo meets the Maverick's invincibility instead and deals no damage."
+type = "boolean"
+default = true
+[[option]]
+feature = "ksx-zero"
+id = "rakuhouha_energy"
+label = "Rakuhouha energy"
+description = "Weapon energy (of 28) each Rakuhouha spends."
+type = "integer"
+default = 4
+min = 0
+max = 28
+step = 1
+[[option]]
+feature = "ksx-zero"
+id = "slash1_damage"
+shown_when = "armor_view=unarmored"
+label = "Slash 1 damage"
+description = "Normal damage dealt by the first ground slash."
+type = "integer"
+default = 3
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "slash2_damage"
+shown_when = "armor_view=unarmored"
+label = "Slash 2 damage"
+description = "Normal damage dealt by the second ground slash."
+type = "integer"
+default = 3
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "slash3_damage"
+shown_when = "armor_view=unarmored"
+label = "Slash 3 damage"
+description = "Normal damage dealt by the third ground slash."
+type = "integer"
+default = 8
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "x3_finisher_damage"
+shown_when = "armor_view=unarmored"
+label = "X3 finisher damage"
+description = "Normal damage dealt by the X3 Saber finisher."
+type = "integer"
+default = 16
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "air_damage"
+shown_when = "armor_view=unarmored"
+label = "Air slash damage"
+description = "Normal damage dealt by an air slash."
+type = "integer"
+default = 3
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "wall_damage"
+shown_when = "armor_view=unarmored"
+label = "Wall slash damage"
+description = "Normal damage dealt by a wall slash."
+type = "integer"
+default = 3
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "dash_damage"
+shown_when = "armor_view=unarmored"
+label = "Dash slash damage"
+description = "Normal damage dealt by a dash slash."
+type = "integer"
+default = 5
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "wave_damage"
+shown_when = "armor_view=unarmored"
+label = "Saber wave damage"
+description = "Normal damage dealt by each Saber wave pulse."
+type = "integer"
+default = 6
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_slash1_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss slash 1 damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 1
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_slash2_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss slash 2 damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 1
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_slash3_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss slash 3 damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_air_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss air slash damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 1
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_wall_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss wall slash damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 1
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_dash_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss dash slash damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_x3_finisher_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss X3 finisher damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 6
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_wave_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Saber wave damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 4
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "slash1_priority"
+shown_when = "armor_view=unarmored"
+label = "Slash 1 hit priority"
+description = "Hit-priority ladder value for the first ground slash."
+type = "integer"
+default = 6
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "slash2_priority"
+shown_when = "armor_view=unarmored"
+label = "Slash 2 hit priority"
+description = "Hit-priority ladder value for the second ground slash."
+type = "integer"
+default = 7
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "slash3_priority"
+shown_when = "armor_view=unarmored"
+label = "Slash 3 hit priority"
+description = "Hit-priority ladder value for the third ground slash."
+type = "integer"
+default = 8
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "air_priority"
+shown_when = "armor_view=unarmored"
+label = "Air slash hit priority"
+description = "Hit-priority ladder value for an air slash."
+type = "integer"
+default = 1
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "wall_priority"
+shown_when = "armor_view=unarmored"
+label = "Wall slash hit priority"
+description = "Hit-priority ladder value for a wall slash."
+type = "integer"
+default = 1
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "dash_priority"
+shown_when = "armor_view=unarmored"
+label = "Dash slash hit priority"
+description = "Hit-priority ladder value for a dash slash."
+type = "integer"
+default = 9
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "charge_small_priority"
+shown_when = "armor_view=unarmored"
+label = "Small charge hit priority"
+description = "Hit-priority ladder value for a small charge shot."
+type = "integer"
+default = 1
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "charge_full_priority"
+shown_when = "armor_view=unarmored"
+label = "Full charge hit priority"
+description = "Hit-priority ladder value for a full charge shot."
+type = "integer"
+default = 1
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "max_shot1_priority"
+shown_when = "armor_view=unarmored"
+label = "Maximum shot 1 hit priority"
+description = "Hit-priority ladder value for the first maximum-charge shot."
+type = "integer"
+default = 2
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "max_shot2_priority"
+shown_when = "armor_view=unarmored"
+label = "Maximum shot 2 hit priority"
+description = "Hit-priority ladder value for the second maximum-charge shot."
+type = "integer"
+default = 3
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "x3_finisher_priority"
+shown_when = "armor_view=unarmored"
+label = "X3 finisher hit priority"
+description = "Hit-priority ladder value for the X3 Saber finisher."
+type = "integer"
+default = 4
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "wave_priority"
+shown_when = "armor_view=unarmored"
+label = "Saber wave hit priority"
+description = "Hit-priority ladder value for a Saber wave."
+type = "integer"
+default = 5
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "priority_window_frames"
+shown_when = "armor_view=unarmored"
+label = "Hit priority window"
+description = "How long after a Saber hit a stronger hit may break enemy invincibility, in frames."
+type = "integer"
+default = 70
+min = 30
+max = 120
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "finisher_window_frames"
+shown_when = "armor_view=unarmored"
+label = "Finisher window"
+description = "How long after the second charged shot the X3 Saber finisher may start, in frames."
+type = "integer"
+default = 27
+min = 12
+max = 60
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "saber_swing_volume"
+shown_when = "armor_view=unarmored"
+label = "Saber swing volume"
+description = "Saber swing sound volume as a percentage."
+type = "integer"
+default = 50
+min = 0
+max = 200
+step = 10
+
+[[option]]
+feature = "ksx-zero"
+id = "ryuenjin_damage"
+shown_when = "armor_view=unarmored"
+label = "Ryuenjin damage"
+description = "Normal damage dealt by Ryuenjin, per hit."
+type = "integer"
+default = 1
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "rakuhouha_damage"
+shown_when = "armor_view=unarmored"
+label = "Rakuhouha damage"
+description = "Normal damage dealt by Rakuhouha."
+type = "integer"
+default = 16
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "raikousen_damage"
+shown_when = "armor_view=unarmored"
+label = "Raikousen damage"
+description = "Normal damage dealt by Raikousen."
+type = "integer"
+default = 8
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "kuuenbu_damage"
+shown_when = "armor_view=unarmored"
+label = "Kuuenbu damage"
+description = "Normal damage dealt by Kuuenbu, per hit."
+type = "integer"
+default = 2
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "hyouretsuzan_damage"
+shown_when = "armor_view=unarmored"
+label = "Hyouretsuzan damage"
+description = "Normal damage dealt by Hyouretsuzan."
+type = "integer"
+default = 8
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "youdantotsu_damage"
+shown_when = "armor_view=unarmored"
+label = "Youdantotsu damage"
+description = "Normal damage dealt by Youdantotsu."
+type = "integer"
+default = 5
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "juuhazan_damage"
+shown_when = "armor_view=unarmored"
+label = "Juuhazan damage"
+description = "Normal damage dealt by Juuhazan."
+type = "integer"
+default = 10
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_ryuenjin_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Ryuenjin damage"
+description = "0 = same as the normal value, per hit"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_rakuhouha_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Rakuhouha damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 6
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_raikousen_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Raikousen damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_kuuenbu_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Kuuenbu damage"
+description = "0 = same as the normal value, per hit"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_hyouretsuzan_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Hyouretsuzan damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_youdantotsu_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Youdantotsu damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "boss_juuhazan_damage"
+shown_when = "armor_view=unarmored"
+label = "Boss Juuhazan damage"
+description = "0 = same as the normal value"
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "ryuenjin_priority"
+shown_when = "armor_view=unarmored"
+label = "Ryuenjin hit priority"
+description = "Hit-priority ladder value for Ryuenjin."
+type = "integer"
+default = 10
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "rakuhouha_priority"
+shown_when = "armor_view=unarmored"
+label = "Rakuhouha hit priority"
+description = "Hit-priority ladder value for Rakuhouha."
+type = "integer"
+default = 16
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "raikousen_priority"
+shown_when = "armor_view=unarmored"
+label = "Raikousen hit priority"
+description = "Hit-priority ladder value for Raikousen."
+type = "integer"
+default = 15
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "kuuenbu_priority"
+shown_when = "armor_view=unarmored"
+label = "Kuuenbu hit priority"
+description = "Hit-priority ladder value for Kuuenbu."
+type = "integer"
+default = 12
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "hyouretsuzan_priority"
+shown_when = "armor_view=unarmored"
+label = "Hyouretsuzan hit priority"
+description = "Hit-priority ladder value for Hyouretsuzan."
+type = "integer"
+default = 11
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "youdantotsu_priority"
+shown_when = "armor_view=unarmored"
+label = "Youdantotsu hit priority"
+description = "Hit-priority ladder value for Youdantotsu."
+type = "integer"
+default = 14
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "juuhazan_priority"
+shown_when = "armor_view=unarmored"
+label = "Juuhazan hit priority"
+description = "Hit-priority ladder value for Juuhazan."
+type = "integer"
+default = 13
+min = 1
+max = 99
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_slash1_damage"
+shown_when = "armor_view=black"
+label = "Slash 1 damage"
+description = "Black Zero's damage for Slash 1."
+type = "integer"
+default = 5
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_slash2_damage"
+shown_when = "armor_view=black"
+label = "Slash 2 damage"
+description = "Black Zero's damage for Slash 2."
+type = "integer"
+default = 5
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_slash3_damage"
+shown_when = "armor_view=black"
+label = "Slash 3 damage"
+description = "Black Zero's damage for Slash 3."
+type = "integer"
+default = 10
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_x3_finisher_damage"
+shown_when = "armor_view=black"
+label = "X3 finisher damage"
+description = "Black Zero's damage for X3 finisher."
+type = "integer"
+default = 18
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_air_damage"
+shown_when = "armor_view=black"
+label = "Air slash damage"
+description = "Black Zero's damage for Air slash."
+type = "integer"
+default = 5
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_wall_damage"
+shown_when = "armor_view=black"
+label = "Wall slash damage"
+description = "Black Zero's damage for Wall slash."
+type = "integer"
+default = 5
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_dash_damage"
+shown_when = "armor_view=black"
+label = "Dash slash damage"
+description = "Black Zero's damage for Dash slash."
+type = "integer"
+default = 7
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_wave_damage"
+shown_when = "armor_view=black"
+label = "Saber wave damage"
+description = "Black Zero's damage for Saber wave."
+type = "integer"
+default = 8
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_ryuenjin_damage"
+shown_when = "armor_view=black"
+label = "Ryuenjin damage"
+description = "Black Zero's damage for Ryuenjin."
+type = "integer"
+default = 3
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_rakuhouha_damage"
+shown_when = "armor_view=black"
+label = "Rakuhouha damage"
+description = "Black Zero's damage for Rakuhouha."
+type = "integer"
+default = 18
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_raikousen_damage"
+shown_when = "armor_view=black"
+label = "Raikousen damage"
+description = "Black Zero's damage for Raikousen."
+type = "integer"
+default = 10
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_kuuenbu_damage"
+shown_when = "armor_view=black"
+label = "Kuuenbu damage"
+description = "Black Zero's damage for Kuuenbu."
+type = "integer"
+default = 4
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_hyouretsuzan_damage"
+shown_when = "armor_view=black"
+label = "Hyouretsuzan damage"
+description = "Black Zero's damage for Hyouretsuzan."
+type = "integer"
+default = 10
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_youdantotsu_damage"
+shown_when = "armor_view=black"
+label = "Youdantotsu damage"
+description = "Black Zero's damage for Youdantotsu."
+type = "integer"
+default = 7
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_juuhazan_damage"
+shown_when = "armor_view=black"
+label = "Juuhazan damage"
+description = "Black Zero's damage for Juuhazan."
+type = "integer"
+default = 12
+min = 1
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_slash1_damage"
+shown_when = "armor_view=black"
+label = "Boss Slash 1 damage"
+description = "Black Zero's damage for Slash 1 against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_slash2_damage"
+shown_when = "armor_view=black"
+label = "Boss Slash 2 damage"
+description = "Black Zero's damage for Slash 2 against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_slash3_damage"
+shown_when = "armor_view=black"
+label = "Boss Slash 3 damage"
+description = "Black Zero's damage for Slash 3 against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_x3_finisher_damage"
+shown_when = "armor_view=black"
+label = "Boss X3 finisher damage"
+description = "Black Zero's damage for X3 finisher against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 7
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_air_damage"
+shown_when = "armor_view=black"
+label = "Boss Air slash damage"
+description = "Black Zero's damage for Air slash against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_wall_damage"
+shown_when = "armor_view=black"
+label = "Boss Wall slash damage"
+description = "Black Zero's damage for Wall slash against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 2
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_dash_damage"
+shown_when = "armor_view=black"
+label = "Boss Dash slash damage"
+description = "Black Zero's damage for Dash slash against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_wave_damage"
+shown_when = "armor_view=black"
+label = "Boss Saber wave damage"
+description = "Black Zero's damage for Saber wave against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 5
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_ryuenjin_damage"
+shown_when = "armor_view=black"
+label = "Boss Ryuenjin damage"
+description = "Black Zero's damage for Ryuenjin against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_rakuhouha_damage"
+shown_when = "armor_view=black"
+label = "Boss Rakuhouha damage"
+description = "Black Zero's damage for Rakuhouha against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 7
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_raikousen_damage"
+shown_when = "armor_view=black"
+label = "Boss Raikousen damage"
+description = "Black Zero's damage for Raikousen against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_kuuenbu_damage"
+shown_when = "armor_view=black"
+label = "Boss Kuuenbu damage"
+description = "Black Zero's damage for Kuuenbu against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_hyouretsuzan_damage"
+shown_when = "armor_view=black"
+label = "Boss Hyouretsuzan damage"
+description = "Black Zero's damage for Hyouretsuzan against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_youdantotsu_damage"
+shown_when = "armor_view=black"
+label = "Boss Youdantotsu damage"
+description = "Black Zero's damage for Youdantotsu against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1
+
+[[option]]
+feature = "ksx-zero"
+id = "black_boss_juuhazan_damage"
+shown_when = "armor_view=black"
+label = "Boss Juuhazan damage"
+description = "Black Zero's damage for Juuhazan against bosses (0 = same as Black Zero's normal value)."
+type = "integer"
+default = 3
+min = 0
+max = 32
+step = 1

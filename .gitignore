@@ -127,3 +127,11 @@ ghidra/*
 !/assets/saber-zero/sprites/*.png
 !/assets/saber-zero/sfx/
 !/assets/saber-zero/sfx/*.ogg
+
+# KSX Zero's Special Move sheets (fan art, see assets/ksx-zero/CREDITS.md).
+!/assets/ksx-zero/
+!/assets/ksx-zero/CREDITS.md
+!/assets/ksx-zero/sprites/
+!/assets/ksx-zero/sprites/*.png
+!/assets/ksx-zero/icons/
+!/assets/ksx-zero/icons/*.png

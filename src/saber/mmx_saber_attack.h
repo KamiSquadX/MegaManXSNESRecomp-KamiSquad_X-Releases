@@ -16,7 +16,9 @@ enum {
   MMX_SABER_FINISHER_BOUNDS_POINTER = 0xfff4,
   MMX_SABER_AIR_BOUNDS_POINTER = 0xff40,
   MMX_SABER_WALL_BOUNDS_POINTER = 0xff50,
-  MMX_SABER_DASH_BOUNDS_POINTER = 0xff5c
+  MMX_SABER_DASH_BOUNDS_POINTER = 0xff5c,
+  /* KSX Zero's moves: their own window in the verified $86:FA44 padding ($FA80 on is used at run time). */
+  MMX_SABER_KSX_BOUNDS_POINTER = 0xfa44
 };
 
 typedef struct MmxSaberBoundsSegment {
@@ -48,6 +50,9 @@ typedef struct MmxSaberAttack {
   uint8_t bounds_segment_count;
   uint8_t damage;
   uint16_t bounds_pointer;
+  /* Multi-hit: the same enemy may be hit again every rehit_ticks of the
+   * active phase (0 = once per swing). */
+  uint8_t rehit_ticks;
 } MmxSaberAttack;
 
 typedef struct MmxSaberAttackSnapshot {
@@ -120,6 +125,17 @@ uint8_t MmxSaberAttackFacing(void);
 
 MmxSaberPadSaber MmxSaberAttackPadState(bool release_pending);
 MmxSaberAttackSnapshot MmxSaberAttackSnapshotGet(void);
+/* The sidecar tick a snapshot shows (loops held moves such as Ryuenjin). */
+uint16_t MmxSaberAttackVisualTick(MmxSaberAttackSnapshot snapshot);
+/* Replace the running KSX move's art (Raikousen started in the air). */
+void MmxSaberAttackSetKsxAnim(uint8_t anim_id);
+/* World box (x0, y0, x1, y1) of an object's native bank $86 hitbox record
+ * (+$20, mirrored by facing +$11 bit 6). */
+/* The running KSX move's box as last published (world edges), for the
+ * hitbox views; false when none. Rakuhouha's areas come from
+ * MmxSaberKsxGigaTargets. */
+bool MmxSaberAttackKsxShownBox(int box[4]);
+bool MmxSaberAttackObjectBox(const uint8_t *ram, unsigned object, int box[4]);
 /* Alias kept concise for callers that treat the snapshot as the query API. */
 MmxSaberAttackSnapshot MmxSaberAttackGetSnapshot(void);
 
@@ -136,3 +152,18 @@ unsigned MmxSaberAttackHitbox(const uint8_t *ram, unsigned enemy,
 uint16_t MmxSaberAttackHitSlots(void);
 unsigned MmxSaberAttackCollisionWarningCount(void);
 unsigned MmxSaberAttackCueCount(void);
+
+/* KSX Zero. Start a Special Move or the Giga Attack from idle or from any
+ * swing's recovery; false when no record exists or a committed move runs. */
+bool MmxSaberAttackStartKsx(MmxSaberPadKind kind, uint8_t facing);
+/* Whether the KSX button is held this frame (Kuuenbu repeats and
+ * Hyouretsuzan keeps stabbing while it is). Set before the attack step. */
+void MmxSaberAttackSetKsxHeld(bool held);
+/* Swing identity of the current attack (multi-hit moves keep one). */
+uint8_t MmxSaberAttackSwingId(void);
+bool MmxSaberAttackIsKsxKind(MmxSaberPadKind kind);
+/* The live Saber swing's own tagged projectile slot. */
+bool MmxSaberAttackOwnsProjectile(const uint8_t *ram, unsigned projectile);
+/* X1's $86:EF37 damage table entry for an enemy row and attack class. */
+bool MmxSaberAttackNativeTableValue(unsigned row, unsigned attack_class,
+                                    unsigned *value);

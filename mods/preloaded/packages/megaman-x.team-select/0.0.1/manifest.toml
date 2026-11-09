@@ -17,7 +17,7 @@ id = "team"
 name = "Solo Team select"
 description = "Your team for a solo game: the starting character, who appears on the title and menus, and the partner CHANGE PLAYER (Select) switches to, or None to play only the starting character. It is on whenever Add Zero or Add Axl is, and offers only the characters that are added."
 group = "Characters"
-order = 3
+order = 30
 default_enabled = false
 # On exactly while Add Zero or Add Axl is: it has no switch of its own.
 follows_any = "megaman-x.character.zero:zero megaman-x.character.axl:axl"

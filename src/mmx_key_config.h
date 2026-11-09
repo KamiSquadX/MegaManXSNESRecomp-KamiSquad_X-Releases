@@ -26,6 +26,7 @@ enum {
   MMX_KEY_CHANGE_PLAYER, MMX_KEY_ARMOR, MMX_KEY_PREV, MMX_KEY_NEXT,
   MMX_KEY_BUSTER, MMX_KEY_WHEEL_LEFT, MMX_KEY_WHEEL_RIGHT, MMX_KEY_WHEEL_UP,
   MMX_KEY_WHEEL_DOWN, MMX_KEY_PAUSE, MMX_KEY_CONFIRM, MMX_KEY_CANCEL,
+  MMX_KEY_GIGA,
   MMX_KEY_ACTIONS
 };
 
@@ -50,6 +51,14 @@ enum {
   MMX_EXT_CONFIRM = 1 << 6,
   MMX_EXT_CANCEL = 1 << 7,
 };
+/* GIGA ATTACK has no bit of its own (the ext byte is full and travels as one
+ * byte through netplay and replays). It is sent as WHEEL LEFT and WHEEL
+ * RIGHT together, which one right stick never produces; a pad that binds
+ * both wheel actions to buttons and holds both sends only WHEEL LEFT. */
+#define MMX_EXT_GIGA (MMX_EXT_WHEEL_LEFT | MMX_EXT_WHEEL_RIGHT)
+static inline int MmxExtGiga(unsigned ext) {
+  return (ext & MMX_EXT_GIGA) == MMX_EXT_GIGA && ext != 0xff;
+}
 /* Every ext bit at once: a seat leaving KEY CONFIG (see MmxKeyConfigClosing).
  * Only sent while the title's KEY CONFIG page is open, where no action is
  * read. */

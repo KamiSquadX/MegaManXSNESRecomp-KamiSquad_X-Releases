@@ -14,6 +14,9 @@ set(_saber_hitbox_debug_source "${CMAKE_CURRENT_SOURCE_DIR}/src/saber/mmx_saber_
 set(_saber_render_source "${CMAKE_CURRENT_SOURCE_DIR}/src/saber/mmx_saber_render.c")
 set(_saber_black_zero_source "${CMAKE_CURRENT_SOURCE_DIR}/src/saber/mmx_saber_black_zero.c")
 set(_saber_tuning_source "${CMAKE_CURRENT_SOURCE_DIR}/src/saber/mmx_saber_tuning.c")
+set(_saber_ksx_source "${CMAKE_CURRENT_SOURCE_DIR}/src/saber/mmx_saber_ksx.c")
+set(_ksx_manifest "${CMAKE_CURRENT_SOURCE_DIR}/tools/saber/ksx_zero_manifest.json")
+set(_ksx_source_dir "${CMAKE_CURRENT_SOURCE_DIR}/assets/ksx-zero/sprites")
 set(_saber_sfx_converter_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/saber/mmx_saber_sfx_convert.c")
 set(_saber_sfx_codec_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/saber/mmx_saber_sfx_codec.c")
 set(_saber_sfx_codec_header "${CMAKE_CURRENT_SOURCE_DIR}/tools/saber/mmx_saber_sfx_codec.h")
@@ -26,6 +29,7 @@ set(_saber_source_dir "${CMAKE_CURRENT_SOURCE_DIR}/assets/saber-zero/sprites")
 set(_saber_cache_dir "${CMAKE_CURRENT_BINARY_DIR}/cache/mmx-source")
 set(_saber_cache "${_saber_cache_dir}/saber-v1.bin")
 set(_ride_cache "${_saber_cache_dir}/ride-zero-v1.bin")
+set(_ksx_cache "${_saber_cache_dir}/ksx-zero-v1.bin")
 set(_saber_sfx_cache "${_saber_cache_dir}/saber-sfx-v2.bin")
 set(_saber_wave_test_cache_dir "${_saber_cache_dir}")
 file(GLOB _saber_sfx_inputs CONFIGURE_DEPENDS
@@ -104,7 +108,21 @@ add_custom_command(
     DEPENDS "${_saber_converter}" "${_ride_manifest}" ${_saber_donor_files}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     VERBATIM)
-add_custom_target(saber_asset_caches DEPENDS "${_saber_cache}" "${_ride_cache}")
+file(GLOB _ksx_donor_files CONFIGURE_DEPENDS "${_ksx_source_dir}/*.png")
+if(NOT (_ksx_donor_files AND EXISTS "${_ksx_manifest}"))
+    message(FATAL_ERROR "KSX Zero sprites or manifest missing from ${_ksx_source_dir}")
+endif()
+add_custom_command(
+    OUTPUT "${_ksx_cache}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_saber_cache_dir}"
+    COMMAND "${Python3_EXECUTABLE}" -I "${_saber_converter}"
+        --manifest "${_ksx_manifest}"
+        --source-dir "${_ksx_source_dir}"
+        --out "${_ksx_cache}"
+    DEPENDS "${_saber_converter}" "${_ksx_manifest}" ${_ksx_donor_files}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBATIM)
+add_custom_target(saber_asset_caches DEPENDS "${_saber_cache}" "${_ride_cache}" "${_ksx_cache}")
 
 # Compile the three donor-built sidecars into every target that links the
 # plugin. The ROM-derived X3 wave is not here: it is extracted at runtime from
@@ -116,9 +134,9 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}"
         "-DOUT=${_saber_embedded_source}"
         "-DSABER=${_saber_cache}" "-DRIDE=${_ride_cache}"
-        "-DSFX=${_saber_sfx_cache}"
+        "-DSFX=${_saber_sfx_cache}" "-DKSX=${_ksx_cache}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_saber_sidecars.cmake"
-    DEPENDS "${_saber_cache}" "${_ride_cache}" "${_saber_sfx_cache}"
+    DEPENDS "${_saber_cache}" "${_ride_cache}" "${_saber_sfx_cache}" "${_ksx_cache}"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_saber_sidecars.cmake"
     VERBATIM)
 add_custom_target(saber_embedded_source DEPENDS "${_saber_embedded_source}")
@@ -135,7 +153,7 @@ if(TARGET MegaManXSNESRecomp)
         "${_saber_priority_source}"
         "${_saber_frame_source}" "${_saber_hitbox_debug_source}"
         "${_saber_render_source}" "${_saber_black_zero_source}"
-        "${_saber_tuning_source}")
+        "${_saber_tuning_source}" "${_saber_ksx_source}")
     add_dependencies(MegaManXSNESRecomp saber_embedded_source)
 endif()
 
@@ -151,7 +169,7 @@ if(MMX_STATE_TESTS AND TARGET mmx_state_tests)
         "${_saber_priority_source}"
         "${_saber_frame_source}" "${_saber_hitbox_debug_source}"
         "${_saber_render_source}" "${_saber_black_zero_source}"
-        "${_saber_tuning_source}")
+        "${_saber_tuning_source}" "${_saber_ksx_source}")
     add_dependencies(mmx_state_tests saber_embedded_source)
     get_target_property(_saber_sources mmx_state_tests SOURCES)
     list(REMOVE_ITEM _saber_sources
@@ -182,7 +200,7 @@ if(MMX_STATE_TESTS AND TARGET mmx_state_tests)
         src/saber/mmx_saber_hitbox_debug.c
         "${_saber_hitbox_debug_source}"
         src/saber/mmx_saber_tuning.c
-        "${_saber_tuning_source}")
+        "${_saber_tuning_source}" "${_saber_ksx_source}")
 
     add_executable(mmx_saber_rom_tests
         tests/saber/saber_rom_test.c ${_saber_sources}
@@ -196,7 +214,7 @@ if(MMX_STATE_TESTS AND TARGET mmx_state_tests)
         "${_saber_priority_source}"
         "${_saber_frame_source}" "${_saber_hitbox_debug_source}"
         "${_saber_render_source}" "${_saber_black_zero_source}"
-        "${_saber_tuning_source}")
+        "${_saber_tuning_source}" "${_saber_ksx_source}")
     foreach(_property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES LINK_OPTIONS)
         get_target_property(_value mmx_state_tests ${_property})
         if(_value)
@@ -322,7 +340,7 @@ if(BUILD_TESTING)
         "${_saber_wave_source}"
         "${_saber_attack_source}" "${_saber_wave_runtime_source}" "${_saber_sfx_source}"
         "${_saber_priority_source}" "${_saber_tuning_source}"
-        "${_saber_hitbox_debug_source}"
+        "${_saber_hitbox_debug_source}" "${_saber_ksx_source}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/mmx_wide_policy.c"
         "${SNESRECOMP_ROOT}/runner/src/sha256.c")
     target_include_directories(mmx_saber_render_test PRIVATE

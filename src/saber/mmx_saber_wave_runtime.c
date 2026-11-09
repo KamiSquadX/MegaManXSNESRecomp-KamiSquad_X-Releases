@@ -82,12 +82,9 @@ static unsigned clamp_tuned_damage(int damage) {
 static unsigned wave_tuned_damage(const uint8_t *ram, unsigned enemy) {
   const bool boss = ram && target_slot_valid(enemy) &&
       MmxWidePolicy_IsBossEncounter(ram[enemy + 0x0a]);
-  const int damage = boss ?
-      MmxSaberTuningBossDamage(MMX_SABER_TUNING_DAMAGE_WAVE) :
-      MmxSaberTuningNormalDamage(MMX_SABER_TUNING_DAMAGE_WAVE);
   const MmxSaberArmorFlags armor = MmxSaberArmorCurrent();
-  return clamp_tuned_damage(damage +
-      (int)MmxSaberArmorDamageBonus(armor.arms, boss));
+  return clamp_tuned_damage(MmxSaberTuningArmoredDamage(
+      MMX_SABER_TUNING_DAMAGE_WAVE, boss, armor.arms, armor.black));
 }
 
 static bool identity_recorded(const uint8_t *ram, unsigned slot) {

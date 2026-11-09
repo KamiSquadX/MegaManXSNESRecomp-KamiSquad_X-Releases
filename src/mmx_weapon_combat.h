@@ -56,6 +56,9 @@ void MmxWeaponsCollisionRom(uint8_t *rom, size_t size);
 /* Per-contact native table index, or the separately published reaction class.
  * The actual projectile ID, graphics, hit cadence and movement stay intact. */
 unsigned MmxWeaponsContactClass(const uint8_t *ram,unsigned enemy,unsigned projectile,unsigned original,bool reaction);
+/* A character's own contact classes (KSX Zero's elements), asked first. */
+typedef unsigned (*MmxWeaponsContactOverride)(const uint8_t *ram,unsigned enemy,unsigned projectile,unsigned original,bool reaction);
+void MmxWeaponsSetContactClassOverride(MmxWeaponsContactOverride override);
 /* Which weapon fired a player shot: page 0 X1 (Homing Torpedo = 1, X1 menu
  * order), 1 X2, 2 X3 by native weapon id. False for buster or no shot. */
 bool MmxWeaponsShotIdentity(const uint8_t *ram,unsigned shot,unsigned *page,unsigned *weapon,unsigned *charged);

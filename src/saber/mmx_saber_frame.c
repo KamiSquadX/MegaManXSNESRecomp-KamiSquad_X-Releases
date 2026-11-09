@@ -6,6 +6,7 @@
 #include "mmx_saber_combo.h"
 #include "mmx_saber_hitbox_debug.h"
 #include "mmx_saber_input.h"
+#include "mmx_saber_ksx.h"
 #include "mmx_saber_priority.h"
 #include "mmx_saber_wave_runtime.h"
 #include "mmx_saber_state.h"
@@ -17,6 +18,7 @@ static bool release_pending_from_special;
 static bool previous_y;
 static bool previous_x;
 static MmxSaberFramePadSource pad_source;
+static uint8_t (*ext_source)(void);
 static MmxZeroLegacyIntent frame_intent;
 static bool frame_computed;
 static bool frame_override;
@@ -58,6 +60,7 @@ static void reset_frame_state(uint8_t *ram, bool retire_attack_ram) {
   MmxSaberWaveRuntimeReset(ram);
   MmxSaberPriorityReset();
   MmxSaberComboReset(ram);
+  if (MmxSaberKsxEnabled()) MmxSaberKsxSetEnabled(true);
   MmxSaberAttackResetCueCount();
   MmxSaberBlackZeroNativeColorsUpdate(false, false, NULL);
   release_pending = false;
@@ -93,15 +96,29 @@ void MmxSaberFrameSetPadSource(MmxSaberFramePadSource source) {
   pad_source = source;
 }
 
+void MmxSaberFrameSetExtSource(uint8_t (*source)(void)) {
+  ext_source = source;
+}
+
+static uint8_t sample_ext(void) {
+  return ext_source ? ext_source() : 0;
+}
+
 static MmxSaberFramePad sample_pad(const uint8_t *ram) {
-  MmxSaberFramePad pad = {false, false};
+  MmxSaberFramePad pad = {false, false, 0};
   if (!ram) return pad;
   if (pad_source) {
     pad_source(ram, &pad);
-    return pad;
+  } else {
+    pad.x_held = (ram[0x00a7] & 0x40) != 0;
+    pad.y_pressed = (ram[0x00ac] & 0x40) != 0;
+    pad.pad = (uint16_t)(ram[0x00a7] | (ram[0x00a8] << 8));
   }
-  pad.x_held = (ram[0x00a7] & 0x40) != 0;
-  pad.y_pressed = (ram[0x00ac] & 0x40) != 0;
+  /* KSX Zero: X is the Special Move button; the buster is on R2. With
+   * Rakuhouha selected R2 is the Giga Attack instead (MmxSaberKsxPrePlayer),
+   * so no shot reaches X1. */
+  if (MmxSaberKsxEnabled())
+    pad.x_held = (sample_ext() & 0x01) != 0 && !MmxSaberKsxRakuhouhaSelected();
   return pad;
 }
 
@@ -125,7 +142,10 @@ static bool native_fire_locked(const uint8_t *ram) {
 static MmxSaberPhysicalPad read_physical_pad(const uint8_t *ram,
                                              MmxSaberFramePad pad) {
   const bool x_held = pad.x_held;
-  const bool x_previous = pad_source ? previous_x :
+  /* KSX Zero's buster is R2, so the previous state is the saved R2 one:
+   * $00A9 is the physical X (the Special Move), whose history would turn a
+   * held R2 into a press every frame and an X release into a shot. */
+  const bool x_previous = pad_source || MmxSaberKsxEnabled() ? previous_x :
       (ram[0x00a9] & 0x40) != 0;
   const bool y_held = pad.y_pressed;
   uint16_t buttons = 0;
@@ -215,6 +235,7 @@ static void player_end(uint8_t *ram) {
     MmxSaberAttackExit(NULL, MMX_SABER_ATTACK_EXIT_CONTEXT);
     return;
   }
+  MmxSaberKsxShardsStep(ram);
   if (zero_dead_or_reset(ram)) {
     MmxSaberComboCancel(ram);
     MmxSaberWaveRuntimeRetireAll(ram);
@@ -234,6 +255,8 @@ static void player_end(uint8_t *ram) {
   MmxSaberPriorityObservePlayerEnd(
       ram, MmxZeroGetState().shot_mask, MmxZeroGetState().burst);
   MmxSaberComboPlayerEnd(ram);
+  MmxSaberKsxPlayerEnd(ram);
+  MmxSaberKsxMotionPost(ram);
   MmxSaberAttackPlayerEnd(ram);
 }
 
@@ -254,9 +277,13 @@ static void pre_player(uint8_t *ram) {
     MmxSaberComboCancel(ram);
   clear_frame_state();
   armor = MmxSaberArmorCurrent();
-  MmxSaberBlackZeroNativeColorsUpdate(
-      armor.black, armor.arms,
-      (armor.black || armor.arms) ? MmxZeroColors() : NULL);
+  {
+    const bool purple = armor.arms || MmxSaberKsxPurpleSaber();
+    MmxSaberBlackZeroNativeColorsUpdate(
+        armor.black, purple,
+        (armor.black || purple) ? MmxZeroColors() : NULL);
+  }
+  MmxSaberKsxStaggerObserve(ram);
   if (!zero_frame_context(ram)) {
     /* This also handles an exchange to X, title/menu frames, and an upstream
      * Zero lifecycle transition. Do not touch any native input byte. */
@@ -268,6 +295,10 @@ static void pre_player(uint8_t *ram) {
     previous_x = pad.x_held;
     return;
   }
+
+  /* KSX Zero learns skills instead of special weapons: only the buster and
+   * Rakuhouha can be selected (X2/X3 weapon packs never). */
+  if (MmxSaberKsxEnabled() && ram[0x0bdb] != 0) ram[0x0bdb] = 0;
 
   /* A special release latch belongs to its special charge.  Do not let a
    * later buster selection turn it into a legacy buster release. */
@@ -310,12 +341,23 @@ static void pre_player(uint8_t *ram) {
     MmxSaberAttackExit(ram, MMX_SABER_ATTACK_EXIT_HURT);
   else if (zero.dead_or_reset)
     MmxSaberAttackExit(ram, MMX_SABER_ATTACK_EXIT_DEATH);
+  MmxSaberAttackSetKsxHeld(MmxSaberKsxEnabled() && (pad.pad & 0x0040) != 0);
   MmxSaberAttackStepWithWallAndDash(
       out.saber_pressed, zero.grounded, native_wall_clinging(ram),
       native_dash_active(ram),
       (out.native.action_pressed & MMX_SABER_NATIVE_JUMP_BIT) != 0,
       !zero.hurt && !zero.dead_or_reset, ram[0x0c11],
       native_horizontal_direction(ram));
+  if (MmxSaberKsxEnabled() && !zero.hurt && !zero.dead_or_reset && !locked) {
+    /* Raikousen: a ground dash, or Dash held in the air (X1 has no air
+     * dash; the Mega Man X Engine allows Raikousen there). */
+    const bool ksx_dash = native_dash_active(ram) ||
+        (!zero.grounded && (ram[0x0bde] & MMX_SABER_NATIVE_DASH_BIT) != 0);
+    MmxSaberKsxInput ksx = {pad.pad, sample_ext(), zero.grounded,
+                            native_wall_clinging(ram), ksx_dash,
+                            ram[0x0c11]};
+    MmxSaberKsxPrePlayer(ram, ksx);
+  }
   MmxSaberAttackRuntimeTick(ram);
   saber = MmxSaberAttackPadState(release_pending);
   /* The attack tick advances the published donor phase before native runs.
@@ -327,10 +369,18 @@ static void pre_player(uint8_t *ram) {
     saber.phase = SABER_PHASE_STARTUP;
   out = MmxSaberComputePad(physical, read_native_pad(ram), saber, zero);
   publish_ground_swing(ram, saber);
+  MmxSaberKsxMotionPre(ram);
 
   /* The computed view is the sole input write for this frame. There is no
    * restore step: the native player and the legacy callback consume it. */
   write_native_pad(ram, out.native);
+  if (MmxSaberKsxEnabled()) {
+    /* KSX Zero's L/R switch his own weapon list (the buster and
+     * Rakuhouha); X1's cycle never sees them, as with the X2/X3 packs. */
+    const unsigned shoulders = ram[0x0be2] & 0x30;
+    ram[0x0be2] &= (uint8_t)~0x30;
+    if ((ram[0x0bde] & 0x30) != 0x30) MmxSaberKsxShoulders(ram, shoulders);
+  }
   mirror_native_fire_wave_repeat(ram, out.fire_blocked || zero.hurt);
   frame_intent = out.legacy;
   frame_override = out.legacy_override;
@@ -371,7 +421,7 @@ static unsigned player_damage(const uint8_t *ram, unsigned incoming,
 /* "SABR" + layout version, then the frame's own fields and each module's
  * snapshot in a fixed order. A blob without this header leaves the reset
  * state that MmxZeroSetState already established. */
-enum { SABER_STATE_MAGIC = 0x52424153u, SABER_STATE_VERSION = 2u };
+enum { SABER_STATE_MAGIC = 0x52424153u, SABER_STATE_VERSION = 3u };
 typedef struct SaberFrameSavedState {
   uint32_t magic, version;
   bool release_pending, release_pending_from_special, previous_y, previous_x;
@@ -380,7 +430,11 @@ typedef struct SaberFrameSavedState {
 static size_t saved_state_size(void) {
   return sizeof(SaberFrameSavedState) + MmxSaberAttackStateSize() +
       MmxSaberComboStateSize() + MmxSaberPriorityStateSize() +
-      MmxSaberWaveRuntimeStateSize();
+      MmxSaberWaveRuntimeStateSize() + MmxSaberKsxStateSize();
+}
+
+size_t MmxSaberFrameStateBytes(void) {
+  return saved_state_size();
 }
 
 static void state_save(uint8_t out[]) {
@@ -403,14 +457,17 @@ static void state_save(uint8_t out[]) {
   MmxSaberPriorityStateSave(cursor);
   cursor += MmxSaberPriorityStateSize();
   MmxSaberWaveRuntimeStateSave(cursor);
+  cursor += MmxSaberWaveRuntimeStateSize();
+  MmxSaberKsxStateSave(cursor);
 }
 
 static bool state_load(const uint8_t in[]) {
   SaberFrameSavedState frame;
   const uint8_t *cursor = in;
   memcpy(&frame, cursor, sizeof(frame));
+  /* Version 2 is version 3 without KSX Zero's trailing block. */
   if (frame.magic != SABER_STATE_MAGIC ||
-      frame.version != SABER_STATE_VERSION ||
+      (frame.version != SABER_STATE_VERSION && frame.version != 2u) ||
       saved_state_size() > MMX_ZERO_EXTENSION_STATE_BYTES)
     return false;
   reset_frame_state(NULL, false);
@@ -427,7 +484,16 @@ static bool state_load(const uint8_t in[]) {
   MmxSaberPriorityStateLoad(cursor);
   cursor += MmxSaberPriorityStateSize();
   MmxSaberWaveRuntimeStateLoad(cursor);
+  cursor += MmxSaberWaveRuntimeStateSize();
+  if (frame.version == SABER_STATE_VERSION) MmxSaberKsxStateLoad(cursor);
   return true;
+}
+
+static unsigned saber_response(uint8_t *ram, unsigned enemy,
+                               unsigned projectile, unsigned original) {
+  return MmxSaberKsxStaggerResponse(
+      ram, enemy, projectile, original,
+      MmxSaberPriorityResponse(ram, enemy, projectile, original));
 }
 
 static const MmxZeroExtension extension = {
@@ -440,7 +506,7 @@ static const MmxZeroExtension extension = {
     .legacy_slash_request = MmxSaberComboLegacySlashRequest,
     .charge_cap = charge_cap,
     .burst_origin_y = burst_origin_y,
-    .response = MmxSaberPriorityResponse,
+    .response = saber_response,
     .weapon_tick = MmxSaberAttackWeaponTick,
     .damage = MmxSaberAttackDamage,
     .player_damage = player_damage,

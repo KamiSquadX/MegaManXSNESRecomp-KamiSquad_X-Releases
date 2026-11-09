@@ -263,8 +263,25 @@ static void hook(CpuState *cpu, uint32_t pc) {
 static bool zero_terrain_solid(const uint8_t *r, int x, int y) {
   return MmxWeaponsTerrainSolid(r, x, y, false, NULL);
 }
+#if !MMX_VARIANT_JP
+/* $84:9BC8 runs for each player shot against X1's enemy shots; KSX Zero's
+ * saber answers it itself (Rekkyoudan) and leaves through the no-hit exit
+ * $84:9C09 (SEP #$30; LDA #0; RTL). */
+static void ksx_enemy_shot_hook(CpuState *cpu, uint32_t pc) {
+  extern bool MmxSaberKsxEnemyShotHit(uint8_t *ram, unsigned projectile);
+  if (MmxSaberKsxEnemyShotHit(g_ram, cpu->D))
+    interp_bridge_pre_opcode_redirect((pc & 0xff0000) | 0x9c09);
+}
+#endif
+
 void MmxZeroRegisterHooks(void) {
   MmxZeroSetTerrainQuery(zero_terrain_solid);
+#if !MMX_VARIANT_JP
+  {extern void MmxSaberKsxSetTerrainQuery(bool (*)(const uint8_t *, int, int));
+   MmxSaberKsxSetTerrainQuery(zero_terrain_solid);}
+  interp_bridge_add_pre_opcode_hook(0x049bc8, ksx_enemy_shot_hook);
+  interp_bridge_add_pre_opcode_hook(0x849bc8, ksx_enemy_shot_hook);
+#endif
   MmxArmorSetTerrainQuery(zero_terrain_solid);
   const unsigned pcs[] = {0x009dca, 0x00d6a7, 0x00d76a, 0x01971f, 0x019796, 0x0198ff,
                           0x019ea8, 0x019eae, 0x019ef9, 0x019f59, 0x0499a7,
@@ -319,6 +336,7 @@ static void activate(void) {
   MmxZeroRegisterHooks();
 #if !MMX_VARIANT_JP
   if (!strcmp(behavior,"saber")) MmxSaberActivate("megaman-x.character.zero","zero",false);
+  else if (!strcmp(behavior,"ksx")) MmxSaberActivateKsx("megaman-x.character.zero","zero",false);
 #endif
   fprintf(stderr, "[mmx-zero] Zero 0.0.1 enabled; starting as %s\n", strcmp(start,"zero") ? "X" : "Zero");
 }
@@ -361,6 +379,7 @@ static void start_coop(const char *package) {
   }
 #if !MMX_VARIANT_JP
   if(!strcmp(behavior,"saber")) MmxSaberActivate(package,"coop",true);
+  else if(!strcmp(behavior,"ksx")) MmxSaberActivateKsx(package,"coop",true);
 #endif
   {extern void MmxAxlCoopActivate(unsigned seats); MmxAxlCoopActivate(axl);}
   static const char *const names[3]={"X","Zero","Axl"};

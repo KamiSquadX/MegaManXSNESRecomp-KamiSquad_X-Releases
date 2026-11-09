@@ -17,4 +17,6 @@ enum {
 void MmxSaberHitboxDebugSetRam(const uint8_t *ram);
 void MmxSaberHitboxDebugSetRom(const uint8_t *rom, size_t size);
 void MmxSaberHitboxDebugReset(void);
+/* KSX Rakuhouha's per-shard areas alone (for the developer overlay). */
+unsigned MmxSaberHitboxDebugKsx(MmxRenderDebugRect *out, unsigned max);
 unsigned MmxSaberHitboxDebugProvide(MmxRenderDebugRect *out, unsigned max);

@@ -38,6 +38,10 @@ void MmxWeaponsMenuTick(uint8_t ram[0x20000], unsigned direct_page);
 unsigned MmxWeaponsMenuRead(uint8_t ram[0x20000], unsigned pc, unsigned direct_page,
                             unsigned index, unsigned original);
 unsigned MmxWeaponsEnergyRead(unsigned address, unsigned original);
+/* KSX Zero's own weapon list. `active` returns the guest RAM while he is
+ * the live player with Rakuhouha chosen, else NULL; `menu_choice` hears the
+ * pause menu's confirmed item. NULL clears both. */
+void MmxWeaponsSetKsx(uint8_t *(*active)(void), void (*menu_choice)(uint8_t *ram, unsigned item));
 bool MmxWeaponsEnergyStore(unsigned value, bool pickup);
 void MmxWeaponsEnergyOverflow(uint8_t ram[0x20000], unsigned index);
 void MmxWeaponsRefill(void);

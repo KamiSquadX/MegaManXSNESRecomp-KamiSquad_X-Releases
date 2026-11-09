@@ -17,7 +17,7 @@ id = "coop"
 name = "Co-op"
 description = "Player 2 joins automatically. Hold P2 Select for 1.5 seconds to leave; press Select to rejoin. Start opens each player's weapon menu. Axl can take either seat, beside X or Zero, with his own moves (rapid fire, hover, air dash, roll, GigaCrash) and his own health and weapons. Selecting co-op turns off Add Zero, Add Axl and Solo Team select."
 group = "Characters"
-order = 2
+order = 20
 default_enabled = false
 
 [[option]]
@@ -60,7 +60,7 @@ label = "Axl"
 feature = "coop"
 id = "behavior"
 label = "Zero behavior"
-description = "Shared with Add Zero. Modern replaces Zero's buster with a direct saber and adds a double jump and air dash. Saber Zero (by RaphaelAzev) adds a Y-button Z-Saber with a 3-hit ground combo, air, wall and dash slashes, and the X3 finisher wave; tune it with Saber Zero settings. Special weapons remain available."
+description = "Shared with Add Zero. Modern replaces Zero's buster with a direct saber and adds a double jump and air dash. Saber Zero (by RaphaelAzev) adds a Y-button Z-Saber with a 3-hit ground combo, air, wall and dash slashes, and the X3 finisher wave; tune it with Saber Zero settings. Special weapons remain available. KSX Zero (by KamiSquad_X, Saber Zero as the base) keeps the Y-button saber, moves the buster to R2, and learns Special Moves (X) and a Giga Attack (L2) from defeated Mavericks instead of special weapons; tune it with KSX Zero settings."
 type = "choice"
 default = "x3"
 [[option.choice]]
@@ -72,6 +72,9 @@ label = "Modern"
 [[option.choice]]
 value = "saber"
 label = "Saber Zero"
+[[option.choice]]
+value = "ksx"
+label = "KSX Zero"
 
 [[option]]
 feature = "coop"
@@ -120,7 +123,7 @@ id = "views"
 name = "Co-op camera settings"
 description = "Extra rules for co-op, in local co-op and netplay alike. In netplay the host chooses for both players."
 group = "Characters"
-order = 3
+order = 30
 default_enabled = false
 requires = "megaman-x.coop-axl/coop"
 

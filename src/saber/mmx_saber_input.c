@@ -36,8 +36,31 @@ static bool slashing(const MmxSaberPadSaber *saber) {
       saber->finisher_active;
 }
 
+/* KSX Zero's committed moves own Zero's motion for their whole length:
+ * no steering, jump or dash. Kuuenbu and Hyouretsuzan are aerial and keep
+ * the native air steering. */
+static bool ksx_committed_kind(MmxSaberPadKind kind) {
+  return kind == SABER_KIND_RYUENJIN || kind == SABER_KIND_RAKUHOUHA ||
+      kind == SABER_KIND_RAIKOUSEN || kind == SABER_KIND_YOUDANTOTSU ||
+      kind == SABER_KIND_JUUHAZAN;
+}
+
 static void apply_motion_masks(MmxSaberNativePad *native,
                                MmxSaberPadSaber saber) {
+  if (saber.phase != SABER_PHASE_IDLE && ksx_committed_kind(saber.kind)) {
+    native->action_held =
+        (uint8_t)(native->action_held &
+                  (uint8_t)~MMX_SABER_NATIVE_HORIZONTAL_BITS);
+    native->action_pressed =
+        (uint8_t)(native->action_pressed &
+                  (uint8_t)~(MMX_SABER_NATIVE_HORIZONTAL_BITS |
+                             MMX_SABER_NATIVE_JUMP_BIT));
+    native->dash_pressed =
+        (uint8_t)(native->dash_pressed & (uint8_t)~MMX_SABER_NATIVE_DASH_BIT);
+    native->dash_held =
+        (uint8_t)(native->dash_held & (uint8_t)~MMX_SABER_NATIVE_DASH_BIT);
+    return;
+  }
   if (attack_locked(saber.phase) &&
       (ground_kind(saber.kind) || saber.kind == SABER_KIND_DASH)) {
     native->action_held =

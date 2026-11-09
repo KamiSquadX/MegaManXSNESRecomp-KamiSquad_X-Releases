@@ -14,5 +14,8 @@ extern const uint8_t kMmxSaberEmbeddedRide[];
 extern const size_t kMmxSaberEmbeddedRideSize;
 extern const uint8_t kMmxSaberEmbeddedSfx[];
 extern const size_t kMmxSaberEmbeddedSfxSize;
+/* KSX Zero's Special Moves (assets/ksx-zero). */
+extern const uint8_t kMmxSaberEmbeddedKsx[];
+extern const size_t kMmxSaberEmbeddedKsxSize;
 
 #endif

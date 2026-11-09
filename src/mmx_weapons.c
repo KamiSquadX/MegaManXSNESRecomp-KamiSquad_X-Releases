@@ -24,6 +24,16 @@ static WeaponArt art[WEAPONS];
 static uint8_t *asset;
 static uint8_t *page_assets[2];
 static MmxWeaponsState state;
+/* KSX Zero's own list (the buster and Rakuhouha): while `ksx_active` says
+ * Rakuhouha is his choice, X1's HUD, pickups and pause menu see the packs'
+ * virtual weapon, whose energy is Chameleon Sting's ($1F8A). */
+static uint8_t *(*ksx_active)(void);
+static void (*ksx_menu_choice)(uint8_t *ram, unsigned item);
+void MmxWeaponsSetKsx(uint8_t *(*active)(void), void (*menu_choice)(uint8_t *, unsigned)) {
+  ksx_active = active; ksx_menu_choice = menu_choice;
+}
+static uint8_t *ksx_ram(void) { return ksx_active ? ksx_active() : NULL; }
+static bool ksx_virtual(void) { return ksx_ram() != NULL; }
 _Static_assert(sizeof(MmxWeaponsState) == 40 && offsetof(MmxWeaponsState,fraction) == MMX_WEAPONS_LEGACY_STATE_SIZE, "Weapon save ABI");
 static unsigned word(const uint8_t *p) { return p[0] | (p[1] << 8); }
 static unsigned weapon_index(unsigned page, unsigned weapon) { return (page - 1) * 8 + weapon - 1; }
@@ -157,6 +167,11 @@ const char *MmxWeaponsLabel(unsigned page, unsigned weapon) {
   return valid_weapon(page, weapon) ? labels[weapon_index(page, weapon)] : "";
 }
 unsigned MmxWeaponsEnergyRead(unsigned address, unsigned original) {
+  uint8_t *ksx = ksx_ram();
+  if (ksx) {
+    if (address == 0xbdb) return 2;
+    return address == 0x1f85 ? (unsigned)(ksx[0x1f8a] << 8 | ksx[0x1f89]) : ksx[0x1f8a];
+  }
   if (!MmxWeaponsActive()) return original;
   if (address == 0xbdb) return 2; /* HUD/pickup routines only: virtual inventory index. */
   unsigned i = weapon_index(state.page,state.weapon), value = 0xc0 | state.energy[i];
@@ -177,6 +192,12 @@ bool MmxWeaponsSpend(unsigned page, unsigned weapon, unsigned cost) {
   set_energy(i,value-cost); return true;
 }
 bool MmxWeaponsEnergyStore(unsigned value, bool pickup) {
+  uint8_t *ksx = ksx_ram();
+  if (ksx) {
+    if (pickup) { ksx[0x1f89] = (uint8_t)value; ksx[0x1f8a] = (uint8_t)(value >> 8); }
+    else ksx[0x1f8a] = (uint8_t)value;
+    return true;
+  }
   if (!MmxWeaponsActive()) return false;
   if (pickup) {
     set_energy(weapon_index(state.page,state.weapon),value & 0x3fff);
@@ -222,6 +243,11 @@ void MmxWeaponsMenuTick(uint8_t r[0x20000], unsigned dp) {
   r[0xbe2] &= (uint8_t)~0x30;
 }
 unsigned MmxWeaponsMenuRead(uint8_t r[0x20000], unsigned pc, unsigned dp, unsigned index, unsigned original) {
+  if (ksx_menu_choice && r && dp <= 0x1ff00) {
+    /* KSX Zero: the menu opens on his choice and keeps the one confirmed. */
+    if ((pc & 0xffff) == 0xc484 && ksx_virtual()) return 4;
+    if ((pc & 0xffff) == 0xce28) ksx_menu_choice(r, r[dp + 10]);
+  }
   if (!MmxWeaponsEnabled() || !r || dp > 0x1ff00) return original;
   switch (pc & 0xffff) {
     case 0xc484:

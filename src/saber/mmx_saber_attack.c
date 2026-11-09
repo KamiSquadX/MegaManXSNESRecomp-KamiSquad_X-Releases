@@ -9,6 +9,7 @@
 #include "mmx_saber_sfx.h"
 #include "mmx_saber_armor.h"
 #include "mmx_saber_hitbox_debug.h"
+#include "mmx_saber_ksx.h"
 #include "mmx_saber_priority.h"
 #include "mmx_saber_tuning.h"
 #include "mmx_saber_wave_runtime.h"
@@ -48,6 +49,45 @@ static const MmxSaberBoundsSegment kDashSlashBounds[] = {
     {2, 5, 24, 1, 37, 17},
     {6, 9, 45, 0, 30, 17},
     {10, 11, 14, -15, 24, 6}};
+
+/* KSX Zero. Zero-relative boxes for right-facing art (its frames are drawn
+ * 7 px above Zero's position, which these include). Ryuenjin, Kuuenbu and
+ * Hyouretsuzan cover their saber layer in each Mega Man X Engine frame;
+ * Raikousen, Youdantotsu and Juuhazan follow the Mega Man X Engine and X8
+ * 16-bit hit areas. All KSX moves share one record that is rewritten every
+ * frame (ksx_publish_box), so a move may have any number of segments. */
+static const MmxSaberBoundsSegment kRyuenjinBounds[] = {
+    {4, 30, 20, -36, 24, 34}};
+/* Rakuhouha's blast and shards are placed by MmxSaberKsxGigaTargets; this
+ * segment only marks the active ticks. */
+static const MmxSaberBoundsSegment kRakuhouhaBounds[] = {
+    {23, 76, 0, 0, 0, 0}};
+/* Raikousen: the stab, the dash (Zero is lightning), the full trail
+ * (x -75..103) and the trail closing on Zero. */
+static const MmxSaberBoundsSegment kRaikousenBounds[] = {
+    {10, 17, 14, -3, 35, 21},
+    {18, 23, 20, -3, 42, 21},
+    {24, 29, 14, -3, 91, 21},
+    {30, 31, 34, -3, 57, 21},
+    {32, 33, 32, -3, 53, 21},
+    {34, 35, 24, -3, 45, 21},
+    {36, 36, 8, -3, 29, 21}};
+static const MmxSaberBoundsSegment kKuuenbuBounds[] = {
+    {1, 2, 3, -20, 41, 29},
+    {3, 3, 4, -13, 46, 36},
+    {4, 5, 6, -5, 48, 44},
+    {6, 7, 6, -1, 48, 48},
+    {8, 9, 6, 4, 48, 44},
+    {10, 12, 2, 12, 48, 36},
+    {13, 15, -6, 4, 39, 44}};
+static const MmxSaberBoundsSegment kHyouretsuzanBounds[] = {
+    {4, 255, 14, 19, 14, 29}};
+static const MmxSaberBoundsSegment kYoudantotsuBounds[] = {
+    {13, 30, 50, -7, 44, 22}};
+static const MmxSaberBoundsSegment kJuuhazanBounds[] = {
+    {10, 11, -29, -22, 36, 37},
+    {12, 13, 6, -49, 61, 30},
+    {14, 19, 41, -24, 46, 55}};
 
 /* Ported from old src/mmx_saber.c:260-400.  In particular, keep the numeric
  * timing values here independent of the ROM test's old-table oracle. */
@@ -183,7 +223,179 @@ static const MmxSaberAttack kSaberAttacks[] = {
         .bounds_segments = NULL,
         .bounds_segment_count = 0,
         .damage = 0,
-        .bounds_pointer = 0}};
+        .bounds_pointer = 0},
+    {
+        .kind = SABER_KIND_RYUENJIN,
+        .index = 0,
+        .visual_animation = 0x41,
+        .facing_xor = 1,
+        .startup_ticks = 4,
+        .active_ticks = 27,
+        .recovery_ticks = 29,
+        .total_ticks = 60,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = kRyuenjinBounds,
+        .bounds_segment_count = sizeof(kRyuenjinBounds) / sizeof(kRyuenjinBounds[0]),
+        .damage = 0,
+        .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
+        .rehit_ticks = 6},
+    {
+        /* The end pose after the rise (or after releasing X early). */
+        .kind = SABER_KIND_RYUENJIN,
+        .index = 1,
+        .visual_animation = 0x41,
+        .facing_xor = 1,
+        .startup_ticks = 0,
+        .active_ticks = 0,
+        .recovery_ticks = 4,
+        .total_ticks = 4,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = NULL,
+        .bounds_segment_count = 0,
+        .damage = 0,
+        .bounds_pointer = 0,
+        .rehit_ticks = 0},
+    {
+        .kind = SABER_KIND_RAKUHOUHA,
+        .index = 0,
+        .visual_animation = 0x46,
+        .facing_xor = 1,
+        .startup_ticks = 23,
+        .active_ticks = 54,
+        .recovery_ticks = 1,
+        .total_ticks = 78,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = kRakuhouhaBounds,
+        .bounds_segment_count = sizeof(kRakuhouhaBounds) / sizeof(kRakuhouhaBounds[0]),
+        .damage = 0,
+        .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
+        .rehit_ticks = 8},
+    {
+        .kind = SABER_KIND_RAIKOUSEN,
+        .index = 0,
+        .visual_animation = 0x44,
+        .facing_xor = 1,
+        .startup_ticks = 10,
+        .active_ticks = 27,
+        .recovery_ticks = 2,
+        .total_ticks = 39,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = kRaikousenBounds,
+        .bounds_segment_count = sizeof(kRaikousenBounds) / sizeof(kRaikousenBounds[0]),
+        .damage = 0,
+        .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
+        .rehit_ticks = 0},
+    {
+        .kind = SABER_KIND_KUUENBU,
+        .index = 0,
+        .visual_animation = 0x45,
+        .facing_xor = 1,
+        .startup_ticks = 1,
+        .active_ticks = 15,
+        .recovery_ticks = 0,
+        .total_ticks = 16,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = kKuuenbuBounds,
+        .bounds_segment_count = sizeof(kKuuenbuBounds) / sizeof(kKuuenbuBounds[0]),
+        .damage = 0,
+        .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
+        .rehit_ticks = 0},
+    {
+        .kind = SABER_KIND_HYOURETSUZAN,
+        .index = 0,
+        .visual_animation = 0x42,
+        .facing_xor = 1,
+        .startup_ticks = 4,
+        .active_ticks = 250,
+        .recovery_ticks = 1,
+        .total_ticks = 255,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = kHyouretsuzanBounds,
+        .bounds_segment_count = sizeof(kHyouretsuzanBounds) / sizeof(kHyouretsuzanBounds[0]),
+        .damage = 0,
+        .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
+        .rehit_ticks = 0},
+    {
+        .kind = SABER_KIND_HYOURETSUZAN,
+        .index = 1,
+        .visual_animation = 0x43,
+        .facing_xor = 1,
+        .startup_ticks = 0,
+        .active_ticks = 0,
+        .recovery_ticks = 14,
+        .total_ticks = 14,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = NULL,
+        .bounds_segment_count = 0,
+        .damage = 0,
+        .bounds_pointer = 0,
+        .rehit_ticks = 0},
+    {
+        .kind = SABER_KIND_YOUDANTOTSU,
+        .index = 0,
+        .visual_animation = 0x47,
+        .facing_xor = 1,
+        .startup_ticks = 13,
+        .active_ticks = 18,
+        .recovery_ticks = 11,
+        .total_ticks = 42,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = kYoudantotsuBounds,
+        .bounds_segment_count = sizeof(kYoudantotsuBounds) / sizeof(kYoudantotsuBounds[0]),
+        .damage = 0,
+        .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
+        .rehit_ticks = 0},
+    {
+        .kind = SABER_KIND_JUUHAZAN,
+        .index = 0,
+        .visual_animation = 0x48,
+        .facing_xor = 1,
+        .startup_ticks = 10,
+        .active_ticks = 10,
+        .recovery_ticks = 30,
+        .total_ticks = 50,
+        .chain_open_tick = MMX_SABER_NO_WINDOW,
+        .chain_close_tick = MMX_SABER_NO_WINDOW,
+        .buffer_open_tick = MMX_SABER_NO_WINDOW,
+        .buffer_close_tick = MMX_SABER_NO_WINDOW,
+        .next_index = MMX_SABER_NO_WINDOW,
+        .bounds_segments = kJuuhazanBounds,
+        .bounds_segment_count = sizeof(kJuuhazanBounds) / sizeof(kJuuhazanBounds[0]),
+        .damage = 0,
+        .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
+        .rehit_ticks = 0}};
 
 typedef struct MmxSaberAttackState {
   MmxSaberPadKind kind;
@@ -230,6 +442,9 @@ static MmxSaberCollisionWindow ground_collision = {
     NULL, {0}, 0x37fd8, "$37FD8", false, false, false};
 static MmxSaberCollisionWindow air_collision = {
     NULL, {0}, 0x37f40, "$37F40", false, false, false};
+static MmxSaberCollisionWindow ksx_collision = {
+    NULL, {0}, 0x37a44, "$37A44", false, false, false};
+static bool ksx_held;
 static unsigned collision_warnings;
 /* The native positive path reads $86:EF37 through the collision ROM. Keep
  * the same ROM view here so a priority-bypassed buster can reproduce that
@@ -286,6 +501,20 @@ static MmxSaberTuningDamageKind attack_damage_kind(
       return MMX_SABER_TUNING_DAMAGE_WALL;
     case SABER_KIND_DASH:
       return MMX_SABER_TUNING_DAMAGE_DASH;
+    case SABER_KIND_RYUENJIN:
+      return MMX_SABER_TUNING_DAMAGE_RYUENJIN;
+    case SABER_KIND_RAKUHOUHA:
+      return MMX_SABER_TUNING_DAMAGE_RAKUHOUHA;
+    case SABER_KIND_RAIKOUSEN:
+      return MMX_SABER_TUNING_DAMAGE_RAIKOUSEN;
+    case SABER_KIND_KUUENBU:
+      return MMX_SABER_TUNING_DAMAGE_KUUENBU;
+    case SABER_KIND_HYOURETSUZAN:
+      return MMX_SABER_TUNING_DAMAGE_HYOURETSUZAN;
+    case SABER_KIND_YOUDANTOTSU:
+      return MMX_SABER_TUNING_DAMAGE_YOUDANTOTSU;
+    case SABER_KIND_JUUHAZAN:
+      return MMX_SABER_TUNING_DAMAGE_JUUHAZAN;
     case SABER_KIND_GROUND1:
     case SABER_KIND_GROUND2:
     case SABER_KIND_GROUND3:
@@ -303,12 +532,9 @@ static unsigned attack_tuned_damage(const uint8_t *ram, unsigned enemy,
                                     MmxSaberTuningDamageKind kind) {
   const bool boss = ram && enemy_slot_valid(enemy) &&
       MmxWidePolicy_IsBossEncounter(ram[enemy + 0x0a]);
-  const int damage = boss ? MmxSaberTuningBossDamage(kind) :
-      MmxSaberTuningNormalDamage(kind);
   const MmxSaberArmorFlags armor = MmxSaberArmorCurrent();
-  const unsigned bonus = kind < MMX_SABER_TUNING_DAMAGE_COUNT ?
-      MmxSaberArmorDamageBonus(armor.arms, boss) : 0;
-  return clamp_tuned_damage(damage + (int)bonus);
+  return clamp_tuned_damage(
+      MmxSaberTuningArmoredDamage(kind, boss, armor.arms, armor.black));
 }
 
 static bool priority_buster_class(MmxSaberPriorityClass priority_class) {
@@ -319,8 +545,10 @@ static bool priority_buster_class(MmxSaberPriorityClass priority_class) {
 }
 
 static bool priority_saber_class(MmxSaberPriorityClass priority_class) {
-  return priority_class >= MMX_SABER_PRIORITY_CLASS_SLASH1 &&
-      priority_class <= MMX_SABER_PRIORITY_CLASS_WAVE;
+  return (priority_class >= MMX_SABER_PRIORITY_CLASS_SLASH1 &&
+          priority_class <= MMX_SABER_PRIORITY_CLASS_WAVE) ||
+      (priority_class >= MMX_SABER_PRIORITY_CLASS_RYUENJIN &&
+       priority_class <= MMX_SABER_PRIORITY_CLASS_JUUHAZAN);
 }
 
 static bool saber_owned_damage_class(MmxSaberPriorityClass priority_class) {
@@ -395,6 +623,20 @@ static MmxSaberTuningDamageKind priority_damage_kind(
       return MMX_SABER_TUNING_DAMAGE_X3_FINISHER;
     case MMX_SABER_PRIORITY_CLASS_WAVE:
       return MMX_SABER_TUNING_DAMAGE_WAVE;
+    case MMX_SABER_PRIORITY_CLASS_RYUENJIN:
+      return MMX_SABER_TUNING_DAMAGE_RYUENJIN;
+    case MMX_SABER_PRIORITY_CLASS_RAKUHOUHA:
+      return MMX_SABER_TUNING_DAMAGE_RAKUHOUHA;
+    case MMX_SABER_PRIORITY_CLASS_RAIKOUSEN:
+      return MMX_SABER_TUNING_DAMAGE_RAIKOUSEN;
+    case MMX_SABER_PRIORITY_CLASS_KUUENBU:
+      return MMX_SABER_TUNING_DAMAGE_KUUENBU;
+    case MMX_SABER_PRIORITY_CLASS_HYOURETSUZAN:
+      return MMX_SABER_TUNING_DAMAGE_HYOURETSUZAN;
+    case MMX_SABER_PRIORITY_CLASS_YOUDANTOTSU:
+      return MMX_SABER_TUNING_DAMAGE_YOUDANTOTSU;
+    case MMX_SABER_PRIORITY_CLASS_JUUHAZAN:
+      return MMX_SABER_TUNING_DAMAGE_JUUHAZAN;
     default:
       return MMX_SABER_TUNING_DAMAGE_COUNT;
   }
@@ -493,6 +735,28 @@ static void retire_all_tagged(uint8_t *ram) {
     if (saber_tag_family(word(ram + d + 0x3e))) retire_projectile_slot(ram, d);
 }
 
+/* The KSX box last published, for the hitbox views: in co-op the other
+ * seat's turn empties the shared record, so the ROM cannot show it. */
+static struct {
+  bool valid;
+  int16_t x, y;
+  int8_t cx, cy;
+  uint8_t hw, hh, mirror;
+} ksx_shown;
+
+bool MmxSaberAttackKsxShownBox(int box[4]) {
+  if (!ksx_shown.valid || state.phase != SABER_PHASE_ACTIVE ||
+      !MmxSaberAttackIsKsxKind(state.kind))
+    return false;
+  const int x = ksx_shown.x + (ksx_shown.mirror ? -ksx_shown.cx : ksx_shown.cx);
+  const int y = ksx_shown.y + ksx_shown.cy;
+  box[0] = x - ksx_shown.hw;
+  box[1] = y - ksx_shown.hh;
+  box[2] = x + ksx_shown.hw;
+  box[3] = y + ksx_shown.hh;
+  return true;
+}
+
 static void release_current_projectile(uint8_t *ram) {
   if (ram && current_projectile_tagged(ram, state.projectile))
     retire_projectile_slot(ram, state.projectile);
@@ -554,7 +818,16 @@ static MmxSaberSfxAttackCue attack_cue(const MmxSaberAttack *attack) {
     case SABER_KIND_WALL:
       return MMX_SABER_SFX_ATTACK_WALL;
     case SABER_KIND_DASH:
+    case SABER_KIND_RAIKOUSEN:
+    case SABER_KIND_YOUDANTOTSU:
       return MMX_SABER_SFX_ATTACK_DASH;
+    case SABER_KIND_RYUENJIN:
+    case SABER_KIND_JUUHAZAN:
+    case SABER_KIND_RAKUHOUHA:
+      return MMX_SABER_SFX_ATTACK_GROUND_SLASH_3;
+    case SABER_KIND_KUUENBU:
+    case SABER_KIND_HYOURETSUZAN:
+      return MMX_SABER_SFX_ATTACK_AIR;
     default:
       return MMX_SABER_SFX_ATTACK_COUNT;
   }
@@ -628,7 +901,13 @@ static bool air_collision_attack(const MmxSaberAttack *attack) {
                     attack->kind == SABER_KIND_DASH);
 }
 
+bool MmxSaberAttackIsKsxKind(MmxSaberPadKind kind) {
+  return kind >= SABER_KIND_RYUENJIN && kind <= SABER_KIND_JUUHAZAN;
+}
+
 static bool collision_ready(const MmxSaberAttack *attack) {
+  if (attack && MmxSaberAttackIsKsxKind(attack->kind))
+    return attack->bounds_segments && ksx_collision.ready;
   return air_collision_attack(attack) ? air_collision.ready :
       (attack && attack->bounds_segments && ground_collision.ready);
 }
@@ -708,14 +987,17 @@ static void collision_window_update(MmxSaberCollisionWindow *window,
 }
 
 void MmxSaberAttackCollisionRom(uint8_t *rom, size_t size) {
-  uint8_t ground[40], air[40];
+  uint8_t ground[40], air[40], ksx[40];
   native_collision_rom = rom;
   native_collision_rom_size = size;
   MmxSaberHitboxDebugSetRom(rom, size);
   bounds_records_for_window(ground, MMX_SABER_ATTACK_BOUNDS_POINTER);
   bounds_records_for_window(air, MMX_SABER_AIR_BOUNDS_POINTER);
+  /* KSX's record is written per frame (ksx_publish_box). */
+  memset(ksx, 255, sizeof(ksx));
   collision_window_update(&ground_collision, rom, size, ground);
   collision_window_update(&air_collision, rom, size, air);
+  collision_window_update(&ksx_collision, rom, size, ksx);
   MmxSaberWaveRuntimeCollisionRom(rom, size);
 }
 
@@ -737,6 +1019,7 @@ static void collision_window_reset(MmxSaberCollisionWindow *window) {
 static void collision_windows_reset(void) {
   collision_window_reset(&ground_collision);
   collision_window_reset(&air_collision);
+  collision_window_reset(&ksx_collision);
 }
 
 const MmxSaberAttack *MmxSaberAttackRecord(MmxSaberPadKind kind,
@@ -827,6 +1110,137 @@ static void start_attack(const MmxSaberAttack *attack, uint8_t facing) {
   update_animation();
 }
 
+/* One KSX move frame. These never chain from Y; a held KSX button keeps
+ * Hyouretsuzan stabbing until it lands (Kuuenbu spins once per press). */
+/* Switch a KSX move to its end record (index 1), keeping the swing. */
+static void ksx_enter_end(MmxSaberPadKind kind, bool cue) {
+  const MmxSaberAttack *end = MmxSaberAttackRecord(kind, 1);
+  if (state.projectile) release_current_projectile(runtime_ram);
+  state.index = 1;
+  state.tick = 0;
+  state.anim_id = end ? end->visual_animation : 0;
+  state.phase = SABER_PHASE_RECOVERY;
+  if (cue) {
+    state.cue = MMX_SABER_SFX_ATTACK_GROUND_SLASH_1;
+    state.cue_pending = true;
+  }
+  update_animation();
+}
+
+static void ksx_step(const MmxSaberAttack *attack, bool grounded) {
+  if (attack->kind == SABER_KIND_RYUENJIN && attack->index == 0) {
+    /* Mega Man X Engine player_state_saber_up: releasing X ends the rise at
+     * once; held, it runs until Zero starts falling after tick 30. */
+    const int16_t vy = runtime_ram ? (int16_t)word(runtime_ram + 0x0bc4) : 0;
+    if (!ksx_held || (state.tick > 30 && vy <= 0)) {
+      ksx_enter_end(SABER_KIND_RYUENJIN, false);
+      return;
+    }
+  }
+  if (attack->kind == SABER_KIND_HYOURETSUZAN && attack->index == 0 &&
+      state.tick >= attack->startup_ticks) {
+    if (grounded) {
+      ksx_enter_end(SABER_KIND_HYOURETSUZAN, true);
+      return;
+    }
+    if (!ksx_held) {
+      MmxSaberAttackExit(runtime_ram, MMX_SABER_ATTACK_EXIT_NATURAL);
+      return;
+    }
+  }
+  ++state.tick;
+  if (state.tick >= attack->total_ticks) {
+    if (attack->kind == SABER_KIND_HYOURETSUZAN && attack->index == 0) {
+      state.tick = (uint8_t)(attack->total_ticks - 2);
+    } else {
+      MmxSaberAttackExit(runtime_ram, MMX_SABER_ATTACK_EXIT_NATURAL);
+      return;
+    }
+  }
+  if (attack->rehit_ticks && state.tick > attack->startup_ticks &&
+      (state.tick - attack->startup_ticks) % attack->rehit_ticks == 0)
+    state.hit_slots = 0;
+  state.phase = MmxSaberAttackPhaseForTick(attack, state.tick);
+  update_animation();
+}
+
+bool MmxSaberAttackStartKsx(MmxSaberPadKind kind, uint8_t facing) {
+  const MmxSaberAttack *next = MmxSaberAttackRecord(kind, 0);
+  if (!next || !MmxSaberAttackIsKsxKind(kind)) return false;
+  /* Any skill cancels the three ground slashes at any point of their
+   * animation; other attacks give way only in recovery. */
+  const bool slash = state.kind == SABER_KIND_GROUND1 ||
+      state.kind == SABER_KIND_GROUND2 || state.kind == SABER_KIND_GROUND3;
+  if (state.phase != SABER_PHASE_IDLE && !slash &&
+      (state.phase != SABER_PHASE_RECOVERY ||
+       (MmxSaberAttackIsKsxKind(state.kind) &&
+        !(state.kind == SABER_KIND_HYOURETSUZAN && state.index == 1))))
+    return false;
+  if (state.projectile) release_current_projectile(runtime_ram);
+  start_attack(next, facing);
+  return true;
+}
+
+void MmxSaberAttackSetKsxHeld(bool held) {
+  ksx_held = held;
+}
+
+bool MmxSaberAttackOwnsProjectile(const uint8_t *ram, unsigned projectile) {
+  return saber_projectile_owned(ram, projectile);
+}
+
+bool MmxSaberAttackNativeTableValue(unsigned row, unsigned attack_class,
+                                    unsigned *value) {
+  unsigned directory;
+  if (!native_collision_rom_word(0xef37 + ((row & 0xff) << 1), &directory))
+    return false;
+  return native_collision_rom_byte(0xef37 + ((directory + attack_class) & 0xffff),
+                                   value);
+}
+
+bool MmxSaberAttackObjectBox(const uint8_t *ram, unsigned object, int box[4]) {
+  unsigned pointer, cx, cy, hw, hh;
+  int x, y;
+  if (!ram || !box) return false;
+  pointer = word(ram + object + 0x20);
+  if (pointer < 0x8000 ||
+      !native_collision_rom_byte(pointer, &cx) ||
+      !native_collision_rom_byte(pointer + 1, &cy) ||
+      !native_collision_rom_byte(pointer + 2, &hw) ||
+      !native_collision_rom_byte(pointer + 3, &hh) ||
+      (cx == 0xff && cy == 0xff && hw == 0xff && hh == 0xff))
+    return false;
+  x = (int16_t)word(ram + object + 5) +
+      ((ram[object + 0x11] & 0x40) ? -(int8_t)cx : (int8_t)cx);
+  y = (int16_t)word(ram + object + 8) + (int8_t)cy;
+  box[0] = x - (int)hw;
+  box[1] = y - (int)hh;
+  box[2] = x + (int)hw;
+  box[3] = y + (int)hh;
+  return true;
+}
+
+void MmxSaberAttackSetKsxAnim(uint8_t anim_id) {
+  if (MmxSaberAttackIsKsxKind(state.kind) && state.phase != SABER_PHASE_IDLE) {
+    state.anim_id = anim_id;
+    update_animation();
+  }
+}
+
+uint16_t MmxSaberAttackVisualTick(MmxSaberAttackSnapshot s) {
+  /* Ryuenjin (atk_ryuenjin, loop 4-27): the flame frames repeat while the
+   * rise lasts; the end record shows the sheet's last two frames. */
+  if (s.kind == SABER_KIND_RYUENJIN && s.anim_id == 0x41) {
+    if (s.index == 1) return (uint16_t)(27 + s.tick);
+    if (s.tick >= 26) return (uint16_t)(4 + (s.tick - 4) % 22);
+  }
+  return s.tick;
+}
+
+uint8_t MmxSaberAttackSwingId(void) {
+  return state.swing_id;
+}
+
 void MmxSaberAttackStep(bool saber_pressed, bool grounded, bool playable,
                         uint8_t native_facing,
                         uint8_t horizontal_direction) {
@@ -889,6 +1303,11 @@ void MmxSaberAttackStepWithWallAndDash(bool saber_pressed, bool grounded,
   }
   (void)jump_pressed;
 
+  if (MmxSaberAttackIsKsxKind(attack->kind)) {
+    ksx_step(attack, grounded);
+    return;
+  }
+
   ++state.tick;
   if (state.tick >= attack->total_ticks) {
     MmxSaberAttackExit(runtime_ram, MMX_SABER_ATTACK_EXIT_NATURAL);
@@ -944,11 +1363,115 @@ static uint8_t projectile_facing(const MmxSaberAttack *attack) {
   return mirror ? 0x40 : 0;
 }
 
+static void collision_window_update(MmxSaberCollisionWindow *window,
+                                    uint8_t *rom, size_t size,
+                                    const uint8_t expected[40]);
+
+/* KSX's shared record ($86:FA44): rewritten with the running move's box.
+ * Co-op empties it on the other seat's turn (MmxZeroSetCollisionRom), so
+ * put it back first when needed: every KSX box is written each frame. */
+static bool ksx_publish_box(int cx, int cy, unsigned hw, unsigned hh) {
+  MmxSaberCollisionWindow *window = &ksx_collision;
+  if (!window->installed && native_collision_rom && MmxZeroActive()) {
+    uint8_t empty[40];
+    memset(empty, 255, sizeof(empty));
+    collision_window_update(window, native_collision_rom,
+                            native_collision_rom_size, empty);
+  }
+  if (!window->installed || !window->rom ||
+      memcmp(window->rom + window->offset, window->bytes, 4))
+    return false;
+  if (cx < -128) cx = -128;
+  if (cx > 127) cx = 127;
+  if (cy < -128) cy = -128;
+  if (cy > 127) cy = 127;
+  if (hw > 254) hw = 254;
+  if (hh > 254) hh = 254;
+  window->bytes[0] = (uint8_t)cx;
+  window->bytes[1] = (uint8_t)cy;
+  window->bytes[2] = (uint8_t)hw;
+  window->bytes[3] = (uint8_t)hh;
+  memcpy(window->rom + window->offset, window->bytes, 4);
+  return true;
+}
+
+static const MmxSaberBoundsSegment *ksx_segment(const MmxSaberAttack *attack,
+                                                uint8_t tick) {
+  for (unsigned i = 0; attack->bounds_segments &&
+                       i < attack->bounds_segment_count; ++i) {
+    const MmxSaberBoundsSegment *segment = attack->bounds_segments + i;
+    if (tick >= segment->first_tick && tick <= segment->last_tick)
+      return segment;
+  }
+  return NULL;
+}
+
+static bool enemy_hittable(const uint8_t *ram, unsigned enemy) {
+  return ram[enemy] &&
+      !(state.hit_slots & (1u << ((enemy - 0xe68) / 64)));
+}
+
+/* Rakuhouha: one live object carries the blast's and every shard's hit
+ * area. Each frame it takes the first area (starting from a rotating one)
+ * that reaches an enemy not yet hit, so every area hits on its own. */
+static bool anchor_rakuhouha(uint8_t *ram, unsigned d) {
+  MmxSaberKsxGigaTarget targets[10];
+  const unsigned count = MmxSaberKsxGigaTargets(ram, state.tick, state.facing,
+                                                targets, 10);
+  unsigned pick = count;
+  for (unsigned k = 0; k < count && pick == count; ++k) {
+    const unsigned t = (state.tick + k) % count;
+    const int area[4] = {targets[t].x - targets[t].half_w,
+                         targets[t].y - targets[t].half_h,
+                         targets[t].x + targets[t].half_w,
+                         targets[t].y + targets[t].half_h};
+    for (unsigned enemy = 0xe68; enemy < 0x1228; enemy += 64) {
+      int box[4];
+      if (!enemy_hittable(ram, enemy) ||
+          !MmxSaberAttackObjectBox(ram, enemy, box) ||
+          box[2] < area[0] || box[0] > area[2] ||
+          box[3] < area[1] || box[1] > area[3])
+        continue;
+      pick = t;
+      break;
+    }
+  }
+  if (!count) return false;
+  if (pick == count) pick = 0;
+  putword(ram + d + 5, (unsigned)targets[pick].x & 0xffff);
+  putword(ram + d + 8, (unsigned)targets[pick].y & 0xffff);
+  return ksx_publish_box(0, 0, targets[pick].half_w, targets[pick].half_h);
+}
+
 static void anchor_projectile(uint8_t *ram, unsigned d,
                               const MmxSaberAttack *attack) {
   putword(ram + d + 5, word(ram + 0x0bad));
   putword(ram + d + 8, word(ram + 0x0bb0));
   ram[d + 0x11] = projectile_facing(attack);
+  if (attack && MmxSaberAttackIsKsxKind(attack->kind)) {
+    const MmxSaberBoundsSegment *segment = ksx_segment(attack, state.tick);
+    bool boxed = false;
+    if (collision_ready(attack) && segment) {
+      boxed = attack->kind == SABER_KIND_RAKUHOUHA ?
+          anchor_rakuhouha(ram, d) :
+          ksx_publish_box(segment->bounds_x, segment->bounds_y,
+                          segment->bounds_half_width,
+                          segment->bounds_half_height);
+    }
+    putword(ram + d + 0x20, boxed ? MMX_SABER_KSX_BOUNDS_POINTER : 0);
+    ram[d + 0x30] = 0;
+    ksx_shown.valid = boxed && attack->kind != SABER_KIND_RAKUHOUHA;
+    if (ksx_shown.valid) {
+      ksx_shown.x = (int16_t)word(ram + d + 5);
+      ksx_shown.y = (int16_t)word(ram + d + 8);
+      ksx_shown.cx = (int8_t)ksx_collision.bytes[0];
+      ksx_shown.cy = (int8_t)ksx_collision.bytes[1];
+      ksx_shown.hw = ksx_collision.bytes[2];
+      ksx_shown.hh = ksx_collision.bytes[3];
+      ksx_shown.mirror = ram[d + 0x11] & 0x40;
+    }
+    return;
+  }
   putword(ram + d + 0x20,
           collision_ready(attack) ? bounds_pointer(attack, state.tick) : 0);
   ram[d + 0x30] = 0;
@@ -1134,7 +1657,10 @@ void MmxSaberAttackPlayerEnd(uint8_t *ram) {
 
   /* Landing ends an AIR owner immediately.  The central exit retires the
    * tagged slot, clears the hit mask, and leaves native movement/pose alone. */
-  if (landed && state.kind == SABER_KIND_AIR &&
+  if (landed && (state.kind == SABER_KIND_AIR ||
+                 state.kind == SABER_KIND_KUUENBU ||
+                 (state.kind == SABER_KIND_RYUENJIN &&
+                  (state.index == 1 || state.tick > 12))) &&
       state.phase != SABER_PHASE_IDLE) {
     MmxSaberAttackExit(ram, MMX_SABER_ATTACK_EXIT_LANDING);
     return;
@@ -1163,6 +1689,12 @@ void MmxSaberAttackPlayerEnd(uint8_t *ram) {
     if (saber_projectile_owned(ram, state.projectile))
       anchor_projectile(ram, state.projectile, attack);
   }
+  /* KSX moves carry Zero (Ryuenjin's rise, Raikousen's dash) after native
+   * has run: put the box where he is now, so it never trails the art. */
+  if (state.phase == SABER_PHASE_ACTIVE && attack &&
+      MmxSaberAttackIsKsxKind(attack->kind) &&
+      saber_projectile_owned(ram, state.projectile))
+    anchor_projectile(ram, state.projectile, attack);
 
   emit_pending_cue();
 }
@@ -1227,10 +1759,54 @@ static unsigned saber_attack_damage_core(uint8_t *ram, unsigned enemy,
   return attack_tuned_damage(ram, enemy, attack_damage_kind(attack));
 }
 
+static unsigned attack_damage(uint8_t *ram, unsigned enemy,
+                              unsigned projectile, unsigned value);
+
+/* A weakness hit (a skill against its Maverick's victim, a Rekkyoudan
+ * slash against Sting Chameleon) deals at least X1's weakness damage. */
 unsigned MmxSaberAttackDamage(uint8_t *ram, unsigned enemy,
+                              unsigned projectile, unsigned value) {
+  const unsigned damage = attack_damage(ram, enemy, projectile, value);
+  if (damage && !(damage & 128) && !(value & 128) && enemy_slot_valid(enemy)) {
+    const unsigned weak = MmxSaberKsxWeaknessDamage(ram, enemy, projectile);
+    if (weak > damage) return weak;
+  }
+  return damage;
+}
+
+static unsigned attack_damage(uint8_t *ram, unsigned enemy,
                               unsigned projectile, unsigned value) {
   MmxSaberPriorityClassification classification;
   unsigned damage;
+  unsigned ksx_move;
+
+  /* Stagger Combos: a fresh KSX move admitted into a staggered boss. */
+  if (MmxSaberKsxStaggerConsume(ram, enemy, projectile, &ksx_move)) {
+    if (value & 128) return value;
+    if (priority_buster_class((MmxSaberPriorityClass)ksx_move)) {
+      /* A buster shot restaggers with its own native damage. */
+      MmxSaberPriorityClassification shot;
+      damage = MmxSaberPriorityClassify(ram, projectile, &shot) ?
+          native_buster_damage(ram, enemy, projectile, shot.native_damage_row) :
+          0;
+    } else {
+      damage = attack_tuned_damage(
+          ram, enemy, priority_damage_kind((MmxSaberPriorityClass)ksx_move));
+    }
+    if (enemy_slot_valid(enemy) && saber_projectile_owned(ram, projectile))
+      state.hit_slots |= (uint16_t)(1u << ((enemy - 0xe68) / 64));
+    classification.priority_class = (MmxSaberPriorityClass)ksx_move;
+    classification.priority =
+        (uint8_t)MmxSaberPriorityTuned(classification.priority_class);
+    classification.native_damage_row = 0;
+    if (enemy_slot_valid(enemy))
+      MmxSaberPriorityRecord(ram, enemy, &classification,
+                             MmxSaberPriorityCurrentFrame());
+    MmxSaberKsxStaggerNote(ram, enemy, ksx_move, false);
+    clear_boss_protection_for_lethal_saber_damage(ram, enemy, &classification,
+                                                  damage);
+    return damage;
+  }
 
   /* A response sentinel is the only route that supplies a zero table value
    * to this callback. Consume its exact identity once and replace the zero
@@ -1263,6 +1839,8 @@ unsigned MmxSaberAttackDamage(uint8_t *ram, unsigned enemy,
       ram[enemy + 0x38] = 0;
     clear_boss_protection_for_lethal_saber_damage(ram, enemy, &classification,
                                                   damage);
+    if (damage > 0)
+      MmxSaberKsxStaggerNote(ram, enemy, classification.priority_class, false);
     return damage;
   }
 
@@ -1275,6 +1853,8 @@ unsigned MmxSaberAttackDamage(uint8_t *ram, unsigned enemy,
   if (value && !(value & 128) && classified)
     MmxSaberPriorityRecord(ram, enemy, &classification,
                            MmxSaberPriorityCurrentFrame());
+  if (value && !(value & 128) && classified && damage > 0)
+    MmxSaberKsxStaggerNote(ram, enemy, classification.priority_class, true);
   return damage;
 }
 

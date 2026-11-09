@@ -68,8 +68,14 @@ static const BossWeakness *boss_weakness(const uint8_t *r,unsigned enemy,unsigne
   }
   return NULL;
 }
+static MmxWeaponsContactOverride contact_override;
+void MmxWeaponsSetContactClassOverride(MmxWeaponsContactOverride override) {contact_override=override;}
 unsigned MmxWeaponsContactClass(const uint8_t *r,unsigned enemy,unsigned d,unsigned original,bool reaction) {
   unsigned charged;
+  if(contact_override) {
+    unsigned value=contact_override(r,enemy,d,original,reaction);
+    if(value!=original) return value;
+  }
   const BossWeakness *w=boss_weakness(r,enemy,d,&charged);
   if(!w) return original;
   unsigned value=reaction ? w->reaction[charged] : w->damage[charged];

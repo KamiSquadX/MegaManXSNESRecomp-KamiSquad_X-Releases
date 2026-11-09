@@ -42,6 +42,8 @@ unsigned MmxSaberRenderSharedBladePaletteCount(void);
 
 /* Saber-owned world-sprite provider lifecycle. */
 void MmxSaberRenderSetWave(const MmxSaberWave *wave);
+/* KSX Zero's Special Move art: animation ids $40 and up resolve here. */
+void MmxSaberRenderSetKsxAssets(const MmxSaberAssets *assets);
 unsigned MmxSaberRenderProvideWorldSprites(MmxRenderWorldSprite *out,
                                            unsigned max);
 

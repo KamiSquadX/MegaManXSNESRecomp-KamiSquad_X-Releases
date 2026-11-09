@@ -127,6 +127,23 @@ static void reset_pilot_overlay_alignment(void) {
 
 static MmxZeroState frame_zero;
 static MmxWeaponsState frame_weapons;
+/* KSX Zero's Rakuhouha selection (his own weapon list) and its HUD icon. */
+static bool (*ksx_hud_provider)(void);
+static const uint16_t *ksx_hud_icon;
+static bool frame_ksx_hud;
+void MmxRendererSetKsxHud(bool (*selected)(void), const uint16_t *icon) {
+  ksx_hud_provider = selected;
+  ksx_hud_icon = icon;
+}
+/* The 16x16 HUD icon: X1's icon frame around the 12x12 art; -1 is clear. */
+static int ksx_hud_icon_pixel(int col, int row) {
+  if (!ksx_hud_icon || col < 0 || col > 15 || row < 0 || row > 15) return -1;
+  if ((col == 0 || col == 15) && (row == 0 || row == 15)) return -1;
+  if (col == 0 || col == 15 || row == 0 || row == 15) return 0x0c63;
+  if (col == 1 || col == 14 || row == 1 || row == 14) return 0x7fff;
+  uint16_t pixel = ksx_hud_icon[(row - 2) * 12 + col - 2];
+  return pixel & 0x8000 ? 0x0c63 : pixel;
+}
 static MmxArmorState frame_armor;
 static uint8_t armor_pixels[2][128*128];
 static uint16_t armor_colors[2][128];
@@ -176,7 +193,7 @@ static MmxRendererAxlProvider axl_provider;
 static MmxRenderAxlFrame frame_axl;
 static MmxRendererAxlSeatProvider axl_seat_provider;
 static MmxRenderAxlFrame frame_partner_axl;
-enum { MAX_WORLD_SPRITES = 8 };
+enum { MAX_WORLD_SPRITES = 24 };
 static MmxRendererWorldSpriteProvider world_sprite_provider;
 static MmxRenderWorldSprite frame_world_sprites[MAX_WORLD_SPRITES];
 static unsigned frame_world_sprite_count;
@@ -669,6 +686,7 @@ void MmxRendererBeginFrame(const uint8_t ram[0x20000]) {
   frame_zero = MmxZeroGetState();
   frame_bounds=MmxCoopViewsGetBoundsState();
   frame_weapons = MmxWeaponsGetState();
+  frame_ksx_hud = ksx_hud_provider && ksx_hud_provider();
   frame_weapon_combat = MmxWeaponsGetCombatState();
   if ((frame_held || MmxZeroSwapping() || MmxWeaponsTimeActive()) && !latched_count) {
     /* A mid-swap load has no preceding submission. Rebuild the frozen
@@ -1265,9 +1283,201 @@ static unsigned menu_glyph(unsigned c) {
   if (c >= 'A' && c <= 'L') return 0xc4 + c - 'A';
   if (c >= 'M' && c <= 'P') return 0xd4 + c - 'M';
   if (c >= 'R' && c <= 'W') return 0xd8 + c - 'R';
-  return c == '.' ? 0xdf : c == 'X' ? 0x9d : 0;
+  return c == '.' ? 0xdf : c == 'X' ? 0x9d : c == 'Y' ? 0xde : 0;
+}
+/* KSX Zero's pause menu (MmxRendererSetSkillMenu). Names use X1's own menu
+ * font from VRAM (it has no Z, drawn here in the same style) in the red of
+ * X1's READY; the right column moves 8 px left so the longest names fit. */
+static const MmxRendererSkillMenu *skill_menu;
+void MmxRendererSetSkillMenu(const MmxRendererSkillMenu *menu) { skill_menu = menu; }
+static bool skill_menu_active(void) {
+  return skill_menu && !frame_weapons.menu_page && frame.ram &&
+      MmxZeroActive() && MmxWeaponsMenuVisible(frame.ram);
+}
+enum {
+  /* Item row 0's icon and name, in BG1 rows (its scroll is 1). */
+  SKILL_MENU_TOP = 39,
+  /* The right column moves 8 px left so the longest names fit: its BG1
+   * tiles are sampled 8 px further right (skill_menu_shifted), and X1's
+   * highlight window and the row's sprites move with it
+   * (skill_menu_shift_row). */
+  SKILL_MENU_SHIFT = 8, SKILL_MENU_SPLIT = 128, SKILL_MENU_GREEN_END = 230,
+  SKILL_MENU_RIGHT_ICON = 136 - SKILL_MENU_SHIFT,
+  SKILL_MENU_LEFT_NAME = 49, SKILL_MENU_RIGHT_NAME = 145,
+  SKILL_MENU_LEFT_END = 126, SKILL_MENU_RIGHT_END = 229,
+  SKILL_MENU_FONT = 0x1000      /* BG1 characters (word address) */
+};
+static bool skill_item_owned(unsigned item) {
+  return item == 0 || item == 9 || (item <= 8 && (frame.ram[0x1f86 + item * 2] & 0x40));
+}
+static bool skill_menu_rows(int by) {
+  /* Rows 39-120: the five item rows and the line under ESCAPE.U's icon. */
+  return skill_menu_active() && by >= SKILL_MENU_TOP && by < SKILL_MENU_TOP + 82;
+}
+/* BG1 at (x, by) samples x + 8 (1); the last 8 px would reach the frame and
+ * stay blank (2). */
+static int skill_menu_shifted(int x, int by, int *source_x) {
+  if (!skill_menu_rows(by) || x < SKILL_MENU_SPLIT || x >= SKILL_MENU_GREEN_END) return 0;
+  *source_x = x + SKILL_MENU_SHIFT;
+  return *source_x < SKILL_MENU_GREEN_END ? 1 : 2;
+}
+/* Screen row y (BG1 row y + 1): X1's highlight window edges in the right
+ * column and the row's sprites there move left with it. */
+static void skill_menu_shift_row(SnesRenderRegisters *p, int y, MmxRenderView view,
+                                 uint16_t *objects, int *object_colors) {
+  if (!skill_menu_rows(y + 1)) return;
+  uint8_t *edges[4] = {&p->window1left, &p->window1right, &p->window2left, &p->window2right};
+  for (unsigned i = 0; i < 4; ++i)
+    if (*edges[i] >= SKILL_MENU_SPLIT + SKILL_MENU_SHIFT && *edges[i] < 255)
+      *edges[i] = (uint8_t)(*edges[i] - SKILL_MENU_SHIFT);
+  for (int x = SKILL_MENU_SPLIT; x < SKILL_MENU_GREEN_END; ++x) {
+    const int to = x + view.extra, from = to + SKILL_MENU_SHIFT;
+    const bool inside = x + SKILL_MENU_SHIFT < SKILL_MENU_GREEN_END;
+    objects[to] = inside ? objects[from] : 0;
+    object_colors[to] = inside ? object_colors[from] : -1;
+  }
+}
+/* X1 menu font shade (11 light .. 14 shadow) of `c` at (gx, gy), 0 if none. */
+static unsigned skill_glyph_shade(const uint16_t *vram, char c, int gx, int gy) {
+  static const char *const z[7] = {
+    "dddddde", "eeeecce", "...bbe.", "..bbe..", ".cce...", "dddddde", "eeeeeee"};
+  if (gx < 0 || gx > 6 || gy < 0 || gy > 6) return 0;
+  if (c == 'Z') {
+    char v = z[gy][gx];
+    return v == '.' ? 0 : (unsigned)(11 + v - 'b');
+  }
+  unsigned tile = menu_glyph((unsigned char)c);
+  if (!tile) return 0;
+  unsigned pixel = tile_pixel(vram, SKILL_MENU_FONT + tile * 16, gx, gy, 4);
+  return pixel >= 11 && pixel <= 14 ? pixel : 0;
+}
+static int skill_name_pixel(const uint16_t *vram, int x, int y) {
+  /* READY's reds; X1's own color math dims the rows not selected. */
+  static const uint16_t ready[4] = {0x739c, 0x3dfe, 0x295e, 0x0c63};
+  if (y < SKILL_MENU_TOP || y >= SKILL_MENU_TOP + 80) return -1;
+  int row = (y - SKILL_MENU_TOP) / 16, gy = (y - SKILL_MENU_TOP) % 16;
+  if (gy > 6) return -1;
+  bool right = x >= SKILL_MENU_SPLIT;
+  unsigned item = (unsigned)row + (right ? 5 : 0);
+  if (item > 9 || !skill_item_owned(item)) return -1;
+  const char *text = skill_menu->labels[item];
+  if (!text) return -1;
+  int left = right ? SKILL_MENU_RIGHT_NAME : SKILL_MENU_LEFT_NAME;
+  int end = right ? SKILL_MENU_RIGHT_END : SKILL_MENU_LEFT_END;
+  int n = (int)strlen(text);
+  /* X1's 8 px spacing where the name fits, else 7 (no blank column). */
+  int advance = left + (n - 1) * 8 + 7 <= end ? 8 : 7;
+  if (x < left || x >= left + n * advance) return -1;
+  int index = (x - left) / advance;
+  unsigned shade = skill_glyph_shade(vram, text[index], (x - left) % advance, gy);
+  if (!shade) return -1;
+  return ready[shade - 11];
+}
+static int skill_icon_pixel(int x, int y) {
+  if (y < SKILL_MENU_TOP || y >= SKILL_MENU_TOP + 80) return -1;
+  bool right = x >= SKILL_MENU_SPLIT;
+  int left = right ? SKILL_MENU_RIGHT_ICON : 32;
+  int ix = x - left, iy = (y - SKILL_MENU_TOP) % 16;
+  unsigned item = (unsigned)(y - SKILL_MENU_TOP) / 16 + (right ? 5 : 0);
+  if (ix < 0 || ix > 15 || item < 1 || item > 8 || !skill_item_owned(item) ||
+      !skill_menu->icons[item])
+    return -1;
+  /* X1's icon frame: dark outline, white ring, black inside. */
+  if ((ix == 0 || ix == 15) && (iy == 0 || iy == 15)) return -1;
+  if (ix == 0 || ix == 15 || iy == 0 || iy == 15) return 0x0c63;
+  if (ix == 1 || ix == 14 || iy == 1 || iy == 14) return 0x7fff;
+  uint16_t pixel = skill_menu->icons[item][(iy - 2) * 12 + ix - 2];
+  return pixel & 0x8000 ? 0x0c63 : pixel;
+}
+/* The hovered item's input command: a narrow version of X1's blue title
+ * font, centred in the middle box between the pause Zero and the bar. */
+static const uint8_t *command_glyph(char c, int *width) {
+  static const struct { char c; uint8_t width, rows[5]; } font[] = {
+    {'A',4,{6,9,15,9,9}},{'B',4,{14,9,14,9,14}},{'C',4,{7,8,8,8,7}},
+    {'D',4,{14,9,9,9,14}},{'E',4,{15,8,14,8,15}},{'F',4,{15,8,14,8,8}},
+    {'G',4,{7,8,11,9,7}},{'H',4,{9,9,15,9,9}},{'I',3,{14,4,4,4,14}},
+    {'J',4,{1,1,1,9,6}},{'K',4,{9,10,12,10,9}},{'L',4,{8,8,8,8,15}},
+    {'M',4,{9,15,15,9,9}},{'N',4,{9,13,11,9,9}},{'O',4,{6,9,9,9,6}},
+    {'P',4,{14,9,14,8,8}},{'Q',4,{6,9,9,11,7}},{'R',4,{14,9,14,10,9}},
+    {'S',4,{7,8,6,1,14}},{'T',3,{14,4,4,4,4}},{'U',4,{9,9,9,9,6}},
+    {'V',3,{10,10,10,10,4}},{'W',4,{9,9,15,15,9}},{'X',4,{9,9,6,9,9}},
+    {'Y',3,{10,10,4,4,4}},{'Z',4,{15,1,6,8,15}},{'0',4,{6,9,9,9,6}},
+    {'1',3,{4,12,4,4,14}},{'2',4,{14,1,6,8,15}},{'3',4,{14,1,6,1,14}},
+    {'4',4,{9,9,15,1,1}},{'5',4,{15,8,14,1,14}},{'6',4,{7,8,14,9,6}},
+    {'7',4,{15,1,2,4,4}},{'8',4,{6,9,6,9,6}},{'9',4,{6,9,7,1,14}},
+    {'+',3,{0,4,14,4,0}},{'/',4,{1,2,2,4,8}},{'(',2,{4,8,8,8,4}},
+    {')',2,{8,4,4,4,8}},{'.',1,{0,0,0,0,8}},{' ',2,{0,0,0,0,0}}};
+  for (unsigned i = 0; i < sizeof(font) / sizeof(font[0]); ++i)
+    if (font[i].c == c) { *width = font[i].width; return font[i].rows; }
+  *width = 0;
+  return NULL;
+}
+static bool command_bit(const char *line, int length, int x, int y) {
+  if (y < 0 || y > 4 || x < 0) return false;
+  for (int i = 0; i < length; ++i) {
+    int width;
+    const uint8_t *rows = command_glyph(line[i], &width);
+    if (!rows) continue;
+    if (x < width) return (rows[y] >> (3 - x)) & 1;
+    x -= width + 1;
+    if (x < 0) return false;
+  }
+  return false;
+}
+static int command_width(const char *line, int length) {
+  int total = 0;
+  for (int i = 0; i < length; ++i) {
+    int width;
+    if (command_glyph(line[i], &width)) total += width + 1;
+  }
+  return total;
+}
+static int skill_command_pixel(int x, int y) {
+  /* The middle box's green is x 82..173; Zero ends at y 175, the bar
+   * starts at 191. */
+  enum { BOX_LEFT = 82, BOX_WIDTH = 92, GAP_TOP = 176, GAP_HEIGHT = 15 };
+  if (x < BOX_LEFT || x >= BOX_LEFT + BOX_WIDTH || y < GAP_TOP ||
+      y >= GAP_TOP + GAP_HEIGHT)
+    return -1;
+  unsigned item = frame.ram[0x1ed2];
+  if (item > 9 || !skill_item_owned(item) || !skill_menu->commands[item]) return -1;
+  const char *text = skill_menu->commands[item];
+  const char *split = strchr(text, '\n');
+  int lines = split ? 2 : 1;
+  int top = GAP_TOP + (GAP_HEIGHT - (lines * 6 + lines - 1)) / 2;
+  for (int line = 0; line < lines; ++line) {
+    const char *start = line ? split + 1 : text;
+    int length = line || !split ? (int)strlen(start) : (int)(split - text);
+    int left = BOX_LEFT + (BOX_WIDTH - command_width(start, length)) / 2;
+    int ly = y - (top + line * 7), lx = x - left;
+    if (ly < 0 || ly > 5) continue;
+    if (command_bit(start, length, lx, ly))
+      return ly == 2 ? 0x7b9a : 0x7f8a;  /* the title font's highlight band */
+    if (command_bit(start, length, lx - 1, ly) ||
+        command_bit(start, length, lx, ly - 1) ||
+        command_bit(start, length, lx - 1, ly - 1))
+      return 0x1084;  /* its dark drop shadow */
+  }
+  return -1;
+}
+static int skill_menu_pixel(const uint16_t *vram, int x, int y) {
+  if (!skill_menu_active()) return -1;
+  int pixel = skill_icon_pixel(x, y);
+  if (pixel < 0) pixel = skill_name_pixel(vram, x, y);
+  if (pixel < 0) pixel = skill_command_pixel(x, y);
+  return pixel;
 }
 static uint16_t weapon_menu_tile(unsigned tx, unsigned ty, uint16_t original) {
+  if (skill_menu_active() && ty >= 5 && ty <= 14) {
+    /* Blank X1's names (KSX draws its own) and every energy bar but the
+     * buster's, Rakuhouha's and ESCAPE.U's. */
+    unsigned column = tx >= 17, local = tx - (column ? 13 : 0), item = (ty - 5) / 2 + column * 5;
+    if ((ty & 1) && item <= 9 && skill_menu->labels[item] && local >= 7 && local <= 16)
+      return 0;
+    if (!(ty & 1) && item <= 8 && !(skill_menu->bar_items & (1u << item)) &&
+        local >= 6 && local <= 14)
+      return 0;
+  }
   if (!frame_weapons.menu_page || !MmxWeaponsMenuVisible(frame.ram) || ty < 5 || ty > 14) return original;
   unsigned column = tx >= 17, local = tx - (column ? 13 : 0), item = (ty - 5) / 2 + column * 5;
   if (!item || item > 8) return original;
@@ -1340,13 +1550,16 @@ static uint16_t background(const SnesRenderRegisters *p, const Raster *r, unsign
   int asset_x = -1;
   bool armadillo_lower_shaft = false;
   unsigned bpp = layer == 2 ? 2 : 4, size = PPU_bigTiles(p, layer) ? 16 : 8;
-  int px = (x + p->hScroll[layer]) & 1023, py = (y + p->vScroll[layer]) & 1023;
+  int source_x = x;
+  const int menu_shift = layer == 0 && !stage ? skill_menu_shifted(x, y, &source_x) : 0;
+  int px = (source_x + p->hScroll[layer]) & 1023, py = (y + p->vScroll[layer]) & 1023;
   if(stage && layer==2 && water) py=(py+view_dy)&1023;
   unsigned sc = p->bgXsc[layer], tx = px / size, ty = py / size;
   unsigned a = (sc & 0xfc) * 256 + (tx & 31) + (ty & 31) * 32;
   if ((sc & 1) && (tx & 32)) a += 1024;
   if ((sc & 2) && (ty & 32)) a += (sc & 1) ? 2048 : 1024;
   uint16_t tile = r->vram[a & 0x7fff];
+  if (menu_shift == 2) tile = 0;
   if(!stage && layer==2 && frame_rush.menu && (frame_rush.mode==MMX_RUSH_OFF ||
       (frame_rush.mode==MMX_RUSH_LOADING && !frame_rush.stage_started))) {
     /* Native title lettering is ASCII-indexed BG3 CHR. Keep its spacing,
@@ -1389,6 +1602,8 @@ static uint16_t background(const SnesRenderRegisters *p, const Raster *r, unsign
   if (layer == 0 && !stage) {
     int icon = weapon_menu_icon(x, y);
     if (icon >= 0) { *private_color = icon; return 0x8001; }
+    int label = skill_menu_pixel(r->vram, x, y);
+    if (label >= 0) { *private_color = label; return 0x8001; }
     tile = weapon_menu_tile(tx, ty, tile);
   }
   /* Online independent views also rebuild the native view from the map:
@@ -2426,6 +2641,18 @@ static void coop_hud_seat_row(const SnesRenderRegisters *ppu,const Raster *r,int
     }
     unsigned page=player->weapons.page;
     unsigned weapon=page?player->weapons.weapon:player->body[0x33]/2;
+    if(frame_ksx_hud && player->character==MMX_COOP_ZERO) {
+      /* KSX Zero's Rakuhouha: Chameleon Sting's energy in X1's own HUD
+       * bar colours, as the packs' virtual weapon shows alone. */
+      coop_meter_row(ppu,r,y,view,objects,colors,x+16,player->energy[3]&0x3f,28,3,
+          NULL,icon_y,inverted);
+      int row=y-icon_y;
+      for(int col=0;col<16;++col) {
+        int pixel=ksx_hud_icon_pixel(col,row),dx=x+16+col+view.extra;
+        if(pixel>=0 && dx>=0 && dx<view.width) {objects[dx]=(uint16_t)0xe6b1;colors[dx]=pixel;}
+      }
+      return;
+    }
     if(!weapon || weapon>8) return; /* Keep this seat's reserved blank column. */
     unsigned energy=page?player->weapons.energy[(page-1)*8+weapon-1]:player->energy[weapon*2-1];
     const MmxSpriteAsset *native=page?NULL:MmxRenderAssetsWeaponX(weapon,false);
@@ -2687,6 +2914,7 @@ static void compose_rows(void *context, size_t begin, size_t end, unsigned slot)
         p.screenWindowed[0] == 3 && (p.screenEnabled[0] & 7) == 7;
     uint16_t *objects = row_objects[y];
     int *object_colors = row_object_colors[y];
+    if (menu) skill_menu_shift_row(&p, y, view, objects, object_colors);
 #if MMX_NATIVE_RASTER
     uint16_t native_background[3][256];
     unsigned native_layers = 0;
@@ -3409,6 +3637,16 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
         x-=view_dx;sy-=view_dy;
       }
       if (anchored) { if (x < 25) x -= view.extra; else if (x >= 216) x += view.extra; }
+      if (stage && frame_ksx_hud && !frame_weapons.page && !frame_zero.active_x &&
+          slot == 7 && (pos & 255) == 24 && sy == 80 && attr == 0x3620) {
+        /* KSX Zero's Rakuhouha in X1's weapon footer (see the packs' below). */
+        int row=y-sy;
+        for(int col=0;col<16;++col) {
+          int pixel=ksx_hud_icon_pixel(col,row),dx=x+col+view.extra;
+          if(pixel>=0 && dx>=0 && dx<view.width) {objects[dx]=(uint16_t)0xe6b1;object_colors[dx]=pixel;}
+        }
+        continue;
+      }
       if (stage && frame_weapons.page && frame_weapons.weapon && slot == 7 && (pos & 255) == 24 && sy == 80 && attr == 0x3620) {
         /* Dedicated source gameplay footer, with its original frame,
          * pixels and weapon palette. Menu icons are a different asset. */

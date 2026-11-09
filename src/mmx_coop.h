@@ -138,6 +138,9 @@ void MmxCoopPoll(uint16_t p1, uint16_t p2);
 void MmxCoopApplyInput(uint8_t ram[0x20000]);
 /* The live seat's physical X held and Y newly pressed, in joypad terms. */
 void MmxCoopSeatButtons(bool *x_held, bool *y_pressed);
+/* The running seat's whole pad as an SNES joypad word (B=$8000 ... R=$0010),
+ * 0 when co-op is off. */
+uint16_t MmxCoopSeatPad(void);
 bool MmxCoopFrameTick(uint8_t ram[0x20000]);
 bool MmxCoopTransitionActive(void);
 bool MmxCoopFindLanding(const uint8_t ram[0x20000],uint16_t *x,uint16_t *y);

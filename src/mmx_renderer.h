@@ -61,6 +61,22 @@ typedef bool (*MmxRendererPlayerOverlayProvider)(
     const uint8_t *ram, const struct MmxZeroState *zero,
     MmxRenderPlayerOverlay *out);
 
+/* KSX Zero's pause menu, by X1 menu item (0 the buster, 1-8 Homing Torpedo
+ * to Shotgun Ice, 9 ESCAPE.U), drawn while Zero is the one paused. A NULL
+ * label keeps X1's name; icons are 12x12 BGR555 (bit 15: transparent);
+ * `commands` (one '\n' at most) show for the hovered item; items outside
+ * `bar_items` lose their energy bar. NULL restores X1's menu. */
+typedef struct MmxRendererSkillMenu {
+  const char *labels[10];
+  const char *commands[10];
+  const uint16_t *icons[10];
+  uint16_t bar_items;
+} MmxRendererSkillMenu;
+void MmxRendererSetSkillMenu(const MmxRendererSkillMenu *menu);
+/* KSX Zero's own weapon: `selected` says whether Rakuhouha is chosen (read
+ * once per captured frame); `icon` is its 12x12 BGR555 art, shown in X1's
+ * icon frame on the HUD. NULL clears it. */
+void MmxRendererSetKsxHud(bool (*selected)(void), const uint16_t *icon);
 void MmxRendererSetPlayerOverlayProvider(
     MmxRendererPlayerOverlayProvider provider);
 /* Add Axl. `body`, when active, replaces X's body and armor pieces: on a

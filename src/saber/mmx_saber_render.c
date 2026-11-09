@@ -3,6 +3,7 @@
 #include "mmx_saber_black_zero.h"
 #include "mmx_zero.h"
 #include "mmx_saber_wave_runtime.h"
+#include "mmx_saber_ksx.h"
 
 #include <string.h>
 
@@ -24,6 +25,7 @@ static const uint16_t *purple_wave_source;
 static uint16_t purple_wave_source_count;
 static bool purple_wave_palette_cached;
 static const MmxSaberWave *render_wave;
+static const MmxSaberAssets *ksx_assets;
 
 static void mark_palette_indices(const MmxSaberPlane *plane,
                                  uint16_t palette_count,
@@ -204,6 +206,10 @@ static bool resolve_snapshot(const MmxSaberAssets *assets,
   clear_overlay(out);
   if (!out || !assets || snapshot.phase == SABER_PHASE_IDLE)
     return false;
+  if (snapshot.anim_id >= 0x40) {
+    if (!ksx_assets) return false;
+    assets = ksx_assets;
+  }
 
   /* The attack kind remains the owner of timing/collision semantics, while
    * the snapshot animation ID selects that attack's visual donor.  Landing
@@ -216,8 +222,9 @@ static bool resolve_snapshot(const MmxSaberAssets *assets,
 
   /* Match oldsaber/saber-zero-variant:src/mmx_saber.c:1351-1355: an attack
    * can outlive its sidecar animation, so its final sidecar tick is held. */
-  tick = snapshot.tick < animation->total_ticks ? snapshot.tick :
-      (uint16_t)(animation->total_ticks - 1);
+  tick = MmxSaberAttackVisualTick(snapshot);
+  if (tick >= animation->total_ticks)
+    tick = (uint16_t)(animation->total_ticks - 1);
   for (uint16_t i = 0; i < animation->step_count; ++i) {
     const MmxSaberStep *step = MmxSaberAssetsAnimationStep(
         assets, snapshot.anim_id, i);
@@ -246,7 +253,7 @@ static bool resolve_snapshot(const MmxSaberAssets *assets,
   armor = MmxSaberArmorCurrent();
   out->palette = select_overlay_palette(
       assets, MmxSaberAssetsPalette(assets), MmxSaberAssetsPaletteCount(assets),
-      armor.black, armor.arms);
+      armor.black, armor.arms || MmxSaberKsxPurpleSaber());
   out->palette_count = MmxSaberAssetsPaletteCount(assets);
   if (MmxZeroChargeFlashPaletteIndex(zero) >= 0) {
     map_flash_palette(flash_palette, out->palette, out->palette_count,
@@ -352,7 +359,8 @@ bool MmxSaberRenderResolveWaveSnapshot(const MmxSaberWave *wave,
   out->world_x = world_x;
   out->world_y = world_y;
   out->facing_left = facing_left;
-  out->palette = select_wave_palette(wave, MmxSaberArmorCurrent().arms);
+  out->palette = select_wave_palette(
+      wave, MmxSaberArmorCurrent().arms || MmxSaberKsxPurpleSaber());
   out->palette_count = MmxSaberWavePaletteCount(wave);
   out->z = 0xa680;
   return out->palette && out->palette_count;
@@ -362,22 +370,60 @@ unsigned MmxSaberRenderSharedBladePaletteCount(void) {
   return shared_blade_palette_count;
 }
 
+void MmxSaberRenderSetKsxAssets(const MmxSaberAssets *assets) {
+  ksx_assets = assets;
+}
+
 void MmxSaberRenderSetWave(const MmxSaberWave *wave) {
   render_wave = wave;
+}
+
+/* Rakuhouha's shards: animation $4A holds four 3-tick frames per angle. */
+static bool resolve_ksx_shard(const MmxSaberKsxShard *shard,
+                              MmxRenderWorldSprite *out) {
+  const MmxSaberFrame *frame;
+  const MmxSaberArmorFlags armor = MmxSaberArmorCurrent();
+  memset(out, 0, sizeof(*out));
+  if (!ksx_assets) return false;
+  frame = MmxSaberAssetsFrameForStep(
+      ksx_assets, 0x4a, (uint16_t)(shard->angle * 4u + (shard->age / 3u) % 4u));
+  if (!frame || !frame->body.pixels || !frame->body.width ||
+      !frame->body.height)
+    return false;
+  out->pixels = frame->body.pixels;
+  out->width = frame->body.width;
+  out->height = frame->body.height;
+  /* Sidecar planes are placed on a 128x128 canvas with the anchor at 64. */
+  out->origin_x = (int16_t)(frame->body.origin_x - 64);
+  out->origin_y = (int16_t)(frame->body.origin_y - 64);
+  out->world_x = shard->world_x;
+  out->world_y = shard->world_y;
+  out->palette = select_overlay_palette(
+      ksx_assets, MmxSaberAssetsPalette(ksx_assets),
+      MmxSaberAssetsPaletteCount(ksx_assets), armor.black,
+      armor.arms || MmxSaberKsxPurpleSaber());
+  out->palette_count = MmxSaberAssetsPaletteCount(ksx_assets);
+  out->z = 0xa680;
+  return out->palette && out->palette_count;
 }
 
 unsigned MmxSaberRenderProvideWorldSprites(MmxRenderWorldSprite *out,
                                            unsigned max) {
   MmxSaberWaveRuntimeLiveWave live[8];
-  unsigned live_count, count = 0;
-  if (!render_wave || !out || !max) return 0;
-  live_count = MmxSaberWaveRuntimeLiveWaves(live,
-                                             max < 8 ? max : 8);
-  for (unsigned i = 0; i < live_count; ++i) {
-    if (MmxSaberRenderResolveWaveSnapshot(render_wave, live[i].age,
-            live[i].world_x, live[i].world_y, live[i].facing_left,
-            &out[count]))
-      ++count;
+  MmxSaberKsxShard shards[9];
+  unsigned live_count, shard_count, count = 0;
+  if (!out || !max) return 0;
+  if (render_wave) {
+    live_count = MmxSaberWaveRuntimeLiveWaves(live, max < 8 ? max : 8);
+    for (unsigned i = 0; i < live_count && count < max; ++i) {
+      if (MmxSaberRenderResolveWaveSnapshot(render_wave, live[i].age,
+              live[i].world_x, live[i].world_y, live[i].facing_left,
+              &out[count]))
+        ++count;
+    }
   }
+  shard_count = MmxSaberKsxShards(shards, 9);
+  for (unsigned i = 0; i < shard_count && count < max; ++i)
+    if (resolve_ksx_shard(&shards[i], &out[count])) ++count;
   return count;
 }

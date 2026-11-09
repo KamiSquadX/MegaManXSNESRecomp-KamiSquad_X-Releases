@@ -19,10 +19,10 @@
 /* X8 16-bit's ActionLoader order and English labels. Its cancel row has no
  * translation ("CANCEL_ACT"); it reads as the action it is. */
 static const char *const k_action_names[MMX_KEY_ACTIONS] = {
-  "LEFT", "RIGHT", "UP", "DOWN", "SHOT", "SHOT2", "JUMP", "DASH",
+  "LEFT", "RIGHT", "UP", "DOWN", "SHOT", "SHOT 2", "JUMP", "DASH",
   "CHANGE PLAYER", "ARMOR ABILITY", "PREV WEAPON", "NEXT WEAPON",
   "SELECT BUSTER", "WHEEL LEFT", "WHEEL RIGHT", "WHEEL UP", "WHEEL DOWN",
-  "PAUSE MENU", "MENU CONFIRM", "CANCEL",
+  "PAUSE MENU", "MENU CONFIRM", "CANCEL", "GIGA ATTACK",
 };
 /* Godot's joypad names, as X8 shows them. The right stick is listed by
  * direction: a binding is one direction of it, never the whole axis. */
@@ -44,6 +44,7 @@ static const char *const k_action_keys[MMX_KEY_ACTIONS] = {
   "jump", "dash", "char_switch", "select_special", "weapon_select_left",
   "weapon_select_right", "reset_weapon", "analog_left", "analog_right",
   "analog_up", "analog_down", "pause", "ui_accept", "ui_cancel",
+  "giga_attack",
 };
 /* X8 16-bit's joypad defaults, except Change Player on Select (the recomp's
  * long-standing swap button) and cancel on Face Button Bottom. */
@@ -53,6 +54,7 @@ static const uint8_t k_defaults[MMX_KEY_ACTIONS] = {
   MMX_PAD_SELECT, MMX_PAD_R2, MMX_PAD_L, MMX_PAD_R,
   MMX_PAD_R3, MMX_PAD_RS_LEFT, MMX_PAD_RS_RIGHT, MMX_PAD_RS_UP,
   MMX_PAD_RS_DOWN, MMX_PAD_START, MMX_PAD_FACE_LEFT, MMX_PAD_FACE_BOTTOM,
+  MMX_PAD_L2,
 };
 /* Each control's bit in the runner word (bits 0..11) or ext (12..19). */
 static const uint8_t k_control_bit[MMX_PAD_CONTROLS] = {
@@ -256,6 +258,9 @@ void MmxKeyConfigMapSeat(int seat, uint16_t *snes, uint8_t *ext) {
   };
   for (unsigned i = 0; i < sizeof(k_ext) / sizeof(k_ext[0]); ++i)
     if (action_held(phys, k_ext[i].action)) x |= k_ext[i].bit;
+  /* Both wheel sides at once is GIGA ATTACK's code (MMX_EXT_GIGA). */
+  if ((x & MMX_EXT_GIGA) == MMX_EXT_GIGA) x &= (uint8_t)~MMX_EXT_WHEEL_RIGHT;
+  if (action_held(phys, MMX_KEY_GIGA)) x |= MMX_EXT_GIGA;
   /* X1's menus confirm with Start. Outside a stage (title, stage select,
    * password, options) and on the pause menu, menu confirm is Start too. */
   if ((x & MMX_EXT_CONFIRM) &&

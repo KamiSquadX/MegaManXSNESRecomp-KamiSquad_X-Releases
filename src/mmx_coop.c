@@ -759,6 +759,14 @@ void MmxCoopSeatButtons(bool *x_held, bool *y_pressed) {
   if (x_held) *x_held = live && (p->input & (1u << 9));
   if (y_pressed) *y_pressed = live && (p->pressed & (1u << 1));
 }
+uint16_t MmxCoopSeatPad(void) {
+  const MmxCoopPlayer *p = &state.players[state.current];
+  unsigned pad = 0;
+  if (!enabled || !state.initialized) return 0;
+  for (unsigned bit = 0; bit < 12; ++bit)
+    if (p->input & (1u << bit)) pad |= 0x8000u >> bit;
+  return (uint16_t)pad;
+}
 /* A seat's previous actions, taken at its first MmxCoopApplyInput of the
  * frame. Later calls in the same frame (pilot selection at frame start, then
  * the $00:E57F mapper hook) must not read them back from the body snapshot:

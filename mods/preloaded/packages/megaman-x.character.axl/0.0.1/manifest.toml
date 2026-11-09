@@ -17,7 +17,7 @@ id = "axl"
 name = "Add Axl"
 description = "CHANGE PLAYER (Select) switches between X and Axl, who share health and weapons; with Add Zero too it cycles X, Zero and Axl (choose a team with Solo Team select). Axl rapid-fires while SHOT is held and aims in 8 directions with the d-pad, standing still to aim on the ground. SHOT2 fires his copy shot, or the equipped weapon's charged shot. Jump again in the air and hold to hover. Dash in 8 directions in the air. Down + Dash rolls through attacks. ARMOR ABILITY (R2) with a full bar fires GigaCrash across the whole screen. Selecting Add Axl turns off Co-op."
 group = "Characters"
-order = 1
+order = 10
 default_enabled = false
 
 [[plugin]]

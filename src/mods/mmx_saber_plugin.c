@@ -12,12 +12,17 @@
 #include "saber/mmx_saber_combo.h"
 #include "saber/mmx_saber_frame.h"
 #include "saber/mmx_saber_hitbox_debug.h"
+#include "saber/mmx_saber_ksx.h"
+#include "saber/mmx_saber_ksx_icons.h"
+#include "mmx_weapon_combat.h"
+#include "common_rtl.h"
 #include "saber/mmx_saber_render.h"
 #include "saber/mmx_saber_tuning.h"
 #include "saber/mmx_saber_wave_runtime.h"
 #include "mmx_coop.h"
 #include "mmx_renderer.h"
 #include "mmx_zero.h"
+#include "mmx_hitbox_overlay.h"
 #include "saber/mmx_saber_plugin.h"
 #include "sdl_compat.h"
 
@@ -28,6 +33,7 @@
 static bool g_mmx_saber_enabled;
 static MmxSaberAssets *g_saber_assets;
 static MmxSaberAssets *g_ride_assets;
+static MmxSaberAssets *g_ksx_assets;
 static MmxSaberWave *g_saber_wave;
 static bool g_saber_sfx_warning;
 
@@ -48,6 +54,32 @@ static bool saber_overlay_provider(const uint8_t *ram, const MmxZeroState *zero,
 static void coop_seat_pad(const uint8_t *ram, MmxSaberFramePad *pad) {
   (void)ram;
   MmxCoopSeatButtons(&pad->x_held, &pad->y_pressed);
+  pad->pad = MmxCoopSeatPad();
+}
+
+static uint8_t seat_ext(void) {
+  return RtlGetPadExt(MmxCoopEnabled() ? (int)MmxCoopCurrentSeat() : 0);
+}
+
+static unsigned ksx_contact_class(const uint8_t *ram, unsigned enemy,
+                                  unsigned projectile, unsigned original,
+                                  bool reaction) {
+  return MmxSaberKsxContactClass(ram, enemy, projectile, original, reaction);
+}
+
+/* KSX Zero's weapon list for X1's HUD and pause menu (MmxWeaponsSetKsx):
+ * only while Zero is the live player, never for X's seat. */
+/* With only the developer hitbox overlay on, add Rakuhouha's per-shard
+ * areas, which its single live object cannot show. */
+static unsigned ksx_overlay_rects(MmxRenderDebugRect *out, unsigned max) {
+  return MmxHitboxOverlayEnabled() ? MmxSaberHitboxDebugKsx(out, max) : 0;
+}
+static uint8_t *ksx_weapon_active(void) {
+  extern uint8_t g_ram[0x20000];
+  return MmxZeroActive() && MmxSaberKsxRakuhouhaSelected() ? g_ram : NULL;
+}
+static void ksx_menu_choice(uint8_t *ram, unsigned item) {
+  if (MmxZeroActive()) MmxSaberKsxMenuChoice(ram, item);
 }
 
 static void saber_activation_failed(void) {
@@ -104,12 +136,12 @@ static const MmxSaberSfxHost kSaberSfxHost = {
  * reach the simulation either: without it, every option keeps its default. */
 static bool saber_tuning_option_reader(const char *option_id, char *value,
                                        size_t value_size, void *context) {
-  (void)context;
-  return snes_mod_runtime_feature_enabled_c(MMX_SABER_SETTINGS_PACKAGE,
-                                            MMX_SABER_SETTINGS_FEATURE) &&
+  const bool ksx = context != NULL;
+  const char *package = ksx ? MMX_KSX_SETTINGS_PACKAGE : MMX_SABER_SETTINGS_PACKAGE;
+  const char *feature = ksx ? MMX_KSX_SETTINGS_FEATURE : MMX_SABER_SETTINGS_FEATURE;
+  return snes_mod_runtime_feature_enabled_c(package, feature) &&
       snes_mod_runtime_feature_option_value_c(
-             MMX_SABER_SETTINGS_PACKAGE, MMX_SABER_SETTINGS_FEATURE, option_id,
-             value, (uint32_t)value_size) != 0;
+             package, feature, option_id, value, (uint32_t)value_size) != 0;
 }
 
 static const uint8_t kSaberManifestSha[32] = {
@@ -207,6 +239,9 @@ static void release_saber_assets(void) {
   MmxSaberWaveFree(g_saber_wave);
   MmxSaberAssetsFree(g_saber_assets);
   MmxSaberAssetsFree(g_ride_assets);
+  MmxSaberRenderSetKsxAssets(NULL);
+  MmxSaberAssetsFree(g_ksx_assets);
+  g_ksx_assets = NULL;
   g_saber_wave = NULL;
   g_saber_assets = NULL;
   g_ride_assets = NULL;
@@ -255,6 +290,12 @@ static int load_saber_assets(char reason[256]) {
   }
   g_saber_assets = saber;
   g_ride_assets = ride;
+  g_ksx_assets = MmxSaberAssetsParse(kMmxSaberEmbeddedKsx,
+                                     kMmxSaberEmbeddedKsxSize, NULL,
+                                     local_reason, sizeof(local_reason));
+  if (!g_ksx_assets)
+    fprintf(stderr, "[mmx-saber-zero] KSX Zero art: %s\n",
+            local_reason[0] ? local_reason : "parse failed");
   reason[0] = '\0';
   return 1;
 }
@@ -281,7 +322,25 @@ static int load_saber_wave(const char *wave_path, char reason[256]) {
   return 1;
 }
 
+static bool g_ksx_active;
+
+bool MmxSaberKsxActive(void) {
+  return g_ksx_active;
+}
+
+static bool saber_activate(const char *package, const char *feature, bool coop,
+                           bool ksx);
+
 bool MmxSaberActivate(const char *package, const char *feature, bool coop) {
+  return saber_activate(package, feature, coop, false);
+}
+
+bool MmxSaberActivateKsx(const char *package, const char *feature, bool coop) {
+  return saber_activate(package, feature, coop, true);
+}
+
+static bool saber_activate(const char *package, const char *feature, bool coop,
+                           bool ksx) {
   char rom[4096] = {0}, wave_path[4096] = {0};
   char reason[256] = {0};
   saber_activation_failed();
@@ -290,7 +349,11 @@ bool MmxSaberActivate(const char *package, const char *feature, bool coop) {
   MmxSaberSfxResetRuntime();
   MmxSaberSfxSetHost(&kSaberSfxHost);
   MmxSaberSfxSetWarningCallback(saber_sfx_warning, NULL);
-  MmxSaberTuningLoad(saber_tuning_option_reader, NULL);
+  /* A non-NULL context selects KSX Zero settings. */
+  MmxSaberTuningLoad(saber_tuning_option_reader, ksx ? (void *)1 : NULL);
+  g_ksx_active = false;
+  MmxSaberKsxSetEnabled(false);
+  MmxWeaponsSetContactClassOverride(NULL);
   MmxSaberSfxSetVolume(MmxSaberTuningSaberSwingVolume());
   MmxSaberComboSetWindowFrames((unsigned)MmxSaberTuningFinisherWindowFrames());
   release_saber_assets();
@@ -324,22 +387,63 @@ bool MmxSaberActivate(const char *package, const char *feature, bool coop) {
                                reason, sizeof(reason));
   MmxSaberFrameReset();
   MmxSaberFrameSetPadSource(coop ? coop_seat_pad : NULL);
+  MmxSaberFrameSetExtSource(seat_ext);
+  g_ksx_active = ksx;
+  MmxSaberKsxSetEnabled(ksx);
+  MmxWeaponsSetContactClassOverride(ksx ? ksx_contact_class : NULL);
   MmxZeroSetExtension(MmxSaberFrameExtension());
   g_mmx_saber_enabled = true;
   MmxRendererSetPlayerOverlayProvider(saber_overlay_provider);
   MmxSaberRenderSetWave(g_saber_wave);
+  MmxSaberRenderSetKsxAssets(ksx ? g_ksx_assets : NULL);
+  {
+    /* KSX Zero's pause menu: his buster, the skills in their Mavericks'
+     * slots, and only the buster's and Rakuhouha's energy bars. */
+    static MmxRendererSkillMenu menu;
+    memset(&menu, 0, sizeof(menu));
+    menu.labels[0] = "Z.BUSTER";
+    menu.labels[9] = "ESCAPE.U";
+    menu.commands[0] = "ARMOR ABILITY\nBUTTON";
+    menu.bar_items = 1u << 0;
+    for (unsigned weapon = 1; weapon <= 8; ++weapon) {
+      const MmxKsxSkill skill = MmxSaberKsxSkillForWeapon(weapon);
+      if (skill >= MMX_KSX_SKILL_COUNT) continue;
+      menu.labels[weapon] = MmxSaberKsxSkillName(skill);
+      menu.commands[weapon] = MmxSaberKsxSkillCommand(skill);
+      menu.icons[weapon] = kMmxSaberKsxIcons[skill];
+      if (skill == MMX_KSX_RAKUHOUHA) menu.bar_items |= (uint16_t)(1u << weapon);
+    }
+    MmxRendererSetSkillMenu(ksx ? &menu : NULL);
+    MmxRendererSetKsxHud(ksx ? MmxSaberKsxRakuhouhaSelected : NULL,
+                         ksx ? kMmxSaberKsxIcons[MMX_KSX_RAKUHOUHA] : NULL);
+    MmxWeaponsSetKsx(ksx ? ksx_weapon_active : NULL, ksx ? ksx_menu_choice : NULL);
+  }
   MmxRendererSetWorldSpriteProvider(MmxSaberRenderProvideWorldSprites);
   if (MmxSaberTuningShowHitboxes())
     MmxRendererSetDebugRectProvider(MmxSaberHitboxDebugProvide);
+  else if (ksx)
+    MmxRendererSetDebugRectProvider(ksx_overlay_rects);
   fprintf(stderr, "[mmx-saber-zero] embedded Saber and ride art, and "
                   "x3-saber-wave-v1.bin loaded\n");
-  fprintf(stderr, "[mmx-saber-zero] Saber Zero enabled for %s\n",
-          coop ? "co-op" : "Add Zero");
+  if (MmxSaberFrameStateBytes() > MMX_ZERO_EXTENSION_STATE_BYTES)
+    fprintf(stderr, "[mmx-saber-zero] savestate blob %u bytes exceeds %u\n",
+            (unsigned)MmxSaberFrameStateBytes(),
+            (unsigned)MMX_ZERO_EXTENSION_STATE_BYTES);
+  fprintf(stderr, "[mmx-saber-zero] %s enabled for %s (state %u bytes)\n",
+          ksx ? "KSX Zero" : "Saber Zero", coop ? "co-op" : "Add Zero",
+          (unsigned)MmxSaberFrameStateBytes());
   return true;
 }
 
 static void reset(void) {
   g_mmx_saber_enabled = false;
+  g_ksx_active = false;
+  MmxSaberKsxSetEnabled(false);
+  MmxWeaponsSetContactClassOverride(NULL);
+  MmxSaberFrameSetExtSource(NULL);
+  MmxRendererSetSkillMenu(NULL);
+  MmxRendererSetKsxHud(NULL, NULL);
+  MmxWeaponsSetKsx(NULL, NULL);
   MmxSaberFrameSetPadSource(NULL);
   MmxRendererSetPlayerOverlayProvider(NULL);
   MmxRendererSetWorldSpriteProvider(NULL);

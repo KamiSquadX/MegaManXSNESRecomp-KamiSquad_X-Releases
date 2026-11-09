@@ -16,6 +16,14 @@ typedef enum MmxSaberTuningDamageKind {
   MMX_SABER_TUNING_DAMAGE_WALL,
   MMX_SABER_TUNING_DAMAGE_DASH,
   MMX_SABER_TUNING_DAMAGE_WAVE,
+  /* KSX Zero's Special Moves and Giga Attack (KSX Zero settings only). */
+  MMX_SABER_TUNING_DAMAGE_RYUENJIN,
+  MMX_SABER_TUNING_DAMAGE_RAKUHOUHA,
+  MMX_SABER_TUNING_DAMAGE_RAIKOUSEN,
+  MMX_SABER_TUNING_DAMAGE_KUUENBU,
+  MMX_SABER_TUNING_DAMAGE_HYOURETSUZAN,
+  MMX_SABER_TUNING_DAMAGE_YOUDANTOTSU,
+  MMX_SABER_TUNING_DAMAGE_JUUHAZAN,
   MMX_SABER_TUNING_DAMAGE_COUNT
 } MmxSaberTuningDamageKind;
 
@@ -32,6 +40,13 @@ typedef enum MmxSaberTuningPriorityKind {
   MMX_SABER_TUNING_PRIORITY_MAX_SHOT2,
   MMX_SABER_TUNING_PRIORITY_X3_FINISHER,
   MMX_SABER_TUNING_PRIORITY_WAVE,
+  MMX_SABER_TUNING_PRIORITY_RYUENJIN,
+  MMX_SABER_TUNING_PRIORITY_RAKUHOUHA,
+  MMX_SABER_TUNING_PRIORITY_RAIKOUSEN,
+  MMX_SABER_TUNING_PRIORITY_KUUENBU,
+  MMX_SABER_TUNING_PRIORITY_HYOURETSUZAN,
+  MMX_SABER_TUNING_PRIORITY_YOUDANTOTSU,
+  MMX_SABER_TUNING_PRIORITY_JUUHAZAN,
   MMX_SABER_TUNING_PRIORITY_COUNT
 } MmxSaberTuningPriorityKind;
 
@@ -44,6 +59,13 @@ typedef struct MmxSaberTuning {
   int saber_swing_volume;
   bool show_hitboxes;
   bool start_all_upgrades;
+  bool stagger_combos;
+  int rakuhouha_energy;
+  /* Black Zero (all four armor parts): damage in place of the normal value
+   * plus the arm parts' bonus. -1 keeps that derived value (normal + 2,
+   * boss + 1), as the Saber Zero settings have no Black Zero view. */
+  int black_damage[MMX_SABER_TUNING_DAMAGE_COUNT];
+  int black_boss_damage[MMX_SABER_TUNING_DAMAGE_COUNT];
 } MmxSaberTuning;
 
 /* The reader returns true when it supplied a value for option_id. */
@@ -64,6 +86,14 @@ int MmxSaberTuningFinisherWindowFrames(void);
 int MmxSaberTuningSaberSwingVolume(void);
 bool MmxSaberTuningShowHitboxes(void);
 bool MmxSaberTuningStartAllUpgrades(void);
+/* KSX Zero settings' Stagger Combos (default on). */
+bool MmxSaberTuningStaggerCombos(void);
+/* Weapon energy (of 28) one Rakuhouha spends. */
+int MmxSaberTuningRakuhouhaEnergy(void);
+/* A hit's damage before clamping: Black Zero's own value, else the normal or
+ * boss value plus the arm parts' bonus (+2, +1 against bosses). */
+int MmxSaberTuningArmoredDamage(MmxSaberTuningDamageKind kind, bool boss,
+                                bool arms, bool black);
 
 /* Short name for call sites that already establish the Saber context. */
 int MmxSaberTuningSwingVolume(void);

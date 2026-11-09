@@ -16,6 +16,12 @@ extern "C" {
  * ROM resource. Co-op reads each seat's own pad. On failure Zero keeps its
  * X3 behavior and the player has been told why. */
 bool MmxSaberActivate(const char *package, const char *feature, bool coop);
+/* KSX Zero: Saber Zero plus learned Special Moves, tuned by KSX Zero
+ * settings. */
+#define MMX_KSX_SETTINGS_PACKAGE "megaman-x.character.ksx-zero"
+#define MMX_KSX_SETTINGS_FEATURE "ksx-zero"
+bool MmxSaberActivateKsx(const char *package, const char *feature, bool coop);
+bool MmxSaberKsxActive(void);
 bool MmxSaberEnabled(void);
 bool MmxSaberAssetsLoaded(void);
 bool MmxSaberRideAssetsLoaded(void);

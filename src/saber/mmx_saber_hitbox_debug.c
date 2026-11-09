@@ -1,6 +1,7 @@
 #include "mmx_saber_hitbox_debug.h"
 
 #include "mmx_saber_attack.h"
+#include "mmx_saber_ksx.h"
 #include "mmx_saber_wave_runtime.h"
 #include "../mmx_zero.h"
 
@@ -81,6 +82,40 @@ void MmxSaberHitboxDebugReset(void) {
   debug_rom_size = 0;
 }
 
+/* Rakuhouha's areas: the blast and every live shard, each its own box
+ * (one live object takes them in turn, so the object shows only one). */
+unsigned MmxSaberHitboxDebugKsx(MmxRenderDebugRect *out, unsigned max) {
+  MmxSaberKsxGigaTarget targets[10];
+  const MmxSaberAttackSnapshot s = MmxSaberAttackSnapshotGet();
+  unsigned count = 0, n;
+  int box[4];
+  if (!debug_ram || !max) return 0;
+  if (MmxSaberAttackKsxShownBox(box)) {
+    /* The other KSX moves, from their last published box: co-op empties
+     * the shared record on the other seat's turn. */
+    if (out) {
+      out[0].world_x = box[0];
+      out[0].world_y = box[1];
+      out[0].w = (uint16_t)(box[2] - box[0] + 1);
+      out[0].h = (uint16_t)(box[3] - box[1] + 1);
+      out[0].rgb555 = MMX_SABER_HITBOX_CYAN;
+    }
+    return 1;
+  }
+  if (s.kind != SABER_KIND_RAKUHOUHA || s.phase != SABER_PHASE_ACTIVE)
+    return 0;
+  n = MmxSaberKsxGigaTargets(debug_ram, s.tick, s.facing, targets, 10);
+  for (unsigned i = 0; i < n && count < max; ++i, ++count) {
+    if (!out) continue;
+    out[count].world_x = targets[i].x - targets[i].half_w;
+    out[count].world_y = targets[i].y - targets[i].half_h;
+    out[count].w = (uint16_t)(targets[i].half_w * 2u + 1u);
+    out[count].h = (uint16_t)(targets[i].half_h * 2u + 1u);
+    out[count].rgb555 = MMX_SABER_HITBOX_CYAN;
+  }
+  return count;
+}
+
 unsigned MmxSaberHitboxDebugProvide(MmxRenderDebugRect *out, unsigned max) {
   unsigned count = 0;
 
@@ -107,5 +142,6 @@ unsigned MmxSaberHitboxDebugProvide(MmxRenderDebugRect *out, unsigned max) {
     if (!saber_tag(word(debug_ram, object + 0x3e))) continue;
     count = append_box(out, max, object, MMX_SABER_HITBOX_CYAN, count);
   }
+  if (count < max) count += MmxSaberHitboxDebugKsx(out ? out + count : NULL, max - count);
   return count;
 }

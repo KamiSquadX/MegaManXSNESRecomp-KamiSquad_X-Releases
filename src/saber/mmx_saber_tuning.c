@@ -15,14 +15,18 @@ typedef struct MmxSaberTuningOption {
 } MmxSaberTuningOption;
 
 static MmxSaberTuning g_tuning = {
-  {3, 3, 8, 16, 3, 3, 5, 6},
-  {1, 1, 2, 6, 1, 1, 2, 4},
-  {6, 7, 8, 1, 1, 9, 1, 1, 2, 3, 4, 5},
+  {3, 3, 8, 16, 3, 3, 5, 6, 1, 16, 8, 2, 8, 5, 10},
+  {1, 1, 2, 6, 1, 1, 2, 4, 2, 6, 2, 2, 2, 2, 2},
+  {6, 7, 8, 1, 1, 9, 1, 1, 2, 3, 4, 5, 10, 16, 15, 12, 11, 14, 13},
   70,
   27,
   50,
   false,
   false,
+  true,
+  4,
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 };
 
 static MmxSaberTuningOption k_options[] = {
@@ -60,30 +64,73 @@ static MmxSaberTuningOption k_options[] = {
   {"boss_wave_damage", 4, 0, 32,
    &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_WAVE]},
 
-  {"slash1_priority", 6, 1, 9,
+  {"slash1_priority", 6, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_SLASH1]},
-  {"slash2_priority", 7, 1, 9,
+  {"slash2_priority", 7, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_SLASH2]},
-  {"slash3_priority", 8, 1, 9,
+  {"slash3_priority", 8, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_SLASH3]},
-  {"air_priority", 1, 1, 9,
+  {"air_priority", 1, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_AIR]},
-  {"wall_priority", 1, 1, 9,
+  {"wall_priority", 1, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_WALL]},
-  {"dash_priority", 9, 1, 9,
+  {"dash_priority", 9, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_DASH]},
-  {"charge_small_priority", 1, 1, 9,
+  {"charge_small_priority", 1, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_CHARGE_SMALL]},
-  {"charge_full_priority", 1, 1, 9,
+  {"charge_full_priority", 1, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_CHARGE_FULL]},
-  {"max_shot1_priority", 2, 1, 9,
+  {"max_shot1_priority", 2, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_MAX_SHOT1]},
-  {"max_shot2_priority", 3, 1, 9,
+  {"max_shot2_priority", 3, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_MAX_SHOT2]},
-  {"x3_finisher_priority", 4, 1, 9,
+  {"x3_finisher_priority", 4, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_X3_FINISHER]},
-  {"wave_priority", 5, 1, 9,
+  {"wave_priority", 5, 1, 99,
    &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_WAVE]},
+
+  {"ryuenjin_damage", 1, 1, 32,
+   &g_tuning.normal_damage[MMX_SABER_TUNING_DAMAGE_RYUENJIN]},
+  {"rakuhouha_damage", 16, 1, 32,
+   &g_tuning.normal_damage[MMX_SABER_TUNING_DAMAGE_RAKUHOUHA]},
+  {"raikousen_damage", 8, 1, 32,
+   &g_tuning.normal_damage[MMX_SABER_TUNING_DAMAGE_RAIKOUSEN]},
+  {"kuuenbu_damage", 2, 1, 32,
+   &g_tuning.normal_damage[MMX_SABER_TUNING_DAMAGE_KUUENBU]},
+  {"hyouretsuzan_damage", 8, 1, 32,
+   &g_tuning.normal_damage[MMX_SABER_TUNING_DAMAGE_HYOURETSUZAN]},
+  {"youdantotsu_damage", 5, 1, 32,
+   &g_tuning.normal_damage[MMX_SABER_TUNING_DAMAGE_YOUDANTOTSU]},
+  {"juuhazan_damage", 10, 1, 32,
+   &g_tuning.normal_damage[MMX_SABER_TUNING_DAMAGE_JUUHAZAN]},
+  {"boss_ryuenjin_damage", 2, 0, 32,
+   &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_RYUENJIN]},
+  {"boss_rakuhouha_damage", 6, 0, 32,
+   &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_RAKUHOUHA]},
+  {"boss_raikousen_damage", 2, 0, 32,
+   &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_RAIKOUSEN]},
+  {"boss_kuuenbu_damage", 2, 0, 32,
+   &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_KUUENBU]},
+  {"boss_hyouretsuzan_damage", 2, 0, 32,
+   &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_HYOURETSUZAN]},
+  {"boss_youdantotsu_damage", 2, 0, 32,
+   &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_YOUDANTOTSU]},
+  {"boss_juuhazan_damage", 2, 0, 32,
+   &g_tuning.boss_damage[MMX_SABER_TUNING_DAMAGE_JUUHAZAN]},
+  {"ryuenjin_priority", 10, 1, 99,
+   &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_RYUENJIN]},
+  {"rakuhouha_priority", 16, 1, 99,
+   &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_RAKUHOUHA]},
+  {"raikousen_priority", 15, 1, 99,
+   &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_RAIKOUSEN]},
+  {"kuuenbu_priority", 12, 1, 99,
+   &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_KUUENBU]},
+  {"hyouretsuzan_priority", 11, 1, 99,
+   &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_HYOURETSUZAN]},
+  {"youdantotsu_priority", 14, 1, 99,
+   &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_YOUDANTOTSU]},
+  {"juuhazan_priority", 13, 1, 99,
+   &g_tuning.priority[MMX_SABER_TUNING_PRIORITY_JUUHAZAN]},
 
   {"priority_window_frames", 70, 30, 120,
    &g_tuning.priority_window_frames},
@@ -92,6 +139,68 @@ static MmxSaberTuningOption k_options[] = {
   {"saber_swing_volume", 50, 0, 200, &g_tuning.saber_swing_volume},
   {"show_hitboxes", 0, 0, 1, &g_tuning.show_hitboxes, true},
   {"start_all_upgrades", 0, 0, 1, &g_tuning.start_all_upgrades, true},
+  {"stagger_combos", 1, 0, 1, &g_tuning.stagger_combos, true},
+  {"rakuhouha_energy", 4, 0, 28, &g_tuning.rakuhouha_energy},
+  {"black_slash1_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_SLASH1]},
+  {"black_slash2_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_SLASH2]},
+  {"black_slash3_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_SLASH3]},
+  {"black_x3_finisher_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_X3_FINISHER]},
+  {"black_air_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_AIR]},
+  {"black_wall_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_WALL]},
+  {"black_dash_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_DASH]},
+  {"black_wave_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_WAVE]},
+  {"black_ryuenjin_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_RYUENJIN]},
+  {"black_rakuhouha_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_RAKUHOUHA]},
+  {"black_raikousen_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_RAIKOUSEN]},
+  {"black_kuuenbu_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_KUUENBU]},
+  {"black_hyouretsuzan_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_HYOURETSUZAN]},
+  {"black_youdantotsu_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_YOUDANTOTSU]},
+  {"black_juuhazan_damage", -1, -1, 32,
+   &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_JUUHAZAN]},
+  {"black_boss_slash1_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_SLASH1]},
+  {"black_boss_slash2_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_SLASH2]},
+  {"black_boss_slash3_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_SLASH3]},
+  {"black_boss_x3_finisher_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_X3_FINISHER]},
+  {"black_boss_air_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_AIR]},
+  {"black_boss_wall_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_WALL]},
+  {"black_boss_dash_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_DASH]},
+  {"black_boss_wave_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_WAVE]},
+  {"black_boss_ryuenjin_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_RYUENJIN]},
+  {"black_boss_rakuhouha_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_RAKUHOUHA]},
+  {"black_boss_raikousen_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_RAIKOUSEN]},
+  {"black_boss_kuuenbu_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_KUUENBU]},
+  {"black_boss_hyouretsuzan_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_HYOURETSUZAN]},
+  {"black_boss_youdantotsu_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_YOUDANTOTSU]},
+  {"black_boss_juuhazan_damage", -1, -1, 32,
+   &g_tuning.black_boss_damage[MMX_SABER_TUNING_DAMAGE_JUUHAZAN]},
 };
 
 static bool parse_integer(const char *text, int *out) {
@@ -187,6 +296,29 @@ bool MmxSaberTuningShowHitboxes(void) {
 
 bool MmxSaberTuningStartAllUpgrades(void) {
   return g_tuning.start_all_upgrades;
+}
+
+bool MmxSaberTuningStaggerCombos(void) {
+  return g_tuning.stagger_combos;
+}
+
+int MmxSaberTuningRakuhouhaEnergy(void) {
+  return g_tuning.rakuhouha_energy;
+}
+
+int MmxSaberTuningArmoredDamage(MmxSaberTuningDamageKind kind, bool boss,
+                                bool arms, bool black) {
+  int base, value;
+  if (kind < 0 || kind >= MMX_SABER_TUNING_DAMAGE_COUNT) return 0;
+  base = boss ? MmxSaberTuningBossDamage(kind) : MmxSaberTuningNormalDamage(kind);
+  if (!black) return base + (arms ? (boss ? 1 : 2) : 0);
+  value = g_tuning.black_damage[kind] >= 0 ? g_tuning.black_damage[kind] :
+      g_tuning.normal_damage[kind] + 2;
+  if (!boss) return value;
+  if (g_tuning.black_boss_damage[kind] > 0) return g_tuning.black_boss_damage[kind];
+  if (g_tuning.black_boss_damage[kind] == 0) return value;
+  return g_tuning.black_damage[kind] >= 0 && g_tuning.boss_damage[kind] == 0 ?
+      value : base + 1;
 }
 
 int MmxSaberTuningSwingVolume(void) {

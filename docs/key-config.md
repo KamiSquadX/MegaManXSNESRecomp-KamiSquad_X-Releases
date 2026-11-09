@@ -24,7 +24,7 @@ the player's input source like any other row. The keyboard keys are stored in
 ## Title screen: KEY CONFIG
 
 **KEY CONFIG** sits between OPTION MODE and BOSS RUSH. It lists the X8
-demake's twenty actions with the control each one uses, in X8's names
+demake's twenty actions, plus GIGA ATTACK, with the control each one uses, in X8's names
 (*Face Button Left*, *R*, *L2*, *Select*, *Right Stick Up*, ...):
 
 | Action | Default | Action | Default |
@@ -36,6 +36,7 @@ demake's twenty actions with the control each one uses, in X8's names
 | dash | Face Button Right | menu confirm | Face Button Left |
 | change player | **Select** | cancel | **Face Button Bottom** |
 | armor ability | R2 | prev / next weapon | L / R |
+| giga attack | **L2** | | |
 
 These are X8's defaults, except change player (Select, the recomp's
 long-standing swap button) and cancel (Face Button Bottom). There is no
@@ -50,8 +51,11 @@ returns to the title. The choices are saved in `key_config.ini`.
 
 Face Button Left (Y on the SNES layout) is both shot and menu confirm, so on
 menus it confirms like Start does. Actions that X1 itself has no use for yet
-(shot2, armor ability, select buster, the weapon wheel) are delivered to the
-game for upcoming characters such as Zero by KamiSquad_X. Key mapping happens on
+(shot2, armor ability, select buster, the weapon wheel, giga attack) are
+delivered to the game for characters such as KSX Zero (docs/ksx-zero.md):
+shot2 is his Special Move, armor ability his buster and giga attack his Giga
+Attack. GIGA ATTACK travels as WHEEL LEFT and WHEEL RIGHT together, which one
+right stick never sends, so replays and netplay keep their one-byte format. Key mapping happens on
 your machine before input is sent, so online partners and replays see the
 actions, not your bindings.
 

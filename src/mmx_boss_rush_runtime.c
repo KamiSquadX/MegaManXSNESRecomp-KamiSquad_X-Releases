@@ -853,6 +853,16 @@ void MmxBossRushFrame(uint8_t *r,uint16_t input) {
           RtlGetPadExt(1)==MMX_EXT_CLOSE_KEY_CONFIG) s.menu=1;
       s.menu_input=input;MmxBossRushSetState(&s);return;
     }
+    if(r[0x39]!=2) {
+      /* X1's title is idle only in state 2. When its idle timer runs out it
+       * starts fading to the attract demo (state 0): a confirmation then
+       * would start a run the title never leaves for, so the menu waits. */
+      MmxBossRushSetState(&s);return;
+    }
+    /* X1 fades to the attract demo after 240 idle frames ($3B from $F0).
+     * Let the timer run on only 4 frames in 15 (by X1's frame counter
+     * $0B9B), so the title waits 15 seconds instead. */
+    if(r[0x3b]>1 && r[0x3b]<0xf0 && r[0xb9b]%15>=4) ++r[0x3b];
     if(!s.menu) {
       /* Arriving: X1 placed X beside one of its own rows; adopt that row. */
       unsigned y=word(r+0xbb0);
@@ -904,6 +914,14 @@ void MmxBossRushFrame(uint8_t *r,uint16_t input) {
   }
   MmxBossRushSetState(&s);
   if(s.mode==MMX_RUSH_LOADING) {
+    if(!s.stage_started && !s.return_title && title(r) && r[0x39]==2) {
+      /* A run confirmed as the title faded out: X1 came back to its idle
+       * menu instead of leaving. Cancel it so BOSS RUSH can be chosen. */
+      uint16_t held=s.input;
+      MmxBossRushReset();
+      s=MmxBossRushGetState();s.input=held;s.menu_input=input;
+      MmxBossRushSetState(&s);return;
+    }
     if(r[0xd1]==2 && r[0xd2]==4 && r[0xd3]==4 && r[0xba9]==2 &&
         r[0xbaa]!=14 && !r[0xc0c] && !r[0xc16]) prepare(r);
     return;

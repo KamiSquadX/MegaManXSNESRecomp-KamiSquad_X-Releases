@@ -276,7 +276,8 @@ static void check_each_id_maps_to_field(void) {
   static const int expected_boss[] = {21, 22, 23, 27, 24, 25, 26, 28};
 
   MmxSaberTuningLoad(fake_reader, &source);
-  for (unsigned i = 0; i < MMX_SABER_TUNING_DAMAGE_COUNT; ++i) {
+  /* Saber Zero's own entries; KSX Zero's follow WAVE. */
+  for (unsigned i = 0; i <= MMX_SABER_TUNING_DAMAGE_WAVE; ++i) {
     check(MmxSaberTuningNormalDamage((MmxSaberTuningDamageKind)i) ==
               11 + (int)i,
           "normal damage option id maps to the matching field");
@@ -286,7 +287,7 @@ static void check_each_id_maps_to_field(void) {
   }
   static const int expected_priority[] = {1, 2, 3, 4, 5, 6,
                                           7, 8, 9, 1, 2, 3};
-  for (unsigned i = 0; i < MMX_SABER_TUNING_PRIORITY_COUNT; ++i)
+  for (unsigned i = 0; i <= MMX_SABER_TUNING_PRIORITY_WAVE; ++i)
     check(MmxSaberTuningPriority((MmxSaberTuningPriorityKind)i) ==
               expected_priority[i],
           "priority option id maps to the matching field");
@@ -311,7 +312,7 @@ static void check_clamping_and_invalid_fallback(void) {
     {"priority_window_frames", "29"},
     {"finisher_window_frames", "61"},
     {"saber_swing_volume", "-10"},
-    {"wave_priority", "10"},
+    {"wave_priority", "100"},
     {"start_all_upgrades", "not-a-boolean"},
     {"air_damage", "3x"},
     {"show_hitboxes", "not-a-boolean"},
@@ -331,7 +332,7 @@ static void check_clamping_and_invalid_fallback(void) {
         "finisher window clamps to its manifest maximum");
   check(MmxSaberTuningSaberSwingVolume() == 0,
         "swing volume clamps to its manifest minimum");
-  check(MmxSaberTuningPriority(MMX_SABER_TUNING_PRIORITY_WAVE) == 9,
+  check(MmxSaberTuningPriority(MMX_SABER_TUNING_PRIORITY_WAVE) == 99,
         "priority clamps to its manifest maximum");
   check(MmxSaberTuningNormalDamage(MMX_SABER_TUNING_DAMAGE_AIR) == 3,
         "trailing text falls back to the normal damage default");
