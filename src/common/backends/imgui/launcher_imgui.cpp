@@ -12550,9 +12550,16 @@ static void draw_mod_feature_option(LauncherModel* m,
             changed = true;
         }
     } else if (option.type == RECOMP_MOD_OPTION_CHOICE) {
-        ImGui::TextUnformatted(option.label);
-        ImGui::SameLine(px(260));
-        ImGui::SetNextItemWidth(px(230));
+        if (option.inline_after[0]) {
+            /* Beside the option it follows, at the row's right edge. */
+            const float width = px(190);
+            ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - width);
+            ImGui::SetNextItemWidth(width);
+        } else {
+            ImGui::TextUnformatted(option.label);
+            ImGui::SameLine(px(260));
+            ImGui::SetNextItemWidth(px(230));
+        }
         char preview[128];
         std::snprintf(preview, sizeof(preview), "%s", option.value);
         for (int choice_index = 0; choice_index < option.choice_count;
@@ -13113,6 +13120,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                         index, &option)) {
                     continue;
                 }
+                if (option.hidden) continue;
                 if (last_group != option.group) {
                     last_group = option.group;
                     ImGui::Spacing();
@@ -13314,10 +13322,8 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     if (m->view == LNG_VIEW_DASHBOARD) {
         bool skip = m->s.skip_launcher != 0;
         const bool has_version = m->build_version && m->build_version[0];
-        /* With a version line the pair is centred on the CTA instead. */
         const float line_h = ImGui::GetTextLineHeight();
-        const float pair_h = ImGui::GetFrameHeight() + (has_version ? px(2) + line_h : 0.0f);
-        const float skip_y = cta_y + (play_h - pair_h) * 0.5f;
+        const float skip_y = cta_y + (play_h - ImGui::GetFrameHeight()) * 0.5f;
         ImGui::SetCursorScreenPos(ImVec2(origin.x, skip_y));
         if (ImGui::Checkbox(ui_text("Skip launcher on boot"), &skip))
             launcher_model_request_skip_toggle(m);
@@ -13330,8 +13336,10 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                 std::snprintf(ver, sizeof(ver), "v%.*s-ksx%s", (int)(ks - v), v, ks + 4);
             else
                 std::snprintf(ver, sizeof(ver), "v%s", v);
+            /* Pinned to the very bottom of the footer band, clear of the
+             * checkbox above it. */
             ImGui::SetCursorScreenPos(ImVec2(origin.x + px(2),
-                                             skip_y + ImGui::GetFrameHeight() + px(2)));
+                                             origin.y + footer_h - line_h - px(2)));
             ImGui::TextColored(col(th.text_muted), "%s", ver);
         }
     } else if (m->view == LNG_VIEW_SETTINGS &&

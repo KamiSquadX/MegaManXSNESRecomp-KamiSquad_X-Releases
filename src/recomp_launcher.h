@@ -1069,6 +1069,13 @@ typedef struct RecompLauncherCModOption {
      * UI only has to grey the control out -- it never cross-references
      * options itself. Example: ticking "Instant" makes the speed box inert. */
     int  disabled;
+    /* Non-zero when the manifest's shown_when ("option=value") does not hold:
+     * the UI leaves the option out. Appended for ABI stability. */
+    int  hidden;
+    /* Manifest key inline_after: draw this option on the same row, at the
+     * right edge, as the named option of the same feature. Empty for its own
+     * row. Appended for ABI stability. */
+    char inline_after[RECOMP_LAUNCHER_MOD_ID_MAX];
 } RecompLauncherCModOption;
 
 typedef struct RecompLauncherCModChoice {
