@@ -5897,8 +5897,17 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             static int  s_prof_delete_index = -1;
             static double s_prof_saved_until = 0.0;
             static int  s_prof_saved_player = -1;
+            static bool s_prof_seeded[2] = {};
             const int pi = p < 2 ? p : 1;
             char* const name_buf = s_prof_buf[pi];
+            /* First showing: name the profile in use, so the player can see
+             * which one the saved bindings came from. */
+            if (!s_prof_seeded[pi]) {
+                s_prof_seeded[pi] = true;
+                if (!name_buf[0])
+                    std::snprintf(name_buf, sizeof(s_prof_buf[0]), "%s",
+                                  launcher_binds_input_profile_active(pi + 1));
+            }
             const int sel = launcher_binds_input_profile_find(name_buf);
 
             flow_same_line(button_w("Save Profile"));

@@ -1070,7 +1070,11 @@ void launcher_binds_apply_snes_pad_profile(LauncherModel* m, int player) {
  *   Deadzone   = 40
  *   Controls   = DpadUp, DpadDown, ...  ; the [GamepadMap] line
  *   ControlsExt= L2, R2, ...
- *   Keys       = 27, 29, ...            ; keybinds.ini scancodes, its order */
+ *   Keys       = 27, 29, ...            ; keybinds.ini scancodes, its order
+ *
+ *   [Active]
+ *   P1 = My layout                       ; the profile each player last
+ *   P2 = ...                             ; loaded or saved, shown on start */
 #define SNES_NAMED_PROFILE_MAX 64
 
 typedef struct SnesNamedProfile {
@@ -1088,6 +1092,7 @@ static SnesNamedProfile s_named[SNES_NAMED_PROFILE_MAX];
 static int  s_named_count;
 static int  s_named_loaded;
 static char s_named_path[1024];
+static char s_named_active[2][64];
 
 static const char* named_profiles_path(void) {
     static char path[1024];
@@ -1109,11 +1114,13 @@ static void named_profiles_load(void) {
     char* text;
     char* save = NULL;
     SnesNamedProfile* cur = NULL;
+    int in_active = 0;
 
     if (s_named_loaded && !strcmp(path, s_named_path)) return;
     s_named_loaded = 1;
     copy_str(s_named_path, sizeof(s_named_path), path);
     s_named_count = 0;
+    s_named_active[0][0] = s_named_active[1][0] = '\0';
     text = read_whole(path, &len);
     if (!text) return;
     for (char* line = strtok_r(text, "\n", &save); line;
@@ -1125,6 +1132,7 @@ static void named_profiles_load(void) {
         if (!*p || *p == '#' || *p == ';') continue;
         if (*p == '[') {
             cur = NULL;
+            in_active = !strncmp(p, "[Active]", 8);
             if (!strncmp(p, "[Profile]", 9) &&
                 s_named_count < SNES_NAMED_PROFILE_MAX) {
                 cur = &s_named[s_named_count++];
@@ -1133,10 +1141,15 @@ static void named_profiles_load(void) {
             }
             continue;
         }
-        if (!cur || !(eq = strchr(p, '='))) continue;
+        if ((!cur && !in_active) || !(eq = strchr(p, '='))) continue;
         *eq = '\0';
         key = trim_token(p);
         val = trim_token(eq + 1);
+        if (in_active) {
+            if (!strcmp(key, "P1") || !strcmp(key, "P2"))
+                copy_str(s_named_active[key[1] - '1'], sizeof(s_named_active[0]), val);
+            continue;
+        }
         if (!strcmp(key, "Name"))             copy_str(cur->name, sizeof(cur->name), val);
         else if (!strcmp(key, "Source"))      cur->source = atoi(val);
         else if (!strcmp(key, "Guid"))        copy_str(cur->guid, sizeof(cur->guid), val);
@@ -1171,6 +1184,11 @@ static int named_profiles_write(void) {
         fprintf(f, "Controls = %s\n", q->controls);
         if (q->controls_ext[0]) fprintf(f, "ControlsExt = %s\n", q->controls_ext);
         fprintf(f, "Keys = %s\n", q->keys);
+    }
+    if (s_named_active[0][0] || s_named_active[1][0]) {
+        fputs("\n[Active]\n", f);
+        if (s_named_active[0][0]) fprintf(f, "P1 = %s\n", s_named_active[0]);
+        if (s_named_active[1][0]) fprintf(f, "P2 = %s\n", s_named_active[1]);
     }
     fclose(f);
     copy_str(s_named_path, sizeof(s_named_path), path);
@@ -1266,6 +1284,7 @@ int launcher_binds_input_profile_save(LauncherModel* m, int player,
         idx = s_named_count++;
     }
     s_named[idx] = q;
+    copy_str(s_named_active[player - 1], sizeof(s_named_active[0]), q.name);
     if (!named_profiles_write()) {
         s_named_loaded = 0;   /* re-read what is really on disk */
         return -1;
@@ -1337,7 +1356,39 @@ int launcher_binds_input_profile_load(LauncherModel* m, int player, int index,
     if (q.deadzone >= 0)
         m->s.deadzone[p] = q.deadzone > 100 ? 100 : q.deadzone;
     reload_player_display(m, player);
+    /* Remember the pick so the next launch shows which profile is in use. */
+    copy_str(s_named_active[p], sizeof(s_named_active[0]), q.name);
+    if (!named_profiles_write()) s_named_loaded = 0;
     return 1;
+}
+
+const char* launcher_binds_input_profile_active(int player) {
+    char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
+    char line[768], keys[512];
+    named_profiles_load();
+    if (player < 1 || player > 2) return "";
+    /* Only a name that still exists: a stale one would show a profile the
+     * dropdown cannot offer. */
+    if (launcher_binds_input_profile_find(s_named_active[player - 1]) >= 0)
+        return s_named_active[player - 1];
+    /* No record (profiles saved before one was kept): name the profile whose
+     * pad mapping and keys match the player's current bindings, if any. */
+    line[0] = keys[0] = '\0';
+    snes_gamepad_read_config_order(player - 1, controls);
+    for (int i = 0; i < LNG_SNES_PAD_BUTTON_COUNT; ++i) {
+        if (i) strncat(line, ", ", sizeof(line) - strlen(line) - 1);
+        strncat(line, controls[i], sizeof(line) - strlen(line) - 1);
+    }
+    for (int i = 0; i < recompui_keybinds_button_count(); ++i) {
+        char num[16];
+        snprintf(num, sizeof(num), "%s%d", i ? ", " : "",
+                 (int)recompui_keybinds_get_button(player, i));
+        strncat(keys, num, sizeof(keys) - strlen(keys) - 1);
+    }
+    for (int i = 0; i < s_named_count; ++i)
+        if (!strcmp(s_named[i].controls, line) && !strcmp(s_named[i].keys, keys))
+            return s_named[i].name;
+    return "";
 }
 
 int launcher_binds_input_profile_rename(int index, const char* name) {
@@ -1348,6 +1399,9 @@ int launcher_binds_input_profile_rename(int index, const char* name) {
     if (!clean[0] || index < 0 || index >= s_named_count) return 0;
     other = launcher_binds_input_profile_find(clean);
     if (other >= 0 && other != index) return 0;   /* name already taken */
+    for (int p = 0; p < 2; ++p)
+        if (name_ieq(s_named_active[p], s_named[index].name))
+            copy_str(s_named_active[p], sizeof(s_named_active[0]), clean);
     copy_str(s_named[index].name, sizeof(s_named[index].name), clean);
     if (!named_profiles_write()) { s_named_loaded = 0; return 0; }
     return 1;
@@ -1356,6 +1410,9 @@ int launcher_binds_input_profile_rename(int index, const char* name) {
 int launcher_binds_input_profile_delete(int index) {
     named_profiles_load();
     if (index < 0 || index >= s_named_count) return 0;
+    for (int p = 0; p < 2; ++p)
+        if (name_ieq(s_named_active[p], s_named[index].name))
+            s_named_active[p][0] = '\0';
     for (int i = index; i + 1 < s_named_count; ++i) s_named[i] = s_named[i + 1];
     --s_named_count;
     if (!named_profiles_write()) { s_named_loaded = 0; return 0; }

@@ -283,6 +283,23 @@ int main(int argc, char** argv) {
         expect(launcher_binds_input_profile_load(&m, 2, 1, pads, 2) &&
                m.s.player_src[1] == 1 && !m.s.player_gamepad_guid[1][0] && g_keys[1][3] == 44,
                "loading it switches to Keyboard and restores the keys");
+
+        /* The launcher names each player's profile in use on the next start. */
+        s_named_loaded = 0;
+        expect(strcmp(launcher_binds_input_profile_active(2), "Keys") == 0,
+               "the loaded profile is remembered for its player");
+        expect(launcher_binds_input_profile_load(&m, 1, 0, pads, 2) &&
+               strcmp(launcher_binds_input_profile_active(1), "Boss fights") == 0,
+               "loading records the pick");
+        expect(launcher_binds_input_profile_rename(0, "Bosses") &&
+               strcmp(launcher_binds_input_profile_active(1), "Bosses") == 0,
+               "a rename follows the remembered name");
+        s_named_active[0][0] = '\0';   /* as from a file saved before [Active] */
+        expect(strcmp(launcher_binds_input_profile_active(1), "Bosses") == 0,
+               "without a record, matching bindings name the profile");
+        expect(launcher_binds_input_profile_delete(0) &&
+               strcmp(launcher_binds_input_profile_active(1), "") == 0,
+               "a deleted profile is no longer named");
         remove(profiles);
     }
 

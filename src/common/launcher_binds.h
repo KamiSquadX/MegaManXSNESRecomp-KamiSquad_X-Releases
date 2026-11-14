@@ -120,6 +120,9 @@ int         launcher_binds_input_profile_save(LauncherModel* m, int player /*1-b
 int         launcher_binds_input_profile_load(LauncherModel* m, int player /*1-based*/,
                                               int index, const LauncherPad* pads,
                                               int pad_count);
+// The profile the player last loaded or saved ("" when none or since deleted),
+// kept in input_profiles.ini so the launcher shows it again on the next start.
+const char* launcher_binds_input_profile_active(int player /*1-based*/);
 // 0 when the name is empty or another profile already has it.
 int         launcher_binds_input_profile_rename(int index, const char* name);
 int         launcher_binds_input_profile_delete(int index);
