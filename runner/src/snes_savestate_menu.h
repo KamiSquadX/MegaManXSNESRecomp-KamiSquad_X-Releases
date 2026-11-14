@@ -56,6 +56,11 @@ int  snes_savestate_menu_selected(void);
  * the menu neither reaches the game nor re-opens the menu. */
 uint32_t snes_savestate_menu_filter_guest_input(uint32_t inputs);
 
+/* Add buttons to that mask. For a host that navigates the menu with the
+ * pad's physical buttons but feeds the game a mapped word: the buttons held
+ * in the mapped word when the menu closes stay out of the game until let go. */
+void snes_savestate_menu_guard_input(uint32_t inputs);
+
 /* Edge-detect the Select + R open gesture on the runner's input word
  * (bit 2 = Select, bit 11 = R). Returns 1 on the frame it opens. Safe to
  * call every frame; does nothing while already open. */

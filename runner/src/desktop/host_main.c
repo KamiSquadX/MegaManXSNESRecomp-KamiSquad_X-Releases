@@ -184,6 +184,7 @@ static bool TouchPadEvent(const SDL_Event *e);
 static void TouchPadDraw(void);
 static void TouchReset(void);
 static void TouchPadFrame(void);
+static uint32 TouchPadButtons(void);
 static void HandleInput(int keyCode, int keyMod, bool pressed);
 static void HandleCommand(uint32 j, bool pressed);
 static void PollKeyboardControls(const uint8_t *keys);
@@ -1717,6 +1718,27 @@ static uint32 OverlayNavInputs(void) {
   return g_input_state | g_pad_buttons | g_gamepad[0].axis_buttons;
 }
 
+/* The same, with seat 0's pad (and the on-screen pad) read by button
+ * position instead of through the game's mapping: the save-state browser's
+ * hints name the SNES layout (A right, B bottom, X top, Y left), and a game
+ * may map its SNES A anywhere (Mega Man X's modern layout puts it on L2).
+ * The keyboard keeps its key bindings. */
+static uint32 OverlayPositionalInputs(void) {
+  static const struct { uint8 button; uint16 snes; } kPositions[] = {
+    {kGamepadBtn_B, SNES_PAD_A}, {kGamepadBtn_A, SNES_PAD_B},
+    {kGamepadBtn_Y, SNES_PAD_X}, {kGamepadBtn_X, SNES_PAD_Y},
+    {kGamepadBtn_Back, SNES_PAD_SELECT}, {kGamepadBtn_Start, SNES_PAD_START},
+    {kGamepadBtn_DpadUp, SNES_PAD_UP}, {kGamepadBtn_DpadDown, SNES_PAD_DOWN},
+    {kGamepadBtn_DpadLeft, SNES_PAD_LEFT}, {kGamepadBtn_DpadRight, SNES_PAD_RIGHT},
+    {kGamepadBtn_L1, SNES_PAD_L}, {kGamepadBtn_R1, SNES_PAD_R},
+  };
+  const uint32 raw = g_gamepad[0].modifiers | TouchPadButtons();
+  uint32 pad = g_input_state | g_gamepad[0].axis_buttons;
+  for (size_t i = 0; i < sizeof(kPositions) / sizeof(kPositions[0]); ++i)
+    if (raw & (1u << kPositions[i].button)) pad |= kPositions[i].snes;
+  return pad;
+}
+
 /* Controller and joystick events, in ONE place, because the overlays' modal
  * pumps must see them too. They did not: the save-state browser's loop
  * handled quit and keyboard events only, so a pad's d-pad, B and shoulders
@@ -2203,7 +2225,7 @@ static void RunSavestateMenuLoop(bool *running) {
     if (!*running)
       snes_savestate_menu_close();
     OverlaySelftestPadTick(frames);
-    snes_savestate_menu_poll_nav(OverlayNavInputs(), SDL_GetTicks());
+    snes_savestate_menu_poll_nav(OverlayPositionalInputs(), SDL_GetTicks());
     PresentFrozenWithOverlay();
     SDL_Delay(8);
     frames++;
@@ -2789,15 +2811,21 @@ static void NetplayMenuSelftest(uint32_t frame) {
   }
 }
 
+/* The local seat's word through the title's key config, unfiltered. */
+static uint16 netplay_mapped_pad(void) {
+  const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
+  /* Through the title's key config before it is sent: every peer then runs
+   * the same mapped controls whatever its own config says. */
+  return MapSeatInput((int)player,
+      (uint16)((((g_input_state | g_pad_buttons) >> (player * 12)) |
+                g_gamepad[player].axis_buttons) & 0x0fffu));
+}
+
 static uint16_t netplay_capture_pad(void *ctx) {
   (void)ctx;
   PollKeyboardControls(snesrecomp_sdl_get_keyboard_state());
   const unsigned player = snes_netplay_input_player() == 1 ? 1 : 0;
-  /* Through the title's key config before it is sent: every peer then runs
-   * the same mapped controls whatever its own config says. */
-  uint16 word = MapSeatInput((int)player,
-      (uint16)((((g_input_state | g_pad_buttons) >> (player * 12)) |
-                g_gamepad[player].axis_buttons) & 0x0fffu));
+  uint16 word = netplay_mapped_pad();
   snes_netplay_stage_local_ext(RtlGetPadExt((int)player));
   return (uint16_t)snes_savestate_menu_filter_guest_input(word);
 }
@@ -3469,6 +3497,16 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
 #endif
 }
 
+#if defined(__ANDROID__) && SNESRECOMP_SDL3 && defined(SNESRECOMP_NET_ROLLBACK)
+/* recomp-net's URL opener (Discord sign-in), from its sign-in worker thread:
+ * SDL hands the URL to an ACTION_VIEW intent. */
+static int AndroidOpenUrl(const char *url) {
+  if (SDL_OpenURL(url)) return 1;
+  fprintf(stderr, "netplay: SDL_OpenURL failed: %s\n", SDL_GetError());
+  return 0;
+}
+#endif
+
 #if SNESRECOMP_SDL3 && defined(SNESRECOMP_NET_ROLLBACK)
 /* Dragging or resizing the window (or holding its title bar) runs Windows'
  * modal size/move loop, which blocks this thread's frame loop for as long as
@@ -3490,6 +3528,16 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
     return 2;
   }
   g_game = game;
+#if defined(__ANDROID__) && SNESRECOMP_SDL3 && defined(SNESRECOMP_NET_ROLLBACK)
+  /* Android has no xdg-open: Discord sign-in hands its page to the system,
+   * which opens it in the Discord app when that handles the link, else in
+   * the default browser. Registered first, because the launcher's netplay
+   * page can start a sign-in before the game initialises SDL. */
+  {
+    extern void rnet_set_url_opener(int (*open_url)(const char *url));
+    rnet_set_url_opener(AndroidOpenUrl);
+  }
+#endif
   if (game->window_title && game->window_title[0])
     snprintf(g_window_title, sizeof(g_window_title), "%s", game->window_title);
   else
@@ -3993,7 +4041,6 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   host_report_breadcrumb("SDL init ok: video=%s audio=%s",
                          SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "(none)",
                          SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "(none)");
-
   /* Load (or generate) keybinds.ini next to the executable. */
   keybinds_init(program_path);
 
@@ -4465,7 +4512,12 @@ error_reading:;
       if (snes_netplay_is_host()) {
         uint32 human = snes_savestate_menu_filter_guest_input(netplay_capture_pad(NULL));
         if (snes_savestate_menu_is_open()) {
-          snes_savestate_menu_poll_nav(human, SDL_GetTicks());
+          /* The menu answers the pad's own buttons, as it does offline: the
+           * title's key config (a remapped SHOT on ZL, say) is the game's,
+           * not the menu's. What closed it stays out of the game. */
+          snes_savestate_menu_poll_nav(OverlayPositionalInputs(), SDL_GetTicks());
+          if (!snes_savestate_menu_is_open())
+            snes_savestate_menu_guard_input(netplay_mapped_pad());
         } else if (!snes_netplay_menu_paused()) {
           (void)snes_savestate_menu_poll_open(g_savestate_menu_hotkey
               ? (SNES_PAD_SELECT | SNES_PAD_R) : human);

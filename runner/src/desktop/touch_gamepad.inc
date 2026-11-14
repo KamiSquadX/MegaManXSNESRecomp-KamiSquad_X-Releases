@@ -191,6 +191,9 @@ static void TouchApply(void) {
     if (changed >> b & 1u) HandleGamepadInput(&g_touch_gi, b, (held >> b & 1u) != 0);
 }
 
+/* The on-screen pad's held buttons (kGamepadBtn_* bits). */
+static uint32 TouchPadButtons(void) { return g_touch_gi.modifiers; }
+
 /* Once per frame, before the events: let go of taps that already ended. */
 static void TouchPadFrame(void) {
   if (!g_touch_latch) return;
@@ -384,6 +387,7 @@ static void TouchPadDraw(void) {
 }
 
 #else
+static uint32 TouchPadButtons(void) { return 0; }
 static void TouchPadFrame(void) {}
 static bool TouchPadActive(void) { return false; }
 static bool TouchPadEvent(const SDL_Event *e) { (void)e; return false; }

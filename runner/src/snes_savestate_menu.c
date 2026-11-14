@@ -71,6 +71,8 @@
 #define SSM_BTN_START  (1u << 3)
 #define SSM_BTN_UP     (1u << 4)
 #define SSM_BTN_DOWN   (1u << 5)
+#define SSM_BTN_LEFT   (1u << 6)
+#define SSM_BTN_RIGHT  (1u << 7)
 #define SSM_BTN_A      (1u << 8)
 #define SSM_BTN_X      (1u << 9)
 #define SSM_BTN_R      (1u << 11)
@@ -97,6 +99,11 @@ static void sample_thumb(const uint32_t *fb, int w, int h);
 
 /* Footer feedback remains visible while the browser is open. */
 static char s_status[48];
+
+/* Delete asks first: while set, a popup over the panel offers YES / NO for
+ * the selected slot, and every input answers it. NO is the default. */
+static int s_confirm_delete;
+static int s_confirm_yes;
 
 /* Held-direction state for auto-repeat. */
 static uint32_t s_prev_inputs;
@@ -254,6 +261,17 @@ static void refresh_thumbs(void)
     s_thumbs_scanned = 1;
 }
 
+static int delete_slot(int slot)
+{
+    char path[256];
+    slot_path(slot, path, sizeof(path));
+    if (remove(path) != 0)
+        return 0;
+    thumb_path(slot, path, sizeof(path));
+    (void)remove(path);  /* a slot saved before thumbnails has none */
+    return 1;
+}
+
 static void format_slot_status(int slot, char *out, size_t cap)
 {
     time_t mt;
@@ -343,16 +361,41 @@ static void rasterize_panel(void)
     draw_text(s_panel, 44, 402, "LOAD", 0xFFE2E5EBu, 1);
     draw_snes_button(s_panel, 116, 398, 'X', 0xFF5FA8FFu);
     draw_text(s_panel, 140, 402, "SAVE", 0xFFE2E5EBu, 1);
-    draw_snes_button(s_panel, 212, 398, 'B', 0xFFFF6B6Bu);
-    draw_text(s_panel, 236, 402, "BACK", 0xFFE2E5EBu, 1);
-    draw_text(s_panel, 316, 402, "UP DOWN SLOT", 0xFF7F8796u, 1);
+    draw_snes_button(s_panel, 212, 398, 'Y', 0xFFFFD24Du);
+    draw_text(s_panel, 236, 402, "DELETE", 0xFFE2E5EBu, 1);
+    draw_snes_button(s_panel, 324, 398, 'B', 0xFFFF6B6Bu);
+    draw_text(s_panel, 348, 402, "BACK", 0xFFE2E5EBu, 1);
+    draw_text(s_panel, 404, 402, "UP DOWN SLOT", 0xFF7F8796u, 1);
     if (s_mirror)
         draw_text(s_panel, 20, 422, "NETPLAY: THE HOST CONTROLS THIS MENU", 0xFFB8BDC8u, 1);
     else
-        draw_text(s_panel, 20, 422, "KEYS: ARROWS SLOT  X LOAD  S SAVE  ESC BACK  Q QUICK",
+        draw_text(s_panel, 20, 422,
+                  "KEYS: ARROWS  X LOAD  S SAVE  D DELETE  ESC BACK  Q QUICK",
                   0xFFB8BDC8u, 1);
     if (s_status[0])
         draw_text(s_panel, 20, 436, s_status, 0xFFFFD24Du, 1);
+
+    if (s_confirm_delete) {
+        /* The question, then YES and NO; the highlighted answer is the one
+         * A (X on the keyboard, or Enter) gives. */
+        static const char *question = "ARE YOU SURE YOU WANT TO DELETE THIS SAVE STATE?";
+        const int box_w = 432, box_h = 112;
+        const int box_x = (SSM_W - box_w) / 2, box_y = 150;
+        const int text_w = (int)strlen(question) * 8;
+        fill_rect(s_panel, box_x, box_y, box_w, box_h, 0xFF171B25u);
+        stroke_rect(s_panel, box_x, box_y, box_w, box_h, 0xFFFFD24Du);
+        draw_text(s_panel, box_x + (box_w - text_w) / 2, box_y + 22, question,
+                  0xFFE2E5EBu, 1);
+        for (i = 0; i < 2; i++) {
+            const int yes = i == 0;
+            const int sel = yes == s_confirm_yes;
+            const int bx = box_x + (yes ? 112 : 240), by = box_y + 58;
+            fill_rect(s_panel, bx, by, 80, 30, sel ? 0xFF2B2830u : 0xFF191D27u);
+            stroke_rect(s_panel, bx, by, 80, 30, sel ? 0xFFFFD24Du : 0xFF303746u);
+            draw_text(s_panel, bx + (yes ? 28 : 32), by + 11, yes ? "YES" : "NO",
+                      sel ? 0xFFFFD24Du : 0xFFE2E5EBu, 1);
+        }
+    }
 
     s_dirty = 0;
 }
@@ -412,6 +455,39 @@ static int write_slot(int slot)
     }
     snes_savestate_menu_note_slot_saved(slot);
     return 1;
+}
+
+/* Y (D on the keyboard): ask before deleting the selected slot. Netplay
+ * keeps every peer's slots alike, so a delete there is refused. */
+static void menu_request_delete(void)
+{
+    if (snes_netplay_active()) {
+        snprintf(s_status, sizeof(s_status), "NO DELETING DURING NETPLAY");
+        s_dirty = 1;
+        return;
+    }
+    if (!slot_exists(s_selected)) {
+        set_local_status("SLOT %02d IS EMPTY", "QUICK SLOT IS EMPTY");
+        return;
+    }
+    s_confirm_delete = 1;
+    s_confirm_yes = 0;
+    s_status[0] = '\0';
+    s_dirty = 1;
+}
+
+static void menu_answer_delete(int yes)
+{
+    s_confirm_delete = 0;
+    s_dirty = 1;
+    if (!yes)
+        return;
+    if (!delete_slot(s_selected)) {
+        set_local_status("DELETE FAILED: SLOT %02d", "QUICK DELETE FAILED");
+        return;
+    }
+    s_thumbs_scanned = 0;
+    set_local_status("DELETED SLOT %02d", "QUICK STATE DELETED");
 }
 
 static void menu_submit(int save)
@@ -481,6 +557,7 @@ int snes_savestate_menu_selected(void)
 static void close_local(void)
 {
     s_open = 0;
+    s_confirm_delete = 0;
     s_mirror = 0;
     s_repeat_dir = 0;
     s_input_guard = s_prev_inputs;
@@ -544,6 +621,11 @@ int snes_savestate_menu_netplay_write_slot(int slot)
     return write_slot(slot);
 }
 
+void snes_savestate_menu_guard_input(uint32_t inputs)
+{
+    s_input_guard |= inputs;
+}
+
 uint32_t snes_savestate_menu_filter_guest_input(uint32_t inputs)
 {
     /* A guarded button leaves the guard the moment it is let go, and never
@@ -602,6 +684,18 @@ void snes_savestate_menu_poll_nav(uint32_t inputs, uint32_t ticks_ms)
         snes_savestate_menu_close();
         return;
     }
+    if (s_confirm_delete) {
+        if (pressed & (SSM_BTN_LEFT | SSM_BTN_RIGHT | SSM_BTN_UP | SSM_BTN_DOWN)) {
+            s_confirm_yes = !s_confirm_yes;
+            s_dirty = 1;
+        } else if (pressed & SSM_BTN_A) {
+            menu_answer_delete(s_confirm_yes);
+        } else if (pressed & SSM_BTN_B) {
+            menu_answer_delete(0);
+        }
+        s_repeat_dir = 0;
+        return;
+    }
     if (pressed & SSM_BTN_B) {
         snes_savestate_menu_close();
         return;
@@ -612,6 +706,10 @@ void snes_savestate_menu_poll_nav(uint32_t inputs, uint32_t ticks_ms)
     }
     if (pressed & SSM_BTN_X) {
         menu_submit(1);
+        return;
+    }
+    if (pressed & SSM_BTN_Y) {
+        menu_request_delete();
         return;
     }
 
@@ -652,8 +750,21 @@ void snes_savestate_menu_handle_key(int key, int repeat)
         return;
     /* SDLK_* is unsigned under SDL3 and signed under SDL2. Cast at every
      * comparison so neither backend warns and neither one compares wrong. */
+    if (s_confirm_delete) {
+        /* Escape answers NO; Enter gives the highlighted answer. Arrows and
+         * the X key (SNES A) arrive through poll_nav like everywhere else. */
+        if (key == (int)SDLK_ESCAPE || key == (int)SDLK_BACKSPACE)
+            menu_answer_delete(0);
+        else if (key == (int)SDLK_RETURN)
+            menu_answer_delete(s_confirm_yes);
+        return;
+    }
     if (key == (int)SDLK_ESCAPE || key == (int)SDLK_BACKSPACE) {
         snes_savestate_menu_close();
+        return;
+    }
+    if (key == (int)SDLK_d) {
+        menu_request_delete();
         return;
     }
     if (key >= (int)SDLK_1 && key <= (int)SDLK_9)
