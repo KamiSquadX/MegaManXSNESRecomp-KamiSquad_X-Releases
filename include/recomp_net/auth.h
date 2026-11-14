@@ -58,6 +58,12 @@ enum {
  */
 void rnet_account_set_secret_path(const char *path);
 
+/* How to open the sign-in page. Without one, the platform's own openers are
+ * tried (ShellExecute, open, xdg-open and the like). A host on a platform
+ * with none of those (Android) passes its own, which returns nonzero once
+ * the page was handed off; NULL goes back to the platform openers. */
+void rnet_set_url_opener(int (*open_url)(const char *url));
+
 /* `ws_url` is the lobby URL the client is configured with; the HTTP endpoints
  * live on the same host and port. Safe to call again when the URL changes. */
 void rnet_account_init(const char *ws_url);

@@ -1,5 +1,6 @@
 /* Browser handoff for Discord sign-in. The URL is always one argv element;
  * OAuth query strings must never pass through a shell. */
+#include "recomp_net/auth.h"
 #include "rnet_open_url.h"
 
 #include <stdio.h>
@@ -165,10 +166,21 @@ static int launch(const char *program, const char *url, char *const env[],
 }
 #endif
 
+static int (*s_url_opener)(const char *url);
+
+void rnet_set_url_opener(int (*open_url)(const char *url)) {
+    s_url_opener = open_url;
+}
+
 int rnet_open_url(const char *url) {
     if (!url || (strncmp(url, "http://", 7) != 0 &&
                  strncmp(url, "https://", 8) != 0)) {
         fprintf(stderr, "rnet_account: refusing to open a non-http(s) URL\n");
+        return 0;
+    }
+    if (s_url_opener) {
+        if (s_url_opener(url)) return 1;
+        fprintf(stderr, "rnet_account: the host's URL opener failed\n");
         return 0;
     }
 #if defined(_WIN32)
