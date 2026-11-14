@@ -34,6 +34,11 @@ void MmxWeaponsSetKsx(uint8_t *(*active)(void), void (*menu_choice)(uint8_t *, u
 }
 static uint8_t *ksx_ram(void) { return ksx_active ? ksx_active() : NULL; }
 static bool ksx_virtual(void) { return ksx_ram() != NULL; }
+/* KSX Zero uses no X2/X3 weapon: while he is the one paused, their pages
+ * offer only his buster and ESCAPE.U, and a choice there keeps his own list
+ * (page 0), so the HUD still shows Rakuhouha when L/R selects it. */
+extern bool MmxZeroActive(void);
+static bool ksx_pages_locked(void) { return ksx_menu_choice && MmxZeroActive(); }
 _Static_assert(sizeof(MmxWeaponsState) == 40 && offsetof(MmxWeaponsState,fraction) == MMX_WEAPONS_LEGACY_STATE_SIZE, "Weapon save ABI");
 static unsigned word(const uint8_t *p) { return p[0] | (p[1] << 8); }
 static unsigned weapon_index(unsigned page, unsigned weapon) { return (page - 1) * 8 + weapon - 1; }
@@ -166,13 +171,29 @@ const char *MmxWeaponsLabel(unsigned page, unsigned weapon) {
       "ACID.B", "P.BOMB", "T.THUNDR", "S.BLADE", "R.SPLASH", "G.WELL", "F.SHIELD", "T.FANG"};
   return valid_weapon(page, weapon) ? labels[weapon_index(page, weapon)] : "";
 }
+/* X1 reaches its weapon-energy routines (HUD bar, pickup refill) only with
+ * a weapon selected, and indexes the energy table with $0BDB: $1F86,Y and
+ * $1F85,Y. With the buster ($0BDB = 0) those are sub tanks 3 and 4. The hooks
+ * here redirect a routine to a virtual slot while KSX Rakuhouha or an X2/X3
+ * weapon is chosen; one that started under the redirection can finish on a
+ * frame without it (a co-op seat change, the choice going back to the
+ * buster), and then it marked sub tank 4 "$40", which reads as not owned.
+ * Such a routine now sees a slot that ends it and writes nothing. */
+static const uint8_t *guest_ram; /* MmxWeaponsSetGuestRam; NULL in tools */
+void MmxWeaponsSetGuestRam(const uint8_t *ram) { guest_ram = ram; }
+static bool sub_tank_target(void) { return guest_ram && guest_ram[0x0bdb] == 0; }
 unsigned MmxWeaponsEnergyRead(unsigned address, unsigned original) {
   uint8_t *ksx = ksx_ram();
   if (ksx) {
     if (address == 0xbdb) return 2;
     return address == 0x1f85 ? (unsigned)(ksx[0x1f8a] << 8 | ksx[0x1f89]) : ksx[0x1f8a];
   }
-  if (!MmxWeaponsActive()) return original;
+  if (!MmxWeaponsActive()) {
+    /* Full and not marked: the HUD routine skips it, the refill stops. */
+    if (address != 0xbdb && sub_tank_target())
+      return address == 0x1f85 ? 0x1c00 : 0x1c;
+    return original;
+  }
   if (address == 0xbdb) return 2; /* HUD/pickup routines only: virtual inventory index. */
   unsigned i = weapon_index(state.page,state.weapon), value = 0xc0 | state.energy[i];
   return address == 0x1f85 ? (value << 8) | state.fraction[i] : value;
@@ -198,7 +219,7 @@ bool MmxWeaponsEnergyStore(unsigned value, bool pickup) {
     else ksx[0x1f8a] = (uint8_t)value;
     return true;
   }
-  if (!MmxWeaponsActive()) return false;
+  if (!MmxWeaponsActive()) return sub_tank_target(); /* never into a sub tank */
   if (pickup) {
     set_energy(weapon_index(state.page,state.weapon),value & 0x3fff);
   }
@@ -237,6 +258,7 @@ void MmxWeaponsMenuTick(uint8_t r[0x20000], unsigned dp) {
   while (state.menu_page && !MmxWeaponsPageEnabled(state.menu_page));
   unsigned cursor = r[dp + 10];
   if (!state.menu_page && cursor >= 1 && cursor <= 8 && !(r[0x1f86 + cursor * 2] & 64)) r[dp + 10] = 0;
+  if (state.menu_page && cursor >= 1 && cursor <= 8 && ksx_pages_locked()) r[dp + 10] = 0;
   /* Use the native menu movement sound and its existing SPC command ring. */
   unsigned index = r[0xba3] & 0x1e;
   r[0xb72 + index] = 0x2c; r[0xb73 + index] = 0; r[0xba3] = (uint8_t)((index + 2) & 0x1e);
@@ -249,6 +271,8 @@ unsigned MmxWeaponsMenuRead(uint8_t r[0x20000], unsigned pc, unsigned dp, unsign
     if ((pc & 0xffff) == 0xce28) ksx_menu_choice(r, r[dp + 10]);
   }
   if (!MmxWeaponsEnabled() || !r || dp > 0x1ff00) return original;
+  const bool locked = ksx_pages_locked();
+  if (locked && state.page) state.page = state.weapon = 0;  /* never his */
   switch (pc & 0xffff) {
     case 0xc484:
       state.menu_page = state.page;
@@ -257,6 +281,7 @@ unsigned MmxWeaponsMenuRead(uint8_t r[0x20000], unsigned pc, unsigned dp, unsign
       return state.menu_page ? (state.page == state.menu_page ? state.weapon * 2 : 0) : original;
     case 0xce28: {
       unsigned cursor = r[dp + 10], old_page = state.page;
+      if (locked) return original;  /* the buster or ESCAPE.U, as on page 0 */
       if (cursor < 9) {
         MmxWeaponsCancelShots(r);
         if (old_page || state.menu_page) r[0x1f12] = 0; /* Rebuild the native energy HUD. */
@@ -269,6 +294,8 @@ unsigned MmxWeaponsMenuRead(uint8_t r[0x20000], unsigned pc, unsigned dp, unsign
     case 0xce33:
       return state.menu_page && original < 9 ? 0 : original; /* Native actor retains safe buster resources. */
     default:
+      /* Locked pages: not owned, so the cursor passes over them. */
+      if (locked && state.menu_page && index < 16) return 0;
       return state.menu_page && index < 16 ? 0xc0 | state.energy[(state.menu_page - 1) * 8 + index / 2] : original;
   }
 }

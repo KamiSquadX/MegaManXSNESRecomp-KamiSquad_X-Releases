@@ -114,6 +114,12 @@ void MmxSaberComboPlayerEnd(uint8_t *ram) {
       (post_live_mask & (uint8_t)~state.pre_live_mask) &&
       !snapshot.slash && !state.window_ticks && state.window_frames)
     state.window_ticks = state.window_frames;
+  /* On a ladder the second shot fires with no burst running (X1's ladder
+   * firing pose instead of the burst's art); it opens the same window. */
+  if (state.pre_valid && MmxZeroLadderSecondShot() &&
+      (post_live_mask & (uint8_t)~state.pre_live_mask) &&
+      !snapshot.slash && !state.window_ticks && state.window_frames)
+    state.window_ticks = state.window_frames;
   state.pre_valid = false;
 
   /* Old src/mmx_zero.c advances the legacy finisher to age 7 and publishes

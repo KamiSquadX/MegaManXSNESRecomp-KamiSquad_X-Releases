@@ -547,16 +547,25 @@ static void foreign_weakness_hook(CpuState *cpu,uint32_t pc) {
   MmxBossRushBoss b=MmxBossRushGetState().bosses[owner];
   if(!b.phase || b.object!=cpu->D || MmxBossRushNative(b.id)) return;
   bool reaction=(pc&0xffff)==0x9e3a;
-  if(reaction && saber_hit(cpu->X) && MmxBossRushForeignSaberKill(b.id,NULL,NULL)) {
-    /* A Zero saber hit: mark it so the body's death test can tell. */
-    cpu->A=(uint16_t)((cpu->A&0xff00)|MMX_RUSH_SABER_MARKER);
-    cpu->_flag_Z=0;cpu->_flag_N=0;cpu->P&=~0x82u;
+  unsigned page,weapon,charged;
+  const MmxBossRushWeakness *w=NULL;
+  if(MmxWeaponsShotIdentity(g_ram,cpu->X,&page,&weapon,&charged))
+    w=MmxBossRushForeignWeakness(b.id,page,weapon);
+  if(!w) {
+    /* KSX Zero's Rekkyoudan moves also count as Boomerang Cutter. */
+    unsigned weapons[2];
+    if(MmxWeaponsShotX1Weapons(g_ram,cpu->X,weapons)==2) {
+      w=MmxBossRushForeignWeakness(b.id,0,weapons[1]);charged=0;
+    }
+  }
+  if(!w) {
+    if(reaction && saber_hit(cpu->X) && MmxBossRushForeignSaberKill(b.id,NULL,NULL)) {
+      /* A Zero saber hit: mark it so the body's death test can tell. */
+      cpu->A=(uint16_t)((cpu->A&0xff00)|MMX_RUSH_SABER_MARKER);
+      cpu->_flag_Z=0;cpu->_flag_N=0;cpu->P&=~0x82u;
+    }
     return;
   }
-  unsigned page,weapon,charged;
-  if(!MmxWeaponsShotIdentity(g_ram,cpu->X,&page,&weapon,&charged)) return;
-  const MmxBossRushWeakness *w=MmxBossRushForeignWeakness(b.id,page,weapon);
-  if(!w) return;
   unsigned value=reaction?w->reaction[charged!=0]:w->damage[charged!=0];
   cpu->A=(uint16_t)((cpu->A&0xff00)|value);
   cpu->_flag_Z=!value;cpu->_flag_N=0;

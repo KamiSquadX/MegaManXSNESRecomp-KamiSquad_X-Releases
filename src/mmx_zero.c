@@ -825,7 +825,51 @@ static MmxZeroLegacyIntent legacy_intent_from_mapped(const uint8_t *r) {
   }
   return intent;
 }
+static void grow_charge(uint8_t *r) {
+  const unsigned previous_charge = state.charge;
+  const unsigned cap = legacy_charge_cap();
+  if (state.charge < cap) {
+    const uint64_t total = (uint64_t)state.modern.charge_fraction +
+        legacy_charge_rate();
+    const uint64_t advance = total >> 8;
+    const uint64_t next = (uint64_t)state.charge + advance;
+    state.modern.charge_fraction = (uint8_t)(total & 0xff);
+    if (next >= cap) {
+      state.charge = (uint16_t)cap;
+      state.modern.charge_fraction = 0;
+    } else {
+      state.charge = (uint16_t)next;
+    }
+  } else {
+    state.modern.charge_fraction = 0;
+  }
+  /* Feed X1's ordinary charging visuals at Zero's measured thresholds.
+   * Its release command is selected explicitly by the caller; X1 special
+   * weapons never enter this path and retain their own charge/upgrade rules. */
+  if (state.charge >= 21 && previous_charge < 21) r[0xbff] = 0x97;
+  else if (state.charge > 21 && state.charge < 81) r[0xbff] = 0x90;
+  else if (state.charge >= 81 && previous_charge < 81) r[0xbff] = 0x51;
+  else if (state.charge > 81) r[0xbff] = 0x40;
+  if (state.charge >= 141) { r[0xc03] = 1; r[0xc2a] = 4; }
+}
+/* Set on the frame a ladder burst fires its second shot, for the finisher
+ * window (the ground's opens on the burst's second shot). Transient: cleared
+ * at the start of every player tick, so it is not part of the saved state. */
+static uint8_t ladder_second_shot;
+bool MmxZeroLadderSecondShot(void) { return ladder_second_shot != 0; }
+static bool charge_retained(const uint8_t *r, unsigned action) {
+  /* A plain buster charge (no burst or swing; on a ladder, a burst's pending
+   * follow-ups too) outside death, the swap and anything that leaves the
+   * stage's gameplay mode. */
+  const bool ladder = action >= 0x24 && action <= 0x2a;
+  return !modern_behavior && (state.charge || ladder) &&
+      (!state.combo || ladder) && !state.burst && !state.slash &&
+      !state.swap_phase &&
+      r[0xd1] == 2 && r[0xd2] == 4 && (r[0xbcf] & 127) && !r[0xbdb] &&
+      action != 0x0c && action != 0x2c;
+}
 void MmxZeroPlayerTick(uint8_t r[0x20000]) {
+  ladder_second_shot = 0;
   if (!MmxZeroActive() || !r) return;
   unsigned action = r[0xbaa];
   bool stage = r[0xd1] == 2 && r[0xd2] == 4 && r[0xba9] == 2 &&
@@ -838,6 +882,84 @@ void MmxZeroPlayerTick(uint8_t r[0x20000]) {
    * nor fires during the knockback; the hold/release logic resumes after. */
   if (!playable && stage && action == 0x0e && state.charge &&
       !state.combo && !state.burst && !state.slash) return;
+  bool ladder_slash_started = false;
+  if (!playable && stage && (action == 0x28 || action == 0x2a) &&
+      !modern_behavior && !state.burst && !state.swap_phase) {
+    /* X3's Zero fires from a ladder. X1's ladder actions ($28/$2A) run its
+     * buster with their own firing pose, so each shot is handed over as a
+     * fire command, exactly as the ground's partial charges are: X1's charge
+     * state cleared (or X's own charged shot would fire), then the command.
+     * The burst's shots are class 3 (command 8): the first on release, the
+     * second on the next press, both in the ladder firing pose. The X3
+     * finisher and its wave are the airborne swing, as in a jump. */
+    MmxZeroLegacyIntent intent = legacy_intent_from_mapped(r);
+    if (state.charge >= 21 || (state.combo && state.saber_ready))
+      state.charge_phase = (uint8_t)((state.charge_phase + 1) % 88);
+    else state.charge_phase = 0;
+    track_burst_shots(r);
+    const MmxZeroExtension *ext = live_extension();
+    if (!state.slash && ext && ext->legacy_slash_request &&
+        ext->legacy_slash_request(r))
+      ladder_slash_started = start_slash(r);
+    if (state.slash && !ladder_slash_started) {
+      if (++state.slash > 44) { MmxZeroCancel(r); return; }
+    } else if (!state.slash && state.combo && intent.pressed) {
+      if (state.combo == 1) {
+        if (free_projectile(r) && !r[0x1f0d]) {
+          /* X1 refuses a charged command while a charged shot lives
+           * ($81:94AF checks $0C25), so the second shot is Zero's own, as
+           * the ground burst's is. It takes X1's ladder firing pose: the
+           * sequence ($4A), the shooting set ($0C17 = 0) and the pose timer
+           * ($0BF8) X1's own ladder shot sets, which return to the climb. */
+          state.combo = state.saber_ready ? 2 : 0;
+          clear_charge(r);
+          r[0xbbf] = 0x4a; r[0xc17] = 0; r[0xbf8] = 0x0f;
+          MmxZeroAnimationStart(0xba8, 0x4a);
+          state.facing = r[0xc11] & 64;
+          emit_burst(r);
+          ladder_second_shot = 1;
+        }
+      } else if (state.saber_ready && !state.shot_mask && !r[0xc25]) {
+        ladder_slash_started = start_slash(r);
+      }
+    } else if (!state.slash && !state.combo) {
+      if (intent.held) {
+        grow_charge(r);
+      } else if (state.charge) {
+        const unsigned tier = MmxZeroChargeTier(&state);
+        if (tier >= 8 && free_projectile(r) && !r[0x1f0d]) {
+          state.combo = 1; state.saber_ready = tier == 10;
+          clear_charge(r); r[0xc01] = 8;
+        } else if (tier >= 4) {
+          clear_charge(r); r[0xc01] = tier >= 6 ? 8 : 2;
+        }
+        reset_charge_progress();
+      }
+    }
+    if (state.slash) goto slash_update;
+    /* Between the burst's shots a press belongs to Zero, not X1's buster. */
+    if (state.combo) { r[0xbdf] &= (uint8_t)~64; r[0xbe3] &= (uint8_t)~64; }
+    return;
+  }
+  if (!playable && charge_retained(r, action)) {
+    /* Ladders, boss doors, scripted walks and event locks keep a held buster
+     * charge, as X1 keeps X's, and grabbing or leaving a ladder ($24/$26)
+     * keeps a burst's follow-ups too. The charge holds its level; a release
+     * waits for the first frame Zero can fire again, as it does after a hit.
+     * Show X1 a held button meanwhile, so its own buster never fires X's
+     * charged shot. On a ladder the charge keeps growing while held. */
+    if (action >= 0x24 && action <= 0x2a && !state.combo &&
+        legacy_intent_from_mapped(r).held)
+      grow_charge(r);
+    if (state.charge) {
+      r[0xbdf] |= 64; r[0xbe1] |= 64; r[0xbe3] &= (uint8_t)~64;
+    } else if (state.combo) {
+      r[0xbdf] &= (uint8_t)~64; r[0xbe3] &= (uint8_t)~64;
+    }
+    if (state.charge >= 21 || (state.combo && state.saber_ready))
+      state.charge_phase = (uint8_t)((state.charge_phase + 1) % 88);
+    return;
+  }
   if (!playable) { MmxZeroCancel(r); return; }
   bool pressed = (r[0xbe3] & 64) != 0;
   if (modern_behavior) {
@@ -904,31 +1026,7 @@ void MmxZeroPlayerTick(uint8_t r[0x20000]) {
     }
   } else if (!state.burst && !state.combo) {
     if (intent.held) {
-      const unsigned previous_charge = state.charge;
-      const unsigned cap = legacy_charge_cap();
-      if (state.charge < cap) {
-        const uint64_t total = (uint64_t)state.modern.charge_fraction +
-            legacy_charge_rate();
-        const uint64_t advance = total >> 8;
-        const uint64_t next = (uint64_t)state.charge + advance;
-        state.modern.charge_fraction = (uint8_t)(total & 0xff);
-        if (next >= cap) {
-          state.charge = (uint16_t)cap;
-          state.modern.charge_fraction = 0;
-        } else {
-          state.charge = (uint16_t)next;
-        }
-      } else {
-        state.modern.charge_fraction = 0;
-      }
-      /* Feed X1's ordinary charging visuals at Zero's measured thresholds.
-       * Its release command is selected explicitly below; X1 special weapons
-       * never enter this path and retain their own charge/upgrade rules. */
-      if (state.charge >= 21 && previous_charge < 21) r[0xbff] = 0x97;
-      else if (state.charge > 21 && state.charge < 81) r[0xbff] = 0x90;
-      else if (state.charge >= 81 && previous_charge < 81) r[0xbff] = 0x51;
-      else if (state.charge > 81) r[0xbff] = 0x40;
-      if (state.charge >= 141) { r[0xc03] = 1; r[0xc2a] = 4; }
+      grow_charge(r);
     } else if (intent.released) {
       unsigned tier = MmxZeroChargeTier(&state);
       if (tier >= 8 && free_projectile(r) && !r[0x1f0d]) {

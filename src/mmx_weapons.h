@@ -41,6 +41,8 @@ unsigned MmxWeaponsEnergyRead(unsigned address, unsigned original);
 /* KSX Zero's own weapon list. `active` returns the guest RAM while he is
  * the live player with Rakuhouha chosen, else NULL; `menu_choice` hears the
  * pause menu's confirmed item. NULL clears both. */
+/* The guest RAM the energy hooks read $0BDB from (sub tank protection). */
+void MmxWeaponsSetGuestRam(const uint8_t *ram);
 void MmxWeaponsSetKsx(uint8_t *(*active)(void), void (*menu_choice)(uint8_t *ram, unsigned item));
 bool MmxWeaponsEnergyStore(unsigned value, bool pickup);
 void MmxWeaponsEnergyOverflow(uint8_t ram[0x20000], unsigned index);

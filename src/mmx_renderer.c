@@ -1290,8 +1290,10 @@ static unsigned menu_glyph(unsigned c) {
  * X1's READY; the right column moves 8 px left so the longest names fit. */
 static const MmxRendererSkillMenu *skill_menu;
 void MmxRendererSetSkillMenu(const MmxRendererSkillMenu *menu) { skill_menu = menu; }
+/* Also on the X2/X3 pages, where KSX Zero has only his buster and ESCAPE.U
+ * (skill_item_owned): their weapons are not drawn at all. */
 static bool skill_menu_active(void) {
-  return skill_menu && !frame_weapons.menu_page && frame.ram &&
+  return skill_menu && frame.ram &&
       MmxZeroActive() && MmxWeaponsMenuVisible(frame.ram);
 }
 enum {
@@ -1308,7 +1310,8 @@ enum {
   SKILL_MENU_FONT = 0x1000      /* BG1 characters (word address) */
 };
 static bool skill_item_owned(unsigned item) {
-  return item == 0 || item == 9 || (item <= 8 && (frame.ram[0x1f86 + item * 2] & 0x40));
+  if (item == 0 || item == 9) return true;
+  return item <= 8 && !frame_weapons.menu_page && (frame.ram[0x1f86 + item * 2] & 0x40);
 }
 static bool skill_menu_rows(int by) {
   /* Rows 39-120: the five item rows and the line under ESCAPE.U's icon. */
@@ -1472,11 +1475,15 @@ static uint16_t weapon_menu_tile(unsigned tx, unsigned ty, uint16_t original) {
     /* Blank X1's names (KSX draws its own) and every energy bar but the
      * buster's, Rakuhouha's and ESCAPE.U's. */
     unsigned column = tx >= 17, local = tx - (column ? 13 : 0), item = (ty - 5) / 2 + column * 5;
+    /* X2/X3 pages: items 1-8 (icon, bar and name) are left empty. */
+    if (frame_weapons.menu_page && item >= 1 && item <= 8 && local >= 4 && local <= 16)
+      return 0;
     if ((ty & 1) && item <= 9 && skill_menu->labels[item] && local >= 7 && local <= 16)
       return 0;
     if (!(ty & 1) && item <= 8 && !(skill_menu->bar_items & (1u << item)) &&
         local >= 6 && local <= 14)
       return 0;
+    if (frame_weapons.menu_page) return original;
   }
   if (!frame_weapons.menu_page || !MmxWeaponsMenuVisible(frame.ram) || ty < 5 || ty > 14) return original;
   unsigned column = tx >= 17, local = tx - (column ? 13 : 0), item = (ty - 5) / 2 + column * 5;
@@ -1499,7 +1506,8 @@ static uint16_t weapon_menu_tile(unsigned tx, unsigned ty, uint16_t original) {
   return original;
 }
 static int weapon_menu_icon(int x, int y) {
-  if (!frame_weapons.menu_page || !MmxWeaponsMenuVisible(frame.ram) || y < 40 || y >= 120) return -1;
+  if (!frame_weapons.menu_page || !MmxWeaponsMenuVisible(frame.ram) || y < 40 || y >= 120 ||
+      skill_menu_active()) return -1;
   int column = x >= 136, left = column ? 136 : 32;
   if (x < left || x >= left + 16) return -1;
   unsigned row = (y - 40) / 16, item = row + column * 5;

@@ -444,6 +444,12 @@ static MmxSaberCollisionWindow air_collision = {
     NULL, {0}, 0x37f40, "$37F40", false, false, false};
 static MmxSaberCollisionWindow ksx_collision = {
     NULL, {0}, 0x37a44, "$37A44", false, false, false};
+/* The KSX box last written to that record. Co-op reinstalls the records on
+ * every seat change (MmxZeroSetCollisionRom), and enemies are hit-tested
+ * after the other seat's turn, so the record must come back with this box
+ * rather than empty: an empty record ($FF) never overlaps anything. */
+static uint8_t ksx_last_box[40];
+static bool ksx_last_box_valid;
 static bool ksx_held;
 static unsigned collision_warnings;
 /* The native positive path reads $86:EF37 through the collision ROM. Keep
@@ -993,8 +999,10 @@ void MmxSaberAttackCollisionRom(uint8_t *rom, size_t size) {
   MmxSaberHitboxDebugSetRom(rom, size);
   bounds_records_for_window(ground, MMX_SABER_ATTACK_BOUNDS_POINTER);
   bounds_records_for_window(air, MMX_SABER_AIR_BOUNDS_POINTER);
-  /* KSX's record is written per frame (ksx_publish_box). */
+  /* KSX's record is written per frame (ksx_publish_box); a seat change
+   * puts back the last one. */
   memset(ksx, 255, sizeof(ksx));
+  if (ksx_last_box_valid) memcpy(ksx, ksx_last_box, sizeof(ksx));
   collision_window_update(&ground_collision, rom, size, ground);
   collision_window_update(&air_collision, rom, size, air);
   collision_window_update(&ksx_collision, rom, size, ksx);
@@ -1171,7 +1179,15 @@ bool MmxSaberAttackStartKsx(MmxSaberPadKind kind, uint8_t facing) {
    * animation; other attacks give way only in recovery. */
   const bool slash = state.kind == SABER_KIND_GROUND1 ||
       state.kind == SABER_KIND_GROUND2 || state.kind == SABER_KIND_GROUND3;
-  if (state.phase != SABER_PHASE_IDLE && !slash &&
+  /* Skill chain, at any point: Juuhazan -> Youdantotsu -> Raikousen ->
+   * Rakuhouha. Up + Shot 1's Kuuenbu replaces the air slash Shot 1 has
+   * just started. */
+  const bool chain =
+      (state.kind == SABER_KIND_JUUHAZAN && kind == SABER_KIND_YOUDANTOTSU) ||
+      (state.kind == SABER_KIND_YOUDANTOTSU && kind == SABER_KIND_RAIKOUSEN) ||
+      (state.kind == SABER_KIND_RAIKOUSEN && kind == SABER_KIND_RAKUHOUHA) ||
+      (state.kind == SABER_KIND_AIR && state.tick <= 1 && kind == SABER_KIND_KUUENBU);
+  if (state.phase != SABER_PHASE_IDLE && !slash && !chain &&
       (state.phase != SABER_PHASE_RECOVERY ||
        (MmxSaberAttackIsKsxKind(state.kind) &&
         !(state.kind == SABER_KIND_HYOURETSUZAN && state.index == 1))))
@@ -1392,6 +1408,8 @@ static bool ksx_publish_box(int cx, int cy, unsigned hw, unsigned hh) {
   window->bytes[2] = (uint8_t)hw;
   window->bytes[3] = (uint8_t)hh;
   memcpy(window->rom + window->offset, window->bytes, 4);
+  memcpy(ksx_last_box, window->bytes, sizeof(ksx_last_box));
+  ksx_last_box_valid = true;
   return true;
 }
 
@@ -1762,13 +1780,14 @@ static unsigned saber_attack_damage_core(uint8_t *ram, unsigned enemy,
 static unsigned attack_damage(uint8_t *ram, unsigned enemy,
                               unsigned projectile, unsigned value);
 
-/* A weakness hit (a skill against its Maverick's victim, a Rekkyoudan
- * slash against Sting Chameleon) deals at least X1's weakness damage. */
+/* A weakness hit (a skill against a target weak to its weapon, a
+ * Rekkyoudan slash against a target weak to Boomerang Cutter) deals at
+ * least that weapon's X1 damage, `value`. */
 unsigned MmxSaberAttackDamage(uint8_t *ram, unsigned enemy,
                               unsigned projectile, unsigned value) {
   const unsigned damage = attack_damage(ram, enemy, projectile, value);
   if (damage && !(damage & 128) && !(value & 128) && enemy_slot_valid(enemy)) {
-    const unsigned weak = MmxSaberKsxWeaknessDamage(ram, enemy, projectile);
+    const unsigned weak = MmxSaberKsxWeaknessDamage(ram, enemy, projectile, value);
     if (weak > damage) return weak;
   }
   return damage;
@@ -1866,6 +1885,18 @@ unsigned MmxSaberAttackHitbox(const uint8_t *ram, unsigned enemy,
       (state.hit_slots & (1u << ((enemy - 0xe68) / 64))))
     return 0;
   return value;
+}
+
+/* X1's projectile loop ($84:9B43) stops testing a shot for the rest of the
+ * frame once one enemy answers it, and an immune enemy answers with its
+ * deflect response ($84:9E50) and no damage, so it never joins hit_slots.
+ * Left alone, one immune enemy overlapping a swing (an igloo under
+ * Ryuenjin) would keep every enemy in a later slot from being tested on
+ * every frame of the swing. The swing is done with it after one deflect. */
+void MmxSaberAttackNoteImmune(const uint8_t *ram, unsigned enemy,
+                              unsigned projectile) {
+  if (saber_projectile_owned(ram, projectile) && enemy_slot_valid(enemy))
+    state.hit_slots |= (uint16_t)(1u << ((enemy - 0xe68) / 64));
 }
 
 uint16_t MmxSaberAttackHitSlots(void) {

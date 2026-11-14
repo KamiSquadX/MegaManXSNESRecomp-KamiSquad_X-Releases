@@ -6,6 +6,9 @@
 
 uint8_t MmxWidePolicy_CrusherTileBase(const uint8_t ram[0x20000], uint16_t object, uint8_t base);
 bool MmxWidePolicy_IsStageScene(const uint8_t ram[0x20000]);
+/* X1's password screen: title mode ($38 = 2) with its PASS WORD row
+ * ($3C = 1) chosen ($39 = 4) and opened ($3A >= 1). */
+bool MmxWidePolicy_IsPasswordScreen(const uint8_t ram[0x20000]);
 uint16_t MmxWidePolicy_FlyerLeash(unsigned margin);
 bool MmxWidePolicy_RideArmorCull(uint16_t distance, unsigned margin);
 bool MmxWidePolicy_ShotCull(const uint8_t ram[0x20000], uint16_t object,

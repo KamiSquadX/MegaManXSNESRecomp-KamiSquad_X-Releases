@@ -46,7 +46,9 @@ inactive online.
 
 The host can open the save-state menu with **Select+R**. Every player pauses on
 the same frame and sees the menu; only the host's controller drives it, and the
-other players see the host's cursor move. Saving writes the state on every
+other players see the host's cursor move. The menu reads the controller's own
+buttons (A loads, X saves, B goes back), as it does offline; the game's KEY
+CONFIG does not apply to it. Saving writes the state on every
 player's machine and checks the copies against the host's; a player whose copy
 differs is sent the host's state and thumbnail. Loading checks (and if needed
 sends) the host's slot first, then every player loads it together. Closing the

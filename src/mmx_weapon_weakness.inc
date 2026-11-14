@@ -1,9 +1,12 @@
 /* Explicit X1 targets and source attacks. Damage references the live native
  * row; reaction classes are separate so a weakness need not change element.
- * X1 normal classes $07..0E have charged counterparts nine entries later. */
+ * X1 normal classes $07..0E have charged counterparts nine entries later.
+ * Each Maverick's row has its weakness in its weapon's column: Kuwanger's
+ * $07 (X's Homing Torpedo shots carry $07), Mandrill's $0E ($88:9DF8
+ * freezes on $0E/$17), Penguin's $0A (Fire Wave). */
 enum {
-  X1_ICE=0x07, X1_SHIELD=0x08, X1_TORNADO=0x09, X1_FIRE=0x0a,
-  X1_STING=0x0b, X1_SPARK=0x0c, X1_CUTTER=0x0d, X1_TORPEDO=0x0e,
+  X1_TORPEDO=0x07, X1_SHIELD=0x08, X1_TORNADO=0x09, X1_FIRE=0x0a,
+  X1_STING=0x0b, X1_SPARK=0x0c, X1_CUTTER=0x0d, X1_ICE=0x0e,
   KEEP_ATTACK_CLASS=0xff
 };
 enum {
@@ -33,9 +36,20 @@ static const BossWeakness boss_weaknesses[] = {
 };
 /* Which weapon fired player shot `d`: page 0 is X1 (weapon in X1 menu order,
  * Homing Torpedo = 1), 1 is X2 and 2 is X3, by native weapon id. */
+static MmxWeaponsIdentityOverride identity_override;
+void MmxWeaponsSetShotIdentityOverride(MmxWeaponsIdentityOverride override) {identity_override=override;}
+unsigned MmxWeaponsShotX1Weapons(const uint8_t *r,unsigned d,unsigned weapons[2]) {
+  if(!identity_override || !r || !slot_valid(d) || !r[d]) return 0;
+  return identity_override(r,d,weapons);
+}
 bool MmxWeaponsShotIdentity(const uint8_t *r,unsigned d,unsigned *page_out,unsigned *weapon_out,unsigned *charged) {
   if(!r || !slot_valid(d) || !r[d]) return false;
   unsigned page=0,weapon=0;*charged=0;
+  {
+    /* A character's hit standing in for an X1 weapon (KSX Zero's skills). */
+    unsigned weapons[2];
+    if(MmxWeaponsShotX1Weapons(r,d,weapons)) {*page_out=0;*weapon_out=weapons[0];return true;}
+  }
   if(owned(r,d)) {
     const MmxWeaponShot *s=combat.shots+slot_index(d);
     if(!s->active) return false;
@@ -53,13 +67,16 @@ bool MmxWeaponsShotIdentity(const uint8_t *r,unsigned d,unsigned *page_out,unsig
   }
   *page_out=page;*weapon_out=weapon;return true;
 }
+/* Relocated X2/X3 bodies keep an X1 boss class byte for range safety only;
+ * Boss Rush owns their weaknesses (mmx_boss_rush_runtime.c). */
+static bool relocated_body(unsigned enemy) {
+  int seat=MmxBossRushOwner(enemy);
+  return seat>=0 && !MmxBossRushNative(MmxBossRushGetState().bosses[seat].id);
+}
 static const BossWeakness *boss_weakness(const uint8_t *r,unsigned enemy,unsigned d,unsigned *charged) {
   if(!MmxWeaponsEnabled() || !r || enemy<0xe68 || enemy>=0x1228 ||
       (enemy-0xe68)%64 || !r[enemy] || !slot_valid(d) || !r[d]) return NULL;
-  /* Relocated X2/X3 bodies keep an X1 boss class byte for range safety only;
-   * Boss Rush owns their weaknesses (mmx_boss_rush_runtime.c). */
-  int seat=MmxBossRushOwner(enemy);
-  if(seat>=0 && !MmxBossRushNative(MmxBossRushGetState().bosses[seat].id)) return NULL;
+  if(relocated_body(enemy)) return NULL;
   unsigned page=0,weapon=0;
   if(!MmxWeaponsShotIdentity(r,d,&page,&weapon,charged)) return NULL;
   for(unsigned i=0;i<sizeof(boss_weaknesses)/sizeof(boss_weaknesses[0]);++i) {
@@ -71,14 +88,15 @@ static const BossWeakness *boss_weakness(const uint8_t *r,unsigned enemy,unsigne
 static MmxWeaponsContactOverride contact_override;
 void MmxWeaponsSetContactClassOverride(MmxWeaponsContactOverride override) {contact_override=override;}
 unsigned MmxWeaponsContactClass(const uint8_t *r,unsigned enemy,unsigned d,unsigned original,bool reaction) {
-  unsigned charged;
-  if(contact_override) {
-    unsigned value=contact_override(r,enemy,d,original,reaction);
-    if(value!=original) return value;
-  }
+  unsigned charged,own=original;
+  /* Boss Rush's hook ($84:9E1A) already chose a relocated body's class. */
+  if(contact_override && r && enemy>=0xe68 && enemy<0x1228 && !relocated_body(enemy))
+    own=contact_override(r,enemy,d,original,reaction);
+  /* An explicit weakness rule outranks a character's own class: KSX Zero's
+   * Raikousen is Electric Spark, which this pack makes Octopus's weakness. */
   const BossWeakness *w=boss_weakness(r,enemy,d,&charged);
-  if(!w) return original;
+  if(!w) return own;
   unsigned value=reaction ? w->reaction[charged] : w->damage[charged];
-  if(value==KEEP_ATTACK_CLASS) value=r[d+10];
+  if(value==KEEP_ATTACK_CLASS) return own!=original ? own : (original&0xff00)|r[d+10];
   return (original&0xff00)|value;
 }

@@ -1,5 +1,10 @@
 #include "mmx_wide_policy.h"
 
+bool MmxWidePolicy_IsPasswordScreen(const uint8_t ram[0x20000]) {
+  return ram && ram[0x38] == 2 && ram[0x39] == 4 && ram[0x3a] >= 1 &&
+      ram[0x3c] == 1;
+}
+
 bool MmxWidePolicy_IsStageScene(const uint8_t ram[0x20000]) {
   /* $80:997B: level setup, arrival, play, death and stage-clear all retain
    * the stage view. State $0A also holds it for 60 frames at substates 0/2;

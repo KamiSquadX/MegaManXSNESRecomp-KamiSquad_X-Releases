@@ -62,5 +62,10 @@ void MmxWeaponsSetContactClassOverride(MmxWeaponsContactOverride override);
 /* Which weapon fired a player shot: page 0 X1 (Homing Torpedo = 1, X1 menu
  * order), 1 X2, 2 X3 by native weapon id. False for buster or no shot. */
 bool MmxWeaponsShotIdentity(const uint8_t *ram,unsigned shot,unsigned *page,unsigned *weapon,unsigned *charged);
+/* A character's hit that counts as X1 weapons (KSX Zero's skills): fills up
+ * to two X1 weapon numbers, most specific first, and returns how many. */
+typedef unsigned (*MmxWeaponsIdentityOverride)(const uint8_t *ram,unsigned shot,unsigned weapons[2]);
+void MmxWeaponsSetShotIdentityOverride(MmxWeaponsIdentityOverride override);
+unsigned MmxWeaponsShotX1Weapons(const uint8_t *ram,unsigned shot,unsigned weapons[2]);
 unsigned MmxWeaponsDamage(uint8_t ram[0x20000], unsigned enemy, unsigned projectile, unsigned original);
 unsigned MmxWeaponsHitbox(const uint8_t ram[0x20000], unsigned enemy, unsigned projectile, unsigned original);

@@ -118,7 +118,7 @@ static MmxSaberFramePad sample_pad(const uint8_t *ram) {
    * Rakuhouha selected R2 is the Giga Attack instead (MmxSaberKsxPrePlayer),
    * so no shot reaches X1. */
   if (MmxSaberKsxEnabled())
-    pad.x_held = (sample_ext() & 0x01) != 0 && !MmxSaberKsxRakuhouhaSelected();
+    pad.x_held = (sample_ext() & 0x01) != 0 && !MmxSaberKsxBusterBlocked();
   return pad;
 }
 
@@ -351,8 +351,13 @@ static void pre_player(uint8_t *ram) {
   if (MmxSaberKsxEnabled() && !zero.hurt && !zero.dead_or_reset && !locked) {
     /* Raikousen: a ground dash, or Dash held in the air (X1 has no air
      * dash; the Mega Man X Engine allows Raikousen there). */
+    /* Youdantotsu owns Zero's motion, so Dash held there also counts:
+     * Raikousen cancels it. */
+    const MmxSaberAttackSnapshot now = MmxSaberAttackSnapshotGet();
     const bool ksx_dash = native_dash_active(ram) ||
-        (!zero.grounded && (ram[0x0bde] & MMX_SABER_NATIVE_DASH_BIT) != 0);
+        ((!zero.grounded || (now.kind == SABER_KIND_YOUDANTOTSU &&
+                             now.phase != SABER_PHASE_IDLE)) &&
+         (ram[0x0bde] & MMX_SABER_NATIVE_DASH_BIT) != 0);
     MmxSaberKsxInput ksx = {pad.pad, sample_ext(), zero.grounded,
                             native_wall_clinging(ram), ksx_dash,
                             ram[0x0c11]};
@@ -491,9 +496,11 @@ static bool state_load(const uint8_t in[]) {
 
 static unsigned saber_response(uint8_t *ram, unsigned enemy,
                                unsigned projectile, unsigned original) {
-  return MmxSaberKsxStaggerResponse(
+  const unsigned value = MmxSaberKsxStaggerResponse(
       ram, enemy, projectile, original,
       MmxSaberPriorityResponse(ram, enemy, projectile, original));
+  if (value & 0x80) MmxSaberAttackNoteImmune(ram, enemy, projectile);
+  return value;
 }
 
 static const MmxZeroExtension extension = {

@@ -274,6 +274,87 @@ static void ksx_enemy_shot_hook(CpuState *cpu, uint32_t pc) {
 }
 #endif
 
+/* Sting Chameleon's fallen rocks are terrain tiles ($34). One object ($18,
+ * state 6, $83:BD6A) walks the player shots and breaks rock tiles around
+ * each shot with a sprite ($0E): a 3x3 block of tiles from its hit area's
+ * centre, each one its own hit area touches ($83:BE4B). That block fits a
+ * buster shot, not a saber. So the saber takes one turn per 16x16 tile its
+ * hit area covers: for each, its shot stands at that tile's centre with a
+ * 1x1 hit area ($86:A72B) and a sprite, which breaks that tile alone when
+ * it is rock, and $83:BE25 steps X back to the saber's slot until the last
+ * tile. Its shot is then put back as it was (a break also sets its state
+ * $01 = 6). Generated code calls this at $83:BD6F and $83:BE25
+ * (tools/apply_saber_rock_hooks.py).
+ *
+ * Each turn costs the SNES CPU about 28,000 master cycles, and a frame has
+ * about 357,000: a slash over 25 tiles would take two frames and the game
+ * would drop frames as a real SNES does. The extra turns are this port's
+ * own, so each one but the last gives its CPU time back: the saber costs
+ * the game what any one shot does. */
+enum { SABER_ROCK_TILES = 48, SABER_ROCK_POINT_BOX = 0xa72b };
+static struct {
+  unsigned slot, count, next;
+  uint16_t x[SABER_ROCK_TILES], y[SABER_ROCK_TILES];
+  uint8_t bytes[64];
+  uint64_t turn_cycles, turn_master;   /* the CPU clock as a turn starts */
+} saber_rock;
+static void saber_rock_place(unsigned d) {
+  const unsigned i = saber_rock.next;
+  g_ram[d + 0x05] = (uint8_t)saber_rock.x[i];
+  g_ram[d + 0x06] = (uint8_t)(saber_rock.x[i] >> 8);
+  g_ram[d + 0x08] = (uint8_t)saber_rock.y[i];
+  g_ram[d + 0x09] = (uint8_t)(saber_rock.y[i] >> 8);
+  g_ram[d + 0x01] = 2;  /* a break sets 6; put back with the rest */
+  g_ram[d + 0x0e] = 1;
+  g_ram[d + 0x20] = (uint8_t)SABER_ROCK_POINT_BOX;
+  g_ram[d + 0x21] = (uint8_t)(SABER_ROCK_POINT_BOX >> 8);
+  g_ram[d + 0x30] = 0;
+}
+void MmxSaberRockHook(CpuState *cpu, uint32_t pc) {
+  extern bool MmxSaberAttackOwnsProjectile(const uint8_t *ram, unsigned projectile);
+  extern bool MmxSaberAttackObjectBox(const uint8_t *ram, unsigned object, int box[4]);
+  const unsigned d = cpu->X;
+  if (saber_rock.slot && saber_rock.slot != d) saber_rock.slot = 0;
+  if ((pc & 0xffff) == 0xbe25) {
+    if (!saber_rock.slot) return;
+    if (++saber_rock.next < saber_rock.count) {
+      cpu->X = (uint16_t)(d - 0x40);  /* the walk's next turn is this slot */
+      cpu->cycles = saber_rock.turn_cycles;   /* this turn was free */
+      cpu->master_cycles = saber_rock.turn_master;
+      return;
+    }
+    memcpy(g_ram + d, saber_rock.bytes, 64);
+    saber_rock.slot = 0;
+    return;
+  }
+  if (saber_rock.slot) {
+    saber_rock_place(d);
+    return;
+  }
+  int box[4];
+  if (d < 0x1228 || d >= 0x1428 || !g_ram[d] ||
+      !(g_ram[d + 0x20] | g_ram[d + 0x21]) ||
+      !MmxSaberAttackOwnsProjectile(g_ram, d) ||
+      !MmxSaberAttackObjectBox(g_ram, d, box) || box[0] < 0 || box[1] < 0)
+    return;
+  saber_rock.count = saber_rock.next = 0;
+  for (int ty = box[1] >> 4; ty <= box[3] >> 4; ++ty)
+    for (int tx = box[0] >> 4; tx <= box[2] >> 4; ++tx)
+      if (saber_rock.count < SABER_ROCK_TILES) {
+        saber_rock.x[saber_rock.count] = (uint16_t)(tx * 16 + 8);
+        saber_rock.y[saber_rock.count++] = (uint16_t)(ty * 16 + 8);
+      }
+  if (!saber_rock.count) return;
+  memcpy(saber_rock.bytes, g_ram + d, 64);
+  saber_rock.slot = d;
+  saber_rock.turn_cycles = cpu->cycles;
+  saber_rock.turn_master = cpu->master_cycles;
+  saber_rock_place(d);
+}
+static void saber_rock_hook(CpuState *cpu, uint32_t pc) {
+  MmxSaberRockHook(cpu, pc);
+}
+
 void MmxZeroRegisterHooks(void) {
   MmxZeroSetTerrainQuery(zero_terrain_solid);
 #if !MMX_VARIANT_JP
@@ -281,6 +362,8 @@ void MmxZeroRegisterHooks(void) {
    MmxSaberKsxSetTerrainQuery(zero_terrain_solid);}
   interp_bridge_add_pre_opcode_hook(0x049bc8, ksx_enemy_shot_hook);
   interp_bridge_add_pre_opcode_hook(0x849bc8, ksx_enemy_shot_hook);
+  interp_bridge_add_pre_opcode_hook(0x83bd6f, saber_rock_hook);
+  interp_bridge_add_pre_opcode_hook(0x83be25, saber_rock_hook);
 #endif
   MmxArmorSetTerrainQuery(zero_terrain_solid);
   const unsigned pcs[] = {0x009dca, 0x00d6a7, 0x00d76a, 0x01971f, 0x019796, 0x0198ff,

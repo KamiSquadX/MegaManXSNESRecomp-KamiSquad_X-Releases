@@ -57,7 +57,7 @@ id = "stagger_combos"
 label = "Stagger Combos"
 description = "While a Maverick is staggered by any player's hit, each different KSX Zero move that lands restaggers it. Repeating a move in the same combo meets the Maverick's invincibility instead and deals no damage."
 type = "boolean"
-default = true
+default = false
 [[option]]
 feature = "ksx-zero"
 id = "rakuhouha_energy"

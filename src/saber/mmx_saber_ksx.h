@@ -58,16 +58,23 @@ void MmxSaberKsxReset(void);
 void MmxSaberKsxSetTerrainQuery(bool (*solid)(const uint8_t *ram, int x, int y));
 
 /* Contact class for a KSX saber hit (MmxWeaponsContactClass override): a
- * move's own element where it is the target's weakness, else Boomerang
- * Cutter's once Rekkyoudan is learned (it cuts limbs), else unchanged. */
+ * skill hits as the X1 weapon it replaces, for both damage column and
+ * reaction; Rekkyoudan's moves hit as Boomerang Cutter where that serves
+ * better (mmx_saber_ksx.c ksx_class). Plain slashes keep their own class
+ * until Rekkyoudan is learned. */
 unsigned MmxSaberKsxContactClass(const uint8_t *ram, unsigned enemy,
                                  unsigned projectile, unsigned original,
                                  bool reaction);
-/* X1's damage for a KSX Zero hit the target is weak to (a skill against
- * its Maverick's victim, or a Rekkyoudan slash against Sting Chameleon);
- * 0 when it is not a weakness. */
+/* `value`, the X1 table damage this hit's class does, when the target is
+ * weak to it (its damage row favors that weapon above all others, or it is
+ * the skill's Maverick); 0 otherwise. The hit then deals at least that. */
 unsigned MmxSaberKsxWeaknessDamage(const uint8_t *ram, unsigned enemy,
-                                   unsigned projectile);
+                                   unsigned projectile, unsigned value);
+/* The X1 weapons (X1 menu order, Homing Torpedo = 1) a KSX hit counts as,
+ * for weakness rules keyed by weapon (Boss Rush's relocated bodies): the
+ * skill's weapon, then Boomerang Cutter when Rekkyoudan applies. */
+unsigned MmxSaberKsxShotWeapons(const uint8_t *ram, unsigned projectile,
+                                unsigned weapons[2]);
 /* Rekkyoudan learned: KSX Zero's saber is Black Zero's purple. */
 bool MmxSaberKsxPurpleSaber(void);
 
@@ -110,6 +117,8 @@ bool MmxSaberKsxEnemyShotHit(uint8_t *ram, unsigned projectile);
 /* KSX Zero's weapon: the buster or Rakuhouha, kept in KSX's own state (X1's
  * $0BDB stays on the buster, as with the X2/X3 packs). */
 bool MmxSaberKsxRakuhouhaSelected(void);
+/* R2 is not the buster: Rakuhouha is the player's chosen weapon. */
+bool MmxSaberKsxBusterBlocked(void);
 /* L/R pressed this frame ($0BE2 bits $30, consumed by the caller). */
 void MmxSaberKsxShoulders(uint8_t *ram, unsigned pressed);
 /* The pause menu closed on X1 menu item `item`. */

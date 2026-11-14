@@ -28,15 +28,18 @@ import java.util.Locale;
  * its "executable folder", so config.ini, rom.cfg, mods/ and saves/ all live
  * there (and can be reached over USB / adb). This screen copies the runtime
  * files from the APK into it, imports the player's own Mega Man X (USA) ROM
- * as mmx.sfc (named in rom.cfg) and, optionally, the Mega Man X3 (USA) ROM
- * that Zero, co-op and the X3 weapons are built from.
+ * as mmx.sfc (named in rom.cfg) and, optionally, the Mega Man X2 (USA) ROM
+ * (X2 weapons, armor and bosses) and the Mega Man X3 (USA) ROM that Zero,
+ * co-op and the X3 weapons are built from.
  */
 public final class SetupActivity extends Activity {
-    private static final int PICK_X = 1001, PICK_X3 = 1002;
-    private static final String X_ROM = "mmx.sfc", X3_ROM = "mmx3.sfc";
+    private static final int PICK_X = 1001, PICK_X3 = 1002, PICK_X2 = 1003;
+    private static final String X_ROM = "mmx.sfc", X2_ROM = "mmx2.sfc", X3_ROM = "mmx3.sfc";
     /* Normalized (copier header removed) SHA-256 of each supported dump. */
     private static final String X_SHA256 =
             "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32";
+    private static final String X2_SHA256 =
+            "f3246755f608a1e1dc9c848b61da3b824c7853b29b3be40df6fc7f2793a887ed";
     private static final String X3_SHA256 =
             "65b03268afac296330e8ff8d60dd0825879e13ed658b37713c034a3bd074f1d7";
 
@@ -76,6 +79,11 @@ public final class SetupActivity extends Activity {
         pickX.setOnClickListener(v -> pick(PICK_X));
         root.addView(pickX);
 
+        Button pickX2 = new Button(this);
+        pickX2.setText("Select Mega Man X2 (USA) ROM (optional: X2 weapons, armor and bosses)");
+        pickX2.setOnClickListener(v -> pick(PICK_X2));
+        root.addView(pickX2);
+
         Button pickX3 = new Button(this);
         pickX3.setText("Select Mega Man X3 (USA) ROM (optional: Zero, co-op, X3 weapons)");
         pickX3.setOnClickListener(v -> pick(PICK_X3));
@@ -96,6 +104,8 @@ public final class SetupActivity extends Activity {
         s.append(BuildConfig.VERSION_NAME).append("\n\n");
         s.append(romOk(X_ROM, X_SHA256) ? "Mega Man X ROM: ready\n"
                 : "Select your own Mega Man X (USA) ROM (.sfc or .smc) to play.\n");
+        s.append(romOk(X2_ROM, X2_SHA256) ? "Mega Man X2 ROM: ready\n"
+                : "Mega Man X2 (USA) ROM: not selected (needed for X2 weapons, armor and bosses).\n");
         s.append(romOk(X3_ROM, X3_SHA256) ? "Mega Man X3 ROM: ready\n"
                 : "Mega Man X3 (USA) ROM: not selected (needed for Zero, co-op and X3 weapons).\n");
         s.append("\nFiles: ").append(filesDir().getAbsolutePath());
@@ -113,28 +123,32 @@ public final class SetupActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        boolean x = requestCode == PICK_X;
-        if (!x && requestCode != PICK_X3) return;
+        final boolean x = requestCode == PICK_X, x2 = requestCode == PICK_X2;
+        if (!x && !x2 && requestCode != PICK_X3) return;
+        final String rom = x ? X_ROM : x2 ? X2_ROM : X3_ROM;
         try {
-            importRom(data.getData(), x ? X_ROM : X3_ROM, x ? X_SHA256 : X3_SHA256);
+            importRom(data.getData(), rom, x ? X_SHA256 : x2 ? X2_SHA256 : X3_SHA256);
             if (x) writeText(new File(filesDir(), "rom.cfg"), new File(filesDir(), X_ROM).getAbsolutePath() + "\n");
-            else linkX3();
+            else linkSource(x2 ? "x2" : "x3", rom);
             show(null);
         } catch (Exception e) {
-            show((x ? "That file is not Mega Man X (USA) (Rev 1). " : "That file is not Mega Man X3 (USA). ")
+            show((x ? "That file is not Mega Man X (USA) (Rev 1). "
+                    : x2 ? "That file is not Mega Man X2 (USA). " : "That file is not Mega Man X3 (USA). ")
                     + e.getMessage() + "\n\n" + summary());
         }
     }
 
-    /* The co-op, Zero and X3 weapon packages read the X3 ROM through the shared
-     * resource megaman-x.source.x3 in mods/preloaded/state.toml. Point it at the
-     * imported copy, keeping every other line the launcher wrote. */
-    private void linkX3() throws Exception {
+    /* The mods read the X2 and X3 ROMs through the shared resources
+     * megaman-x.source.x2 (X2 weapons, armor, bosses) and megaman-x.source.x3
+     * (co-op, Zero, X3 weapons) in mods/preloaded/state.toml. Point the one
+     * for `game` at the imported copy, keeping every other line the launcher
+     * wrote. */
+    private void linkSource(String game, String rom) throws Exception {
         File state = new File(filesDir(), "mods/preloaded/state.toml");
-        String path = new File(filesDir(), X3_ROM).getAbsolutePath();
-        String entry = "[[shared_resource]]\nid = \"megaman-x.source.x3\"\npath = \"" + path + "\"\n";
+        String path = new File(filesDir(), rom).getAbsolutePath();
+        String entry = "[[shared_resource]]\nid = \"megaman-x.source." + game + "\"\npath = \"" + path + "\"\n";
         String text = state.isFile() ? readText(state) : "format_version = 1\n";
-        text = text.replaceAll("(?s)\\[\\[shared_resource\\]\\]\\s*\\nid = \"megaman-x\\.source\\.x3\"\\s*\\npath = \"[^\"]*\"\\s*\\n?", "");
+        text = text.replaceAll("(?s)\\[\\[shared_resource\\]\\]\\s*\\nid = \"megaman-x\\.source\\." + game + "\"\\s*\\npath = \"[^\"]*\"\\s*\\n?", "");
         if (!text.endsWith("\n")) text += "\n";
         writeText(state, text + "\n" + entry);
     }

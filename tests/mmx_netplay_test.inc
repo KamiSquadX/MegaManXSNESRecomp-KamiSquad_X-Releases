@@ -98,7 +98,7 @@ static void netplay_policy_checks(const char *root, const char *rom, const char 
   check(!MmxCoopViewsActive(),"offline frames force Unified despite the catalog default");
   char behavior[32] = {0};
   snes_mod_runtime_feature_option_value_c(zero,"zero","behavior",behavior,sizeof(behavior));
-  check(!strcmp(behavior,"x3"),"X3 Behavior is the default");
+  check(!strcmp(behavior,"ksx"),"KSX Zero is the default behavior");
   check(linked->feature_set_option(linked->ctx,zero,"zero","behavior","modern"),"select Modern from Add Zero");
   snes_mod_runtime_feature_option_value_c(coop,"coop","behavior",behavior,sizeof(behavior));
   check(!strcmp(behavior,"modern"),"co-op shares the Modern selection");

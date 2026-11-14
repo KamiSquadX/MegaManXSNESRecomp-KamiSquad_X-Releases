@@ -179,7 +179,30 @@ void MmxOptionsHook(CpuState *cpu, uint32_t pc24) {
   else if ((pc24 & 0x7fffff) == 0x018767) hold_dash_hook(cpu, pc24);
 }
 
+/* Select on the password screen goes back to the title. $80:EF34 reads the
+ * password screen's presses ($AC); clearing $1E48 ends the password loop
+ * ($80:EE85), and its caller then leaves through OPTION MODE's exit
+ * ($80:9352: clear $39-$3C) instead of starting the game at $80:9344. */
+static bool password_cancel;
+static void password_input_hook(CpuState *cpu, uint32_t pc24) {
+  (void)pc24;
+  if (cpu->D != 0x1e48 || !(g_ram[0xac] & 0x20)) return;
+  g_ram[0x1e48] = 0;
+  g_ram[0xac] = 0;
+  password_cancel = true;
+}
+static void password_exit_hook(CpuState *cpu, uint32_t pc24) {
+  (void)cpu;
+  if (!password_cancel) return;
+  password_cancel = false;
+  /* $9354 skips the exit's STZ $38: title mode 2 stays, and the cleared
+   * $39 restarts the title from its setup state (not the intro). */
+  interp_bridge_pre_opcode_redirect((pc24 & 0xff0000) | 0x9354);
+}
+
 void MmxOptionsRegisterHooks(void) {
+  interp_bridge_add_pre_opcode_hook(0x80ef34, password_input_hook);
+  interp_bridge_add_pre_opcode_hook(0x809344, password_exit_hook);
   interp_bridge_add_pre_opcode_hook(0x819742, double_tap_hook);
   interp_bridge_add_pre_opcode_hook(0x818767, hold_dash_hook);
   interp_bridge_add_pre_opcode_hook(0x80ea07, screen_hook);

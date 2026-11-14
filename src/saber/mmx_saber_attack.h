@@ -150,6 +150,10 @@ unsigned MmxSaberAttackDamage(uint8_t *ram, unsigned enemy,
 unsigned MmxSaberAttackHitbox(const uint8_t *ram, unsigned enemy,
                               unsigned projectile, unsigned value);
 uint16_t MmxSaberAttackHitSlots(void);
+/* An immune (deflecting) response to the live swing: stop testing that
+ * enemy for the rest of the swing, so it cannot shield later slots. */
+void MmxSaberAttackNoteImmune(const uint8_t *ram, unsigned enemy,
+                              unsigned projectile);
 unsigned MmxSaberAttackCollisionWarningCount(void);
 unsigned MmxSaberAttackCueCount(void);
 

@@ -14,6 +14,7 @@ enum {
   /* SNES joypad word bits. */
   KSX_PAD_UP = 0x0800, KSX_PAD_DOWN = 0x0400,
   KSX_PAD_LEFT = 0x0200, KSX_PAD_RIGHT = 0x0100, KSX_PAD_X = 0x0040,
+  KSX_PAD_Y = 0x4000,
   /* GIGA ATTACK's ext code (mmx_key_config.h MMX_EXT_GIGA). */
   KSX_EXT_GIGA = 0x0c,
   /* A restagger must land within this many frames of the boss's last hit. */
@@ -89,6 +90,8 @@ typedef struct KsxState {
    * Rakuhouha for its length and restores the previous choice after it. */
   bool prev_r2;
   bool air_ryuenjin;        /* used since Zero last stood or clung after one */
+  bool air_raikousen;       /* likewise for Raikousen in the air */
+  bool prev_saber;          /* Y (Shot 1) held last frame */
   bool rakuhouha;
   bool giga_active;
   bool giga_prev;
@@ -195,6 +198,9 @@ void MmxSaberKsxPrePlayer(uint8_t *ram, MmxSaberKsxInput in) {
   for (unsigned i = 0; i < MMX_KSX_SKILL_COUNT; ++i)
     if (MmxSaberKsxLearned(ram, (MmxKsxSkill)i)) st.learned |= (uint8_t)(1u << i);
   special = (in.pad & KSX_PAD_X) != 0;
+  const bool saber = (in.pad & KSX_PAD_Y) != 0;
+  const bool saber_edge = saber && !st.prev_saber;
+  st.prev_saber = saber;
   giga = (in.ext & KSX_EXT_GIGA) == KSX_EXT_GIGA && in.ext != 0xff;
   special_edge = special && !st.prev_special;
   giga_edge = giga && !st.prev_giga;
@@ -215,7 +221,13 @@ void MmxSaberKsxPrePlayer(uint8_t *ram, MmxSaberKsxInput in) {
     const unsigned horizontal = in.pad & (KSX_PAD_LEFT | KSX_PAD_RIGHT);
     const bool air_up = !in.grounded && !in.dash && (in.pad & KSX_PAD_UP) &&
         !st.air_ryuenjin && learned(MMX_KSX_RYUENJIN);
-    if (in.dash) kind = SABER_KIND_RAIKOUSEN;
+    if (in.dash && (in.grounded || !st.air_raikousen)) {
+      /* Aimed by the held direction, as Youdantotsu is, also when it
+       * cancels another move. */
+      kind = SABER_KIND_RAIKOUSEN;
+      if (horizontal == KSX_PAD_LEFT || horizontal == KSX_PAD_RIGHT)
+        facing = horizontal == KSX_PAD_RIGHT ? 0x40 : 0;
+    } else if (in.dash) kind = SABER_KIND_NONE;  /* one Raikousen per jump */
     else if (in.grounded) {
       if (in.pad & KSX_PAD_UP) kind = SABER_KIND_RYUENJIN;
       else if (horizontal == KSX_PAD_LEFT || horizontal == KSX_PAD_RIGHT) {
@@ -232,6 +244,11 @@ void MmxSaberKsxPrePlayer(uint8_t *ram, MmxSaberKsxInput in) {
     if (kind != SABER_KIND_NONE &&
         !learned(MmxSaberKsxSkillForKind(kind)))
       kind = SABER_KIND_NONE;
+  } else if (saber_edge && !in.grounded && !in.wall && (in.pad & KSX_PAD_UP) &&
+             learned(MMX_KSX_KUUENBU)) {
+    /* Up + Shot 1 in the air is Kuuenbu too (it replaces the air slash
+     * Shot 1 has just started). */
+    kind = SABER_KIND_KUUENBU;
   }
   {
     /* Standing or clinging gives the jump's one Ryuenjin back, but not
@@ -239,12 +256,20 @@ void MmxSaberKsxPrePlayer(uint8_t *ram, MmxSaberKsxInput in) {
     const MmxSaberAttackSnapshot now = MmxSaberAttackSnapshotGet();
     const bool rising = now.kind == SABER_KIND_RYUENJIN &&
         now.phase != SABER_PHASE_IDLE;
-    if ((in.grounded || in.wall) && !rising) st.air_ryuenjin = false;
+    const bool dashing = now.kind == SABER_KIND_RAIKOUSEN &&
+        now.phase != SABER_PHASE_IDLE;
+    /* Hyouretsuzan's landing is drawn on its ice spike, with Zero's feet
+     * above the ground: only standing once it has ended is a landing. */
+    const bool stabbing = now.kind == SABER_KIND_HYOURETSUZAN &&
+        now.phase != SABER_PHASE_IDLE;
+    if ((in.grounded || in.wall) && !rising && !stabbing) st.air_ryuenjin = false;
+    if ((in.grounded || in.wall) && !dashing && !stabbing) st.air_raikousen = false;
   }
   if (kind != SABER_KIND_NONE && MmxSaberAttackStartKsx(kind, facing)) {
     begin_motion(ram);
     /* From the ground too: its rise is this jump's one Ryuenjin. */
     if (kind == SABER_KIND_RYUENJIN) st.air_ryuenjin = true;
+    if (kind == SABER_KIND_RAIKOUSEN && !in.grounded) st.air_raikousen = true;
     if (kind == SABER_KIND_RAKUHOUHA) {
       /* Select Rakuhouha for the move and spend its energy. */
       const unsigned energy = ram[KSX_GIGA_ENERGY] & 0x3f;
@@ -414,6 +439,10 @@ void MmxSaberKsxMotionPost(uint8_t *ram) {
           ram[0x0baa] = 8;
           ram[0x0bab] = 0;
           ram[0x0bc6] = 0x40;
+          /* Leaving a ladder: X1 clears its on-ladder latch ($64,x) on every
+           * native exit. Left set, the fall skips the floor probes and Zero
+           * drops through every floor below. */
+          ram[0x0c0c] = 0;
           st.lifted = true;
         }
         /* After the last lifted frame X1's air physics carries the full
@@ -457,6 +486,12 @@ static bool giga_running(void) {
  * roll does); during one, keep Zero drawn through the blink. */
 bool MmxSaberKsxRakuhouhaSelected(void) {
   return ksx_enabled && st.rakuhouha;
+}
+
+bool MmxSaberKsxBusterBlocked(void) {
+  /* The player's own choice: a Giga Attack started from the buster leaves
+   * R2 charging through it and after it. */
+  return ksx_enabled && (st.giga_active ? st.giga_prev : st.rakuhouha);
 }
 
 static void select_rakuhouha(uint8_t *ram, bool on) {
@@ -576,7 +611,8 @@ unsigned MmxSaberKsxGigaTargets(const uint8_t *ram, unsigned tick,
 /* ---- contact class ------------------------------------------------------ */
 
 /* The Maverick each skill's element is the weakness of (X1 object ids):
- * the weapon its own Maverick gave X, against the boss weak to it. */
+ * the weapon its own Maverick gave X, against the boss weak to it. The
+ * target's damage row (row_weakness) finds every other target weak to it. */
 static const uint8_t kSkillWeakBoss[MMX_KSX_SKILL_COUNT] = {
   0x02,  /* Ryuenjin (Fire Wave)          burns Chill Penguin */
   0x52,  /* Rakuhouha (Chameleon Sting)   Storm Eagle */
@@ -588,20 +624,24 @@ static const uint8_t kSkillWeakBoss[MMX_KSX_SKILL_COUNT] = {
   0x00,  /* Rekkyoudan is passive */
 };
 enum { KSX_STING_CHAMELEON = 0x0a };
-/* Each skill's element: its Maverick's weapon's X1 contact class, used for
- * both the damage row and the reaction (burn, freeze, shock), as the X2/X3
- * packs do in mmx_weapon_weakness.inc. */
+/* Each skill's element: its weapon's X1 shot class, which X's own shot of
+ * that weapon carries in +$0A. Every hit of the skill uses it, for the
+ * damage column of the target's row and for the reaction in $1F1D, so the
+ * skill meets everything as that weapon would: Mavericks, mini-bosses,
+ * enemies, and objects such as the igloos that only Fire Wave breaks. */
 static const uint8_t kSkillClass[MMX_KSX_SKILL_COUNT] = {
   0x0a,  /* Ryuenjin: Fire Wave */
   0x0b,  /* Rakuhouha: Chameleon Sting */
   0x0c,  /* Raikousen: Electric Spark */
   0x08,  /* Kuuenbu: Rolling Shield */
-  0x0e,  /* Hyouretsuzan: Shotgun Ice, as X's shot hits ($88:9DF8 freezes
-          * Spark Mandrill on $0E/$17) */
-  0x0e,  /* Youdantotsu: Homing Torpedo */
+  0x0e,  /* Hyouretsuzan: Shotgun Ice ($88:9DF8 freezes Spark Mandrill on
+          * $0E/$17) */
+  0x07,  /* Youdantotsu: Homing Torpedo */
   0x09,  /* Juuhazan: Storm Tornado */
   0x0d,  /* Rekkyoudan: Boomerang Cutter */
 };
+/* X1's eight weapon classes, uncharged ($07..$0E). */
+enum { KSX_WEAPON_CLASS_FIRST = 0x07, KSX_WEAPON_CLASS_LAST = 0x0e };
 
 static bool finisher_projectile(const uint8_t *ram, unsigned projectile) {
   return projectile >= 0x1228 && projectile < 0x1428 &&
@@ -622,65 +662,150 @@ static bool boomerang_move(MmxSaberPadKind kind) {
   }
 }
 
-/* The class a KSX Zero hit takes against `enemy` (0 = its own). *weak says
- * the target is weak to it: X1's weakness damage then applies. */
-static unsigned ksx_class(const uint8_t *ram, unsigned enemy, unsigned projectile,
-                          bool *weak) {
+/* What class `cls` does to `enemy` by its X1 damage row: -1 when the row
+ * makes it immune (bit 7) or cannot be read. */
+static int column(const uint8_t *ram, unsigned enemy, unsigned cls) {
+  unsigned v;
+  if (!MmxSaberAttackNativeTableValue(ram[enemy + 0x28], cls, &v)) return -1;
+  return (v & 0x80) ? -1 : (int)v;
+}
+
+/* The damage of the one X1 weapon the target's row favors above every
+ * other weapon (its weakness), or 0 when no single weapon stands out. */
+static int weakness_value(const uint8_t *ram, unsigned enemy) {
+  int best = 0;
+  bool unique = false;
+  for (unsigned c = KSX_WEAPON_CLASS_FIRST; c <= KSX_WEAPON_CLASS_LAST; ++c) {
+    const int v = column(ram, enemy, c);
+    if (v > best) {
+      best = v;
+      unique = true;
+    } else if (v == best) {
+      unique = false;
+    }
+  }
+  return unique ? best : 0;
+}
+
+/* The target's row makes weapon class `cls` its weakness: a Maverick's 3
+ * against 1s, the igloo's Fire Wave, Storm Tornado against the Sigma
+ * stages' bosses, and any mini-boss or enemy built the same way. */
+static bool row_weakness(const uint8_t *ram, unsigned enemy, unsigned cls) {
+  const int v = column(ram, enemy, cls);
+  return v > 0 && v == weakness_value(ram, enemy);
+}
+
+typedef struct KsxHit {
+  unsigned cls;     /* 0: the hit keeps its own class */
+  bool weak;        /* the target is weak to it: at least its damage */
+  bool keep_damage; /* immune to the class but not to the saber */
+} KsxHit;
+
+/* The class a KSX Zero hit takes against `enemy`. A skill always hits as
+ * its weapon. Rekkyoudan's moves hit as Boomerang Cutter where that is the
+ * target's weakness, and against bosses that are not weak to the move's
+ * own element (Boomerang Cutter cuts Mammoth's trunk and Octopus's
+ * tentacles); a plain slash, the finisher and the wave always cut. */
+static KsxHit ksx_class(const uint8_t *ram, unsigned enemy, unsigned projectile) {
   const MmxSaberAttackSnapshot s = MmxSaberAttackSnapshotGet();
   const bool saber = MmxSaberAttackOwnsProjectile(ram, projectile);
   const bool wave = !saber && MmxSaberWaveRuntimeOwns(ram, projectile);
   const bool finisher = !saber && !wave && finisher_projectile(ram, projectile);
   const uint8_t target = ram[enemy + 0x0a];
-  *weak = false;
-  if (!saber && !wave && !finisher) return 0;
+  KsxHit hit = {0, false, false};
+  unsigned element = 0;
+  bool element_weak = false;
+  int own;
+  if (!saber && !wave && !finisher) return hit;
+  own = column(ram, enemy, ram[projectile + 0x0a]);
   if (saber) {
     const MmxKsxSkill skill = MmxSaberKsxSkillForKind(s.kind);
-    if (skill < MMX_KSX_SKILL_COUNT && kSkillWeakBoss[skill] &&
-        kSkillWeakBoss[skill] == target) {
-      *weak = true;
-      return kSkillClass[skill];
+    if (skill < MMX_KSX_REKKYOUDAN) {
+      element = kSkillClass[skill];
+      element_weak = (kSkillWeakBoss[skill] && kSkillWeakBoss[skill] == target) ||
+          row_weakness(ram, enemy, element);
     }
   }
   if (learned(MMX_KSX_REKKYOUDAN) && (wave || finisher || boomerang_move(s.kind))) {
-    /* Cuts limbs (Mammoth's trunk, Octopus's tentacles); Sting Chameleon's
-     * weakness. */
-    *weak = target == KSX_STING_CHAMELEON;
-    return BOOMERANG_CLASS;
+    const bool cut_weak = target == KSX_STING_CHAMELEON ||
+        row_weakness(ram, enemy, BOOMERANG_CLASS);
+    const int cut = column(ram, enemy, BOOMERANG_CLASS);
+    bool cut_wins;
+    if (!element) cut_wins = true;
+    else if (element_weak) cut_wins = false;
+    else if (cut_weak) cut_wins = true;
+    else if (column(ram, enemy, element) < 0) cut_wins = cut >= 0;
+    else cut_wins = cut >= 0 && MmxWidePolicy_IsBossEncounter(target);
+    if (cut_wins) {
+      hit.cls = BOOMERANG_CLASS;
+      hit.weak = cut_weak;
+      hit.keep_damage = cut < 0 && own >= 0;
+      return hit;
+    }
   }
-  return 0;
+  if (!element) return hit;
+  hit.cls = element;
+  hit.weak = element_weak;
+  /* Never weaker than the saber: a target immune to the weapon but not to
+   * the saber takes the saber's damage (the reaction stays the weapon's). */
+  hit.keep_damage = column(ram, enemy, element) < 0 && own >= 0;
+  return hit;
+}
+
+static bool ksx_target(const uint8_t *ram, unsigned enemy) {
+  return ksx_enabled && ram && enemy >= KSX_ENEMY_FIRST && enemy < 0x1228 &&
+      (enemy & 63) == 0x28;
 }
 
 unsigned MmxSaberKsxContactClass(const uint8_t *ram, unsigned enemy,
                                  unsigned projectile, unsigned original,
                                  bool reaction) {
-  bool weak;
-  unsigned value;
-  if (!ksx_enabled || !ram || enemy < KSX_ENEMY_FIRST || enemy >= 0x1228 ||
-      (enemy & 63) != 0x28)
-    return original;
-  value = ksx_class(ram, enemy, projectile, &weak);
-  if (!value) return original;
+  KsxHit hit;
+  if (!ksx_target(ram, enemy)) return original;
+  hit = ksx_class(ram, enemy, projectile);
+  if (!hit.cls) return original;
   /* A restagger plays the ordinary stagger, unless the hit is the target's
    * weakness: that always keeps its element and reaction (Hyouretsuzan's
    * Shotgun Ice freezes Spark Mandrill, $87:8C81, mid-combo too). */
-  if (!weak && st.restagger && st.restagger_enemy == enemy &&
+  if (!hit.weak && st.restagger && st.restagger_enemy == enemy &&
       st.restagger_projectile == projectile)
     return original;
-  return reaction ? value : (original & 0xff00) | value;
+  if (reaction) return hit.cls;
+  return hit.keep_damage ? original : (original & 0xff00) | hit.cls;
 }
 
 unsigned MmxSaberKsxWeaknessDamage(const uint8_t *ram, unsigned enemy,
-                                   unsigned projectile) {
-  bool weak;
-  unsigned value = 0, element;
-  if (!ksx_enabled || !ram || enemy < KSX_ENEMY_FIRST || enemy >= 0x1228 ||
-      (enemy & 63) != 0x28)
-    return 0;
-  element = ksx_class(ram, enemy, projectile, &weak);
-  if (!weak || !MmxSaberAttackNativeTableValue(ram[enemy + 0x28], element, &value) ||
-      (value & 0x80))
-    return 0;
-  return value;
+                                   unsigned projectile, unsigned value) {
+  KsxHit hit;
+  int best;
+  if (!ksx_target(ram, enemy) || !value || (value & 0x80)) return 0;
+  hit = ksx_class(ram, enemy, projectile);
+  if (!hit.cls) return 0;
+  if (hit.weak && !hit.keep_damage) return value;
+  /* A Boss Rush rule gave a relocated X2/X3 body this hit's weapon: its
+   * column is the row's weakness column. */
+  best = weakness_value(ram, enemy);
+  return best && (int)value == best &&
+      (int)value != column(ram, enemy, ram[projectile + 0x0a]) ? value : 0;
+}
+
+unsigned MmxSaberKsxShotWeapons(const uint8_t *ram, unsigned projectile,
+                                unsigned weapons[2]) {
+  const MmxSaberAttackSnapshot s = MmxSaberAttackSnapshotGet();
+  bool saber, wave, finisher;
+  unsigned count = 0;
+  if (!ksx_enabled || !ram) return 0;
+  saber = MmxSaberAttackOwnsProjectile(ram, projectile);
+  wave = !saber && MmxSaberWaveRuntimeOwns(ram, projectile);
+  finisher = !saber && !wave && finisher_projectile(ram, projectile);
+  if (saber) {
+    const MmxKsxSkill skill = MmxSaberKsxSkillForKind(s.kind);
+    if (skill < MMX_KSX_REKKYOUDAN) weapons[count++] = kSkillWeapon[skill];
+  }
+  if (learned(MMX_KSX_REKKYOUDAN) && (wave || finisher ||
+                                     (saber && boomerang_move(s.kind))))
+    weapons[count++] = kSkillWeapon[MMX_KSX_REKKYOUDAN];
+  return count;
 }
 
 /* ---- Rekkyoudan: enemy shots ------------------------------------------- */

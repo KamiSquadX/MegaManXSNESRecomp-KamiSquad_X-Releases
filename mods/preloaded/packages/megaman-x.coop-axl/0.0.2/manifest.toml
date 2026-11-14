@@ -62,7 +62,7 @@ id = "behavior"
 label = "Zero behavior"
 description = "Shared with Add Zero. Modern replaces Zero's buster with a direct saber and adds a double jump and air dash. Saber Zero (by RaphaelAzev) adds a Y-button Z-Saber with a 3-hit ground combo, air, wall and dash slashes, and the X3 finisher wave; tune it with Saber Zero settings. Special weapons remain available. KSX Zero (by KamiSquad_X, Saber Zero as the base) keeps the Y-button saber, moves the buster to R2, and learns Special Moves (X) and a Giga Attack (L2) from defeated Mavericks instead of special weapons; tune it with KSX Zero settings."
 type = "choice"
-default = "x3"
+default = "ksx"
 [[option.choice]]
 value = "x3"
 label = "X3 Behavior"

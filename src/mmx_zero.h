@@ -133,6 +133,9 @@ unsigned MmxZeroHeadBreakY(const uint8_t ram[0x20000], unsigned object, unsigned
 void MmxZeroPlayerTick(uint8_t ram[0x20000]);
 void MmxZeroPlayerEnd(uint8_t ram[0x20000]);
 unsigned MmxZeroChargeTier(const MmxZeroState *snapshot);
+/* True on the frame a ladder burst fired its second shot (Zero's own,
+ * in X1's ladder firing pose); the X3 finisher window opens on it. */
+bool MmxZeroLadderSecondShot(void);
 void MmxZeroAnimationStart(unsigned object, unsigned sequence);
 void MmxZeroAnimationAdvance(unsigned object);
 unsigned MmxZeroMuzzle(const uint8_t ram[0x20000], unsigned object,

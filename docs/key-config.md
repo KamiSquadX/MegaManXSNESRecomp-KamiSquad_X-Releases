@@ -50,7 +50,9 @@ control to assign. **DEFAULT** restores the list above, **EXIT** or **cancel**
 returns to the title. The choices are saved in `key_config.ini`.
 
 Face Button Left (Y on the SNES layout) is both shot and menu confirm, so on
-menus it confirms like Start does. Actions that X1 itself has no use for yet
+menus it confirms like Start does, except on the password screen, where it
+only changes a digit and Start alone submits. Select on the password screen
+returns to the title. Actions that X1 itself has no use for yet
 (shot2, armor ability, select buster, the weapon wheel, giga attack) are
 delivered to the game for characters such as KSX Zero (docs/ksx-zero.md):
 shot2 is his Special Move, armor ability his buster and giga attack his Giga

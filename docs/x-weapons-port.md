@@ -102,7 +102,12 @@ and X1 ownership filtering after returning to its page.
 
 Bounded generated/interpreter hooks virtualize the pause inventory reads and
 selection. X1 progression/energy stays untouched. An extended selection uses
-native buster resources as a safe underlying actor. The current
+native buster resources as a safe underlying actor. X1's energy routines (the
+HUD bar, the pickup refill) index `$1F86,Y`/`$1F85,Y` with `$0BDB`; with the
+buster selected those are sub tanks 3 and 4. A routine started under the
+redirection can finish on a frame without it (a co-op seat change at a stage
+start), so with `$0BDB` = 0 the hooks report a full, unmarked slot and skip
+the store: sub tank 4 is never rewritten to `$40` (not owned). The current
 implementation includes normal and charged gameplay for all sixteen weapons.
 
 The game save chunk is version 13 when extended weapons are enabled; legacy

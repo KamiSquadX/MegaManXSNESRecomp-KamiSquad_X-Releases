@@ -263,7 +263,9 @@ void MmxKeyConfigMapSeat(int seat, uint16_t *snes, uint8_t *ext) {
   if (action_held(phys, MMX_KEY_GIGA)) x |= MMX_EXT_GIGA;
   /* X1's menus confirm with Start. Outside a stage (title, stage select,
    * password, options) and on the pause menu, menu confirm is Start too. */
-  if ((x & MMX_EXT_CONFIRM) &&
+  /* Not on the password screen: there the confirm button is also a digit
+   * button (it would change a digit and submit at once); Start submits. */
+  if ((x & MMX_EXT_CONFIRM) && !MmxWidePolicy_IsPasswordScreen(g_ram) &&
       (!MmxWidePolicy_IsStageScene(g_ram) || MmxWeaponsMenuVisible(g_ram)))
     out |= SNES_PAD_START;
   /* Never all eight at once: that is KEY CONFIG's close signal. */

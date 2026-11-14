@@ -292,7 +292,7 @@ Hadouken capsule also grants Gold Armor and its enhancements. The mod is off
 by default and has passed preliminary playtests.
 
 Select **Modern** under **Zero behavior** in either Zero mod for saber combat
-and extra aerial movement. **X3 Behavior** is the default. **Add Zero** and
+and extra aerial movement. **KSX Zero** is the default. **Add Zero** and
 **X / Zero Co-op** are alternatives; enabling one disables the other.
 
 All Zero styles can break blocks with their head and feet from the start,

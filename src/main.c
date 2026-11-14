@@ -128,6 +128,7 @@ static void MmxBeforeFrame(void) {
   if (g_snes->cart) {
     MmxZeroSetCollisionRom(g_snes->cart->rom, g_snes->cart->romSize);
     MmxWeaponsCollisionRom(g_snes->cart->rom, g_snes->cart->romSize);
+    MmxWeaponsSetGuestRam(g_ram);
     MmxAxlCollisionRom(g_snes->cart->rom, g_snes->cart->romSize);
     MmxCoopHostFrame();
     MmxBossRushHostFrame();

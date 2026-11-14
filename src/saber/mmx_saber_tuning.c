@@ -139,7 +139,7 @@ static MmxSaberTuningOption k_options[] = {
   {"saber_swing_volume", 50, 0, 200, &g_tuning.saber_swing_volume},
   {"show_hitboxes", 0, 0, 1, &g_tuning.show_hitboxes, true},
   {"start_all_upgrades", 0, 0, 1, &g_tuning.start_all_upgrades, true},
-  {"stagger_combos", 1, 0, 1, &g_tuning.stagger_combos, true},
+  {"stagger_combos", 0, 0, 1, &g_tuning.stagger_combos, true},
   {"rakuhouha_energy", 4, 0, 28, &g_tuning.rakuhouha_energy},
   {"black_slash1_damage", -1, -1, 32,
    &g_tuning.black_damage[MMX_SABER_TUNING_DAMAGE_SLASH1]},

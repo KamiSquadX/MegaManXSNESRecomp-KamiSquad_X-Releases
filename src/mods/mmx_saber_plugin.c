@@ -67,6 +67,11 @@ static unsigned ksx_contact_class(const uint8_t *ram, unsigned enemy,
   return MmxSaberKsxContactClass(ram, enemy, projectile, original, reaction);
 }
 
+static unsigned ksx_shot_weapons(const uint8_t *ram, unsigned shot,
+                                 unsigned weapons[2]) {
+  return MmxSaberKsxShotWeapons(ram, shot, weapons);
+}
+
 /* KSX Zero's weapon list for X1's HUD and pause menu (MmxWeaponsSetKsx):
  * only while Zero is the live player, never for X's seat. */
 /* With only the developer hitbox overlay on, add Rakuhouha's per-shard
@@ -354,6 +359,7 @@ static bool saber_activate(const char *package, const char *feature, bool coop,
   g_ksx_active = false;
   MmxSaberKsxSetEnabled(false);
   MmxWeaponsSetContactClassOverride(NULL);
+  MmxWeaponsSetShotIdentityOverride(NULL);
   MmxSaberSfxSetVolume(MmxSaberTuningSaberSwingVolume());
   MmxSaberComboSetWindowFrames((unsigned)MmxSaberTuningFinisherWindowFrames());
   release_saber_assets();
@@ -391,6 +397,7 @@ static bool saber_activate(const char *package, const char *feature, bool coop,
   g_ksx_active = ksx;
   MmxSaberKsxSetEnabled(ksx);
   MmxWeaponsSetContactClassOverride(ksx ? ksx_contact_class : NULL);
+  MmxWeaponsSetShotIdentityOverride(ksx ? ksx_shot_weapons : NULL);
   MmxZeroSetExtension(MmxSaberFrameExtension());
   g_mmx_saber_enabled = true;
   MmxRendererSetPlayerOverlayProvider(saber_overlay_provider);
@@ -440,6 +447,7 @@ static void reset(void) {
   g_ksx_active = false;
   MmxSaberKsxSetEnabled(false);
   MmxWeaponsSetContactClassOverride(NULL);
+  MmxWeaponsSetShotIdentityOverride(NULL);
   MmxSaberFrameSetExtSource(NULL);
   MmxRendererSetSkillMenu(NULL);
   MmxRendererSetKsxHud(NULL, NULL);
