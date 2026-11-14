@@ -92,8 +92,13 @@ is blocked with X1's deflect sound. A Giga Attack started from the buster
 leaves the charge alone: R2 held keeps charging through it and after it, and
 no shot fires until R2 is let go.
 
-A buster charge survives ladders, boss doors, scripted walks and event locks,
-as X's does. On a ladder it keeps growing while R2 is held, and letting go
+A buster charge survives ladders and boss doors, and nothing else: through a
+door it lasts from the shutter opening (`$18`, with the stage tasks paused at
+`$1F13` but no refill `$1F19`, Heart Tank upgrade or defeated boss `$1F0C`)
+through the walk (`$1C`) and the boss's intro (`$1E` with a boss in the
+room). A capsule's dialog, a refill, the boss's defeat and every other event
+lock drop it. During the intro Zero does not show X1 a held button, since the
+intro's text reads that button to skip ahead. On a ladder it keeps growing while R2 is held, and letting go
 fires from the ladder, as X3's Zero does: X1's ladder actions (`$28`/`$2A`)
 run the buster with their own firing pose, so the release is the ground's
 (X1's charge state cleared, Zero's shot handed over as a fire command). The
@@ -103,9 +108,9 @@ window. X1 refuses a charged command while a charged shot lives (`$81:94AF`
 checks `$0C25`), so the second shot is Zero's own object, as the ground
 burst's is, shown in X1's ladder firing pose (sequence `$4A`, shooting set
 `$0C17` = 0, pose timer `$0BF8`). The finisher is the airborne swing, as in
-a jump. A burst's follow-ups survive grabbing or leaving the ladder. There,
-and everywhere else, the charge holds its level and a release waits, as it
-does during a hit, for the first frame Zero can fire again (the door
+a jump. A burst's follow-ups survive grabbing or leaving the ladder. There
+and at a door, the charge holds its level and a release waits, as it does
+during a hit, for the first frame Zero can fire again (the door or intro
 finishing).
 
 **Rekkyoudan** turns every saber attack Black Zero's purple and gives the

@@ -1,5 +1,6 @@
 #include "mmx_zero.h"
 #include "mmx_armor.h"
+#include "mmx_wide_policy.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -857,11 +858,42 @@ static void grow_charge(uint8_t *r) {
  * at the start of every player tick, so it is not part of the saved state. */
 static uint8_t ladder_second_shot;
 bool MmxZeroLadderSecondShot(void) { return ladder_second_shot != 0; }
+/* A boss door: X1 parks the player ($18) while the shutter opens, then walks
+ * it through ($1C). $18 also parks the player for a refill ($1F19), a Heart
+ * Tank's upgrade and the boss's defeat ($1F0C), none of which is a door; the
+ * door's pauses the stage tasks ($1F13) with none of those. */
+static bool heart_tank_upgrade(const uint8_t *r) {
+  /* As mmx_coop.c reads it: $81:EAFB runs the collected tank (class 11). */
+  if (!r[0x1f16]) return false;
+  for (unsigned d = 0x1628; d < 0x1928; d += 48)
+    if (r[d] && r[d + 10] == 11 && r[d + 1] == 2 && r[d + 2] == 6) return true;
+  return false;
+}
+/* A boss in the room, as mmx_coop.c's boss_fight reads it: the HUD's boss
+ * meter ($1F0E) or a boss encounter body, present from the intro on. */
+static bool boss_present(const uint8_t *r) {
+  if (word(r + 0x1f0e)) return true;
+  for (unsigned d = 0xe68; d < 0x1228; d += 64) {
+    const unsigned c = r[d + 10];
+    if (r[d] && (MmxWidePolicy_IsBossEncounter((uint8_t)c) || c == 0x26 ||
+        c == 0x67 || c == 0x69)) return true;
+  }
+  return false;
+}
+static bool boss_door(const uint8_t *r, unsigned action) {
+  if (r[0x1f0c]) return false; /* the boss is defeated */
+  if (action == 0x1c) return true;
+  /* Past the door the boss's intro ($1E) holds the player too. A capsule's
+   * dialog is also $1E, with no boss in the room. */
+  if (action == 0x1e) return boss_present(r);
+  return action == 0x18 && r[0x1f13] && !r[0x1f19] && !heart_tank_upgrade(r);
+}
 static bool charge_retained(const uint8_t *r, unsigned action) {
-  /* A plain buster charge (no burst or swing; on a ladder, a burst's pending
-   * follow-ups too) outside death, the swap and anything that leaves the
-   * stage's gameplay mode. */
+  /* Only ladders and boss doors keep a plain buster charge (no burst or
+   * swing; on a ladder, a burst's pending follow-ups too). Capsules, the
+   * boss's defeat, refills and every other event lock drop it, as before. */
   const bool ladder = action >= 0x24 && action <= 0x2a;
+  if (!ladder && !boss_door(r, action)) return false;
   return !modern_behavior && (state.charge || ladder) &&
       (!state.combo || ladder) && !state.burst && !state.slash &&
       !state.swap_phase &&
@@ -942,16 +974,19 @@ void MmxZeroPlayerTick(uint8_t r[0x20000]) {
     return;
   }
   if (!playable && charge_retained(r, action)) {
-    /* Ladders, boss doors, scripted walks and event locks keep a held buster
-     * charge, as X1 keeps X's, and grabbing or leaving a ladder ($24/$26)
-     * keeps a burst's follow-ups too. The charge holds its level; a release
-     * waits for the first frame Zero can fire again, as it does after a hit.
-     * Show X1 a held button meanwhile, so its own buster never fires X's
-     * charged shot. On a ladder the charge keeps growing while held. */
+    /* Ladders and boss doors (into the boss's intro) keep a held buster
+     * charge, and grabbing or leaving a ladder ($24/$26) keeps a burst's
+     * follow-ups too. The charge holds its level; a release waits for the
+     * first frame Zero can fire again, as it does after a hit. Show X1 a
+     * held button meanwhile, so its own buster never fires X's charged shot,
+     * but never in an intro ($1E): its text reads that button to skip ahead.
+     * On a ladder the charge keeps growing while held. */
     if (action >= 0x24 && action <= 0x2a && !state.combo &&
         legacy_intent_from_mapped(r).held)
       grow_charge(r);
-    if (state.charge) {
+    if (action == 0x1e) {
+      /* Nothing to mask: X1's buster does not run here. */
+    } else if (state.charge) {
       r[0xbdf] |= 64; r[0xbe1] |= 64; r[0xbe3] &= (uint8_t)~64;
     } else if (state.combo) {
       r[0xbdf] &= (uint8_t)~64; r[0xbe3] &= (uint8_t)~64;
