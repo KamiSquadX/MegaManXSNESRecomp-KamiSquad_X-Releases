@@ -1373,6 +1373,22 @@ static void rtl_rb_residue_apply(const RtlRollbackResidue *r) {
   g_apu_frame_clock = r->apu_frame_clock;
 }
 
+size_t RtlHostResidueSize(void) { return sizeof(RtlRollbackResidue); }
+void RtlHostResidueSave(void *out) {
+  RtlRollbackResidue r;
+  RtlApuLock();
+  rtl_rb_residue_capture(&r);
+  RtlApuUnlock();
+  memcpy(out, &r, sizeof(r));
+}
+void RtlHostResidueLoad(const void *in) {
+  RtlRollbackResidue r;
+  memcpy(&r, in, sizeof(r));
+  RtlApuLock();
+  rtl_rb_residue_apply(&r);
+  RtlApuUnlock();
+}
+
 static RtlRollbackResidue s_loaded_execution;
 
 bool RtlGuestScopeRun(RtlGuestScopeCallback callback, void *context,

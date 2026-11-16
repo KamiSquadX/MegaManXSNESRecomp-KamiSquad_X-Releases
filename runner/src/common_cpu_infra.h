@@ -17,6 +17,8 @@ extern Cpu *g_snes_cpu;
 extern bool g_fail;
 
 Snes *SnesInit(const uint8 *data, int data_size);
+/* Make an existing machine current again (see common_cpu_infra.c). */
+void SnesAdopt(Snes *snes);
 uint8_t *SnesRomPtr(uint32 v);
 
 // Apply the native-mode CPU state the real ROM's reset vector would

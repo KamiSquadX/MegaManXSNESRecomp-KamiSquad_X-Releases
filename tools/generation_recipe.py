@@ -103,10 +103,13 @@ def load_recipe(cfg_dir: Path) -> Recipe | None:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     allowed = {"schema", "identity_file", "cfg_roots", "no_host_root_scan",
                "profiles", "historical_profiles", "bind_legacy_profiles",
-               "prepare", "postprocess"}
+               "prepare", "postprocess", "module_id", "module_prefix"}
     if type(data.get("schema")) is not int or data.get("schema") != 1 or data.keys() - allowed:
         raise ValueError(f"unsupported generation recipe: {path}")
     recipe = Recipe(path, cfg_dir.parent.resolve(), data)
+    for key in ("module_id", "module_prefix"):
+        if key in data and not isinstance(data[key], str):
+            raise ValueError(f"recipe {key} must be a string")
     if "identity_file" in data and not isinstance(data["identity_file"], str):
         raise ValueError("recipe identity_file must be a path")
     for key in ("cfg_roots", "no_host_root_scan", "bind_legacy_profiles"):

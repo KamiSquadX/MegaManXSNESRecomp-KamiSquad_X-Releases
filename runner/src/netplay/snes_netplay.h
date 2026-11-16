@@ -264,6 +264,21 @@ int snes_netplay_menu_save(int slot);
 int snes_netplay_menu_load(int slot);
 int snes_netplay_menu_close(void);
 int  snes_netplay_is_host(void);
+
+/* Synchronized program switch (a host running more than one program, e.g.
+ * a second game in the same executable). The host asks; every peer holds on
+ * one agreed tick with matching state, every peer runs its handler with
+ * `arg` (which must request the switch from its host loop) and reports
+ * done, the new program's state is checked against the host's (and sent to
+ * a peer that differs), and play resumes in a new input/rollback epoch.
+ * No savestate menu is shown. Returns 1 when the request was accepted. */
+typedef void (*SnesNetplayProgramSwitchHandler)(int arg);
+void snes_netplay_set_program_switch_handler(SnesNetplayProgramSwitchHandler handler);
+int  snes_netplay_program_switch(int arg);
+/* The local switch the handler requested has run. */
+void snes_netplay_program_switch_done(void);
+/* 1 while a program switch holds the match. */
+int  snes_netplay_switching(void);
 int  snes_netplay_request_save(int slot);
 int  snes_netplay_request_load(int slot);
 

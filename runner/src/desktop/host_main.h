@@ -227,6 +227,12 @@ typedef struct SnesDesktopHostGame {
    * raster-state capture. The host owns this writable surface. A separate
    * draw_frame may retain a wider image for presentation. */
   void (*publish_native_field)(uint8_t *field, unsigned number);
+  /* Optional: the in-game launcher's restart saves the moment through this
+   * instead of RtlSaveSnapshot (a title with several programs keeps them
+   * all). Returns nonzero when saved. on_resume_state runs after
+   * --resume-state loaded (loaded nonzero) or failed. */
+  int (*save_resume_state)(const char *path);
+  void (*on_resume_state)(const char *path, int loaded);
 } SnesDesktopHostGame;
 
 /* The whole program. Returns the process exit code. */
@@ -245,6 +251,14 @@ void snesrecomp_desktop_set_new_renderer(int enabled);
 /* Ask the host to reset its pacing clock at the next opportunity (a title
  * that just changed its presentation settings). */
 void snesrecomp_desktop_request_clock_reset(void);
+
+/* Content variants in one session: at the next frame boundary the host pauses
+ * audio, calls `perform`, which switches the machine to another program
+ * (module, game info, Snes) and returns that program's descriptor, then
+ * adopts the descriptor's hooks and starts a fresh presentation timeline.
+ * Rewind history and run-ahead belong to the old program and are dropped. */
+typedef const SnesDesktopHostGame *(*SnesDesktopProgramSwitch)(void);
+void snesrecomp_desktop_request_program_switch(SnesDesktopProgramSwitch perform);
 
 #ifdef __cplusplus
 }

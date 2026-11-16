@@ -149,6 +149,10 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
  * in registration order; a redirect completes handling for that original PC. */
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook);
 void interp_bridge_pre_opcode_redirect(uint32_t pc24);
+/* Programs in one executable: hooks registered while owner N is set belong to
+ * program N (0 = the stock program); only the active owner's hooks fire. */
+void interp_bridge_set_pre_opcode_hook_owner(unsigned owner);
+void interp_bridge_set_active_pre_opcode_hook_owner(unsigned owner);
 
 /* Declare the instruction at pc24 the poll of a pure interrupt wait: what it
  * reads changes only when an interrupt handler runs. Under a master deadline,

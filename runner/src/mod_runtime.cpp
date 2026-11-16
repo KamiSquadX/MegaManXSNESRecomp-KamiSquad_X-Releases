@@ -3414,8 +3414,17 @@ extern "C" int snes_mod_register_apu_write_callback(
     SNES_MOD_C_END(0)
 }
 
+/* Plugins belong to the stock program. A second program linked into the same
+ * executable (a content variant) runs with their frame and APU callbacks
+ * suspended. */
+static bool s_mod_callbacks_suspended;
+extern "C" void snes_mod_runtime_suspend_callbacks_c(int suspended) {
+    s_mod_callbacks_suspended = suspended != 0;
+}
+
 extern "C" void snes_mod_runtime_frame_tick_c(void) {
     SNES_MOD_C_BEGIN
+    if (s_mod_callbacks_suspended) return;
     for (SNESModFrameCallback callback : SNESRecomp::frame_callbacks())
         if (callback) callback();
     SNES_MOD_C_END()
@@ -3424,6 +3433,7 @@ extern "C" void snes_mod_runtime_frame_tick_c(void) {
 extern "C" int snes_mod_runtime_filter_apu_write_c(
     uint16_t reg, uint8_t value) {
     SNES_MOD_C_BEGIN
+    if (s_mod_callbacks_suspended) return 0;
     for (SNESModApuWriteCallback callback : SNESRecomp::apu_write_callbacks()) {
         if (callback && callback(reg, value))
             return 1;

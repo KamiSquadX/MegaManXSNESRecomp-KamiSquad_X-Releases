@@ -288,6 +288,9 @@ typedef struct {
     rnet_u32     menu_done_cmd;      /* guest: last command acted on (retransmits) */
     int          menu_cursor, menu_cursor_sent;
     int          menu_pending_op, menu_pending_slot;
+    /* Program switch: 1 requested here, 2 done here (host: then SWITCH is
+     * sent; guest: then SWITCH is answered). switching spans the whole hold. */
+    int          switching, switch_local;
     uint8_t     *menu_blob;          /* host: snapshot at the hold tick */
     size_t       menu_blob_size;
     rnet_u32     menu_hash;
@@ -1530,7 +1533,13 @@ static void np_apply_sram_blob(const void *data, size_t size)
 #define NP_CTL_SLOT 255
 #define NP_CTL(cmd, arg) (((rnet_u32)(cmd) << 28) | ((rnet_u32)(arg) & 0x0FFFFFFFu))
 enum { NP_CMD_HOLD = 1, NP_CMD_SETTLE, NP_CMD_CURSOR, NP_CMD_SAVE, NP_CMD_LOAD, NP_CMD_RESUME,
-       NP_CMD_RESYNC };
+       NP_CMD_RESYNC, NP_CMD_SWITCH };
+
+static SnesNetplayProgramSwitchHandler g_np_switch_handler;
+void snes_netplay_set_program_switch_handler(SnesNetplayProgramSwitchHandler handler)
+{
+    g_np_switch_handler = handler;
+}
 /* Non-HOLD arguments carry a sequence number above the 8-bit operand, so a
  * second SAVE of the same slot is not mistaken for a retransmit. */
 #define NP_CMD_OPERAND(arg) ((arg) & 0xFFu)
@@ -1730,6 +1739,7 @@ static void np_menu_resume(int reset_epoch)
     g_np.menu = NP_MENU_OFF;
     g_np.menu_reset_epoch = 0;
     g_np.menu_resynced = 0;
+    g_np.switching = g_np.switch_local = 0;
     snes_savestate_menu_netplay_hide();
     fprintf(stderr, "snes_netplay: menu resumed serial=%u hold=%u epoch=%s\n",
             g_np.menu_serial, (unsigned)g_np.hold_tick, reset_epoch ? "new" : "kept");
@@ -1748,13 +1758,39 @@ int snes_netplay_menu_ready(void)
                                      g_np.menu == NP_MENU_FILE_XFER);
 }
 
-int snes_netplay_menu_open(void)
+int snes_netplay_switching(void) { return snes_netplay_active() && g_np.switching; }
+
+void snes_netplay_program_switch_done(void)
+{
+    if (g_np.switching && g_np.switch_local == 1) g_np.switch_local = 2;
+}
+
+static int np_menu_open_hold(int switching);
+
+int snes_netplay_program_switch(int arg)
+{
+    if (!g_np_switch_handler || arg < 0 || arg > 255 || !np_menu_open_hold(1)) return 0;
+    g_np.switch_local = 0;
+    g_np.menu_cursor_sent = g_np.menu_cursor; /* no slot cursor for this hold */
+    g_np.menu_pending_op = NP_CMD_SWITCH;
+    g_np.menu_pending_slot = arg;
+    fprintf(stderr, "snes_netplay: program switch %d requested\n", arg);
+    return 1;
+}
+
+/* HOLD's tick with this bit: the hold is a program switch (no menu shown). */
+#define NP_HOLD_SWITCH 0x08000000u
+
+int snes_netplay_menu_open(void) { return np_menu_open_hold(0); }
+
+static int np_menu_open_hold(int switching)
 {
     uint32_t hold;
     if (!snes_netplay_is_host() || !snes_netplay_is_running() || g_np.menu ||
         np_xfer_busy() || !g_np.sram_sync_done) return 0;
     hold = snes_netplay_sim_tick() + (uint32_t)snes_netplay_input_delay() + NP_HOLD_MARGIN;
-    if (!np_ctl(NP_CMD_HOLD, hold)) return 0;
+    if (!np_ctl(NP_CMD_HOLD, hold | (switching ? NP_HOLD_SWITCH : 0))) return 0;
+    g_np.switching = switching;
     ++g_np.menu_serial;
     g_np.menu = NP_MENU_HOLD;
     g_np.menu_reset_epoch = 0;
@@ -1792,7 +1828,24 @@ int snes_netplay_menu_close(void)
 static void np_menu_host_ready(void)
 {
     g_np.menu = NP_MENU_READY;
-    snes_savestate_menu_netplay_show();
+    if (!g_np.switching) snes_savestate_menu_netplay_show();
+}
+
+/* Host: snapshot the current state and ask every guest to compare theirs
+ * (the pause check, also run after a program switch). */
+static void np_menu_host_verify(void)
+{
+    uint8_t *blob = NULL;
+    size_t size = 0;
+    rnet_u32 crc = 0;
+    if (!np_snapshot(&blob, &size, &crc)) { np_menu_fail("snapshot"); return; }
+    free(g_np.menu_blob);
+    g_np.menu_blob = blob; g_np.menu_blob_size = size; g_np.menu_hash = crc;
+    if (rnet_session_state_probe(g_np.session, RNET_STATE_OP_MENU, 0, (rnet_u32)size, crc) != 0) {
+        np_menu_fail("verify probe"); return;
+    }
+    g_np.menu = NP_MENU_VERIFY;
+    g_np.menu_started_ms = SDL_GetTicks();
 }
 
 /* Host: start the next queued command (cursor first, so guests show the
@@ -1832,6 +1885,17 @@ static void np_menu_host_next(void)
     case NP_CMD_RESUME:
         if (np_ctl(g_np.menu_reset_epoch && !g_np.menu_resynced ? NP_CMD_RESYNC : NP_CMD_RESUME,
                    (uint32_t)g_np.menu_reset_epoch))
+            g_np.menu = NP_MENU_CMD;
+        return;
+    case NP_CMD_SWITCH:
+        /* Switch here first (the host loop runs it), then on every guest. */
+        if (g_np.switch_local == 0) {
+            g_np.switch_local = 1;
+            g_np.menu_started_ms = SDL_GetTicks();
+            g_np_switch_handler(g_np.menu_pending_slot);
+            return;
+        }
+        if (g_np.switch_local == 2 && np_ctl(NP_CMD_SWITCH, (uint32_t)g_np.menu_pending_slot))
             g_np.menu = NP_MENU_CMD;
         return;
     default:
@@ -1874,6 +1938,15 @@ static void np_menu_host_cmd_done(int all_ok)
         g_np.menu_pending_op = 0;
         np_menu_resume((int)NP_CMD_OPERAND(g_np.menu_arg));
         return;
+    case NP_CMD_SWITCH:
+        if (!all_ok) { np_menu_fail("guest could not switch program"); return; }
+        /* Every peer runs the new program: check its state against ours,
+         * then resume (always a new epoch: the history was the old one's). */
+        fprintf(stderr, "snes_netplay: program switch %d done on every peer\n", slot);
+        g_np.menu_reset_epoch = 1;
+        g_np.menu_pending_op = NP_CMD_RESUME;
+        np_menu_host_verify();
+        return;
     default:
         return;
     }
@@ -1901,22 +1974,11 @@ static void np_menu_drive(void)
         if (!np_ctl(NP_CMD_SETTLE, 0)) return;
         g_np.menu = NP_MENU_SETTLE;
         return;
-    case NP_MENU_SETTLE: {
-        uint8_t *blob = NULL;
-        size_t size = 0;
-        rnet_u32 crc = 0;
+    case NP_MENU_SETTLE:
         if (!rnet_session_state_probe_take_reply(g_np.session, &match)) return;
         rnet_session_state_probe_finish(g_np.session);
-        if (!np_snapshot(&blob, &size, &crc)) { np_menu_fail("snapshot"); return; }
-        free(g_np.menu_blob);
-        g_np.menu_blob = blob; g_np.menu_blob_size = size; g_np.menu_hash = crc;
-        if (rnet_session_state_probe(g_np.session, RNET_STATE_OP_MENU, 0, (rnet_u32)size, crc) != 0) {
-            np_menu_fail("verify probe"); return;
-        }
-        g_np.menu = NP_MENU_VERIFY;
-        g_np.menu_started_ms = SDL_GetTicks();
+        np_menu_host_verify();
         return;
-    }
     case NP_MENU_VERIFY:
         if (!rnet_session_state_probe_take_reply(g_np.session, &match)) return;
         mismatch = np_probe_mismatch();
@@ -2020,6 +2082,10 @@ static int np_menu_guest_cmd(uint32_t crc)
     uint32_t arg = crc & 0x0FFFFFFFu;
     switch (cmd) {
     case NP_CMD_HOLD:
+        if (arg & NP_HOLD_SWITCH) {
+            arg &= ~NP_HOLD_SWITCH;
+            if (g_np.menu == NP_MENU_OFF) { g_np.switching = 1; g_np.switch_local = 0; }
+        }
         if (g_np.menu != NP_MENU_OFF && g_np.hold_tick == arg) return 1; /* retransmit */
         ++g_np.menu_serial;
         g_np.menu = NP_MENU_APPROACH;
@@ -2062,6 +2128,21 @@ static int np_menu_guest_cmd(uint32_t crc)
         fprintf(stderr, "snes_netplay: menu load slot=%u applied\n", (unsigned)arg);
         snes_osd_push_slot_loaded((int)arg);
         return 1;
+    case NP_CMD_SWITCH:
+        if (g_np.menu_done_cmd == crc) return 1; /* retransmit */
+        if (!g_np_switch_handler) return 0;
+        if (g_np.switch_local == 0) {
+            /* Run it from the host loop; answer once it has. */
+            g_np.switching = 1;
+            g_np.switch_local = 1;
+            g_np_switch_handler((int)NP_CMD_OPERAND(arg));
+            return -1;
+        }
+        if (g_np.switch_local != 2) return -1;
+        g_np.menu_done_cmd = crc;
+        g_np.menu_reset_epoch = 1;
+        fprintf(stderr, "snes_netplay: program switch %u done\n", (unsigned)NP_CMD_OPERAND(arg));
+        return 1;
     case NP_CMD_RESYNC:
     case NP_CMD_RESUME:
         return 1; /* acted on after the reply: see np_guest_handle_probe */
@@ -2101,7 +2182,7 @@ static void np_apply_ready_state(void)
         g_np.menu = NP_MENU_READY;
         fprintf(stderr, "snes_netplay: menu applied host state at tick %u (%zu bytes)\n",
                 (unsigned)g_np.hold_tick, size);
-        snes_savestate_menu_netplay_show();
+        if (!g_np.switching) snes_savestate_menu_netplay_show();
         return;
     }
 
@@ -2208,7 +2289,7 @@ static void np_guest_handle_probe(void)
                 match ? "match" : "MISMATCH - waiting for host state");
         if (match) {
             g_np.menu = NP_MENU_READY;
-            snes_savestate_menu_netplay_show();
+            if (!g_np.switching) snes_savestate_menu_netplay_show();
         } else {
             g_np.menu = NP_MENU_VERIFY;
         }

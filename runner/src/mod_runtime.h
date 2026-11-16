@@ -303,6 +303,8 @@ int snes_mod_register_frame_callback(SNESModFrameCallback callback);
 int snes_mod_register_apu_write_callback(SNESModApuWriteCallback callback);
 void snes_mod_runtime_frame_tick_c(void);
 int snes_mod_runtime_filter_apu_write_c(uint16_t reg, uint8_t value);
+/* Nonzero suspends plugin frame and APU-write callbacks (another program runs). */
+void snes_mod_runtime_suspend_callbacks_c(int suspended);
 
 /*
  * Request battery-backed SRAM for a stock cart that declares none. This is

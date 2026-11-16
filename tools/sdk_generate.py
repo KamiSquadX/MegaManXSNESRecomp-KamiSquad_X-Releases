@@ -69,6 +69,8 @@ def _generate(
     analysis_backend: str = "native",
     expected_crc32: Optional[str] = None,
     expected_sha256: Optional[str] = None,
+    module_id: Optional[str] = None,
+    module_prefix: Optional[str] = None,
     progress: Optional[ProgressReporter] = None,
     _report_result: bool = True,
     _funcs_h_destination: Optional[pathlib.Path] = None,
@@ -137,6 +139,12 @@ def _generate(
             ["--historical-profile-manifest", str(pathlib.Path(manifest).resolve())])
     if generation_recipe_digest:
         emit_args.extend(["--generation-recipe-digest", generation_recipe_digest])
+    # A module linked beside another generated module (a content variant)
+    # needs its own id and a symbol prefix; see runner/src/program_module.h.
+    if module_id:
+        emit_args.extend(["--module-id", module_id])
+    if module_prefix:
+        emit_args.extend(["--module-prefix", module_prefix])
     if legacy_profile_rom_sha256:
         emit_args.extend(["--legacy-profile-rom-sha256", legacy_profile_rom_sha256])
 
@@ -251,6 +259,8 @@ def generate(**kwargs) -> dict:
         options["legacy_profile_rom_sha256"] = verified["sha256"]
     for key in ("cfg_roots", "no_host_root_scan"):
         options[key] = bool(options.get(key) or recipe.data.get(key))
+    for key in ("module_id", "module_prefix"):
+        options[key] = options.get(key) or recipe.data.get(key) or None
     for key, recipe_key in (("profile_manifests", "profiles"),
                             ("historical_profile_manifests", "historical_profiles")):
         options[key] = list(dict.fromkeys(

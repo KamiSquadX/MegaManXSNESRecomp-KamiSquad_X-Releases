@@ -533,6 +533,7 @@ enum { kInterpPreOpcodeHookSlots = 1024 };
 static struct {
     uint32_t pc24;
     InterpPreOpcodeHook hook;
+    uint8_t owner;
 } s_pre_opcode_hooks[kInterpPreOpcodeHookSlots];
 static int s_pre_opcode_hook_count;
 static uint8_t s_pre_opcode_hook_filter[0x10000 / 8];
@@ -554,12 +555,24 @@ static void pre_opcode_table_full(uint32_t pc24) {
 }
 static int s_pre_opcode_redirect_valid;
 static uint32_t s_pre_opcode_redirect_pc24;
+/* Hooks belong to the program that registered them (owner 0 is the stock
+ * program). Programs linked into one executable (content variants) register
+ * under their own owner, and only the running program's hooks fire. */
+static uint8_t s_pre_opcode_register_owner;
+static uint8_t s_pre_opcode_active_owner;
+void interp_bridge_set_pre_opcode_hook_owner(unsigned owner) {
+    s_pre_opcode_register_owner = (uint8_t)owner;
+}
+void interp_bridge_set_active_pre_opcode_hook_owner(unsigned owner) {
+    s_pre_opcode_active_owner = (uint8_t)owner;
+}
 
 bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) {
     if (!hook) return false;
     const uint32_t key=pc24 & 0x7FFFFFu;
     for (int i=0;i<s_pre_opcode_hook_count;++i)
-        if (s_pre_opcode_hooks[i].pc24==key && s_pre_opcode_hooks[i].hook==hook)
+        if (s_pre_opcode_hooks[i].pc24==key && s_pre_opcode_hooks[i].hook==hook &&
+            s_pre_opcode_hooks[i].owner==s_pre_opcode_register_owner)
             return true;
     if (s_pre_opcode_hook_count>=kInterpPreOpcodeHookSlots) {
         pre_opcode_table_full(pc24);
@@ -567,6 +580,7 @@ bool interp_bridge_add_pre_opcode_hook(uint32_t pc24, InterpPreOpcodeHook hook) 
     }
     s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24=key;
     s_pre_opcode_hooks[s_pre_opcode_hook_count].hook=hook;
+    s_pre_opcode_hooks[s_pre_opcode_hook_count].owner=s_pre_opcode_register_owner;
     ++s_pre_opcode_hook_count;
     pre_opcode_filter_mark(key);
     return true;
@@ -581,7 +595,8 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
     }
     const uint32_t key = pc24 & 0x7FFFFFu;
     for (int i = 0; i < s_pre_opcode_hook_count; i++) {
-        if (s_pre_opcode_hooks[i].pc24 == key) {
+        if (s_pre_opcode_hooks[i].pc24 == key &&
+            s_pre_opcode_hooks[i].owner == s_pre_opcode_register_owner) {
             s_pre_opcode_hooks[i].hook = hook;
             return;
         }
@@ -589,6 +604,7 @@ void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
     if (s_pre_opcode_hook_count < kInterpPreOpcodeHookSlots) {
         s_pre_opcode_hooks[s_pre_opcode_hook_count].pc24 = key;
         s_pre_opcode_hooks[s_pre_opcode_hook_count].hook = hook;
+        s_pre_opcode_hooks[s_pre_opcode_hook_count].owner = s_pre_opcode_register_owner;
         s_pre_opcode_hook_count++;
         pre_opcode_filter_mark(key);
     } else {
@@ -2253,7 +2269,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             const uint32_t key = pc_before & 0x7FFFFFu;
             bool redirected = false;
             for (int hi = 0; hi < s_pre_opcode_hook_count; hi++) {
-                if (s_pre_opcode_hooks[hi].pc24 == key) {
+                if (s_pre_opcode_hooks[hi].pc24 == key &&
+                    s_pre_opcode_hooks[hi].owner == s_pre_opcode_active_owner) {
                     sync_interp_to_cpu(&in, cpu);
                     s_pre_opcode_redirect_valid = 0;
                     s_pre_opcode_hooks[hi].hook(cpu, pc_before);

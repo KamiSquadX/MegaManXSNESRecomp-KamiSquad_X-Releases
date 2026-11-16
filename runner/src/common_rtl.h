@@ -433,6 +433,14 @@ size_t RtlNetplaySnapshotHashedBytes(size_t size);
 bool RtlSaveSnapshotRingBlanked(const char *filename);
 /* Upper bound for one rollback snapshot; sizes the ring's allocations. */
 size_t RtlRollbackSnapshotBound(void);
+/* The host-side residue alone (CPU state, APU pacing and port schedule,
+ * frame counter, refresh carry, interpreter state, MMIO shadows): what a
+ * session running two programs parks for one while it briefly runs the other
+ * on that program's own Snes (WRAM is the caller's to copy). Load it with the
+ * owning machine current. */
+size_t RtlHostResidueSize(void);
+void RtlHostResidueSave(void *out);
+void RtlHostResidueLoad(const void *in);
 /* Optional bound for a title's state_*_extra chunk beyond the core's 1 MiB
  * allowance. Register after RtlRegisterGame; zero/NULL keeps ordinary titles
  * unchanged. A dynamic world must report its maximum, not only today's cache. */

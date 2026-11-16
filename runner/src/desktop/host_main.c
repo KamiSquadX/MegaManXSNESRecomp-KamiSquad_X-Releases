@@ -128,6 +128,9 @@
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 static const SnesDesktopHostGame *g_game;
+/* The descriptor the session started with: the launcher's pages and the
+ * config belong to it, whichever program is running. */
+static const SnesDesktopHostGame *g_root_game;
 static SnesHdCapture *g_hd_capture;
 static bool g_custom_frame;
 static bool g_hd_osd_active;
@@ -302,6 +305,10 @@ static double g_simulation_hz = SNES_HOST_NTSC_HZ;
 int snesrecomp_desktop_frame_width(void) { return g_snes_width > 0 ? g_snes_width : 256; }
 int snesrecomp_desktop_frame_height(void) { return g_snes_height > 0 ? g_snes_height : 224; }
 void snesrecomp_desktop_request_clock_reset(void) { g_reset_clock = true; }
+static SnesDesktopProgramSwitch g_program_switch;
+void snesrecomp_desktop_request_program_switch(SnesDesktopProgramSwitch perform) {
+  g_program_switch = perform;
+}
 
 static double MonotonicSeconds(void) {
 #if defined(__linux__)
@@ -3057,7 +3064,7 @@ static void LauncherSeedRomCatalog(RecompLauncherCGameInfo *gi) {
  * replace a session that is still alive, the second the binary running it. */
 static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *gi,
                          const char *config_file, int in_session) {
-  const SnesDesktopHostGame *game = g_game;
+  const SnesDesktopHostGame *game = g_root_game ? g_root_game : g_game;
   memset(ls, 0, sizeof(*ls));
   ls->output_method = g_config.output_method;
   ls->window_scale  = g_config.window_scale ? g_config.window_scale : 2;
@@ -3214,7 +3221,7 @@ static void LauncherSeed(RecompLauncherCSettings *ls, RecompLauncherCGameInfo *g
  * they changed -- it used to be dropped on the floor, which read as "the
  * launcher forgets everything". */
 static void LauncherCommit(const RecompLauncherCSettings *ls, const char *config_file) {
-  const SnesDesktopHostGame *game = g_game;
+  const SnesDesktopHostGame *game = g_root_game ? g_root_game : g_game;
   g_config.output_method       = (uint8)ls->output_method;
   g_config.window_scale        = (uint8)ls->window_scale;
   g_config.fullscreen          = (uint8)ls->fullscreen;
@@ -3462,7 +3469,9 @@ static void RunInGameLauncher(bool *running, const char **exit_reason) {
       if (same_rom &&
           snesrecomp_abspath("saves/resume.sav", g_relaunch.state,
                              sizeof(g_relaunch.state))) {
-        g_relaunch.with_state = RtlSaveSnapshot(g_relaunch.state);
+        g_relaunch.with_state = g_game->save_resume_state
+            ? g_game->save_resume_state(g_relaunch.state)
+            : RtlSaveSnapshot(g_relaunch.state);
       }
       if (same_rom && !g_relaunch.with_state) {
         /* Restarting now would throw the player's progress away. The edit is
@@ -3522,12 +3531,37 @@ static bool SDLCALL NetplayLiveResizeWatch(void *userdata, SDL_Event *event) {
 }
 #endif
 
+/* A requested program switch, at a frame boundary. Netplay runs it from its
+ * own loop while every peer holds at one agreed tick. */
+static const SnesDesktopHostGame *RunProgramSwitch(const SnesDesktopHostGame *game) {
+  SnesDesktopProgramSwitch perform = g_program_switch;
+  g_program_switch = NULL;
+  SetAudioPaused(true);
+  snes_rewind_shutdown();
+  snes_runahead_shutdown();
+  RtlApuLock();
+  const SnesDesktopHostGame *next = perform();
+  RtlApuUnlock();
+  if (next) {
+    g_game = game = next;
+    host_report_breadcrumb("program switch: %s", next->display_name);
+  }
+  debug_server_set_ram(g_snes->ram, 0x20000);
+  ResetAudioTimeline();
+  PreparePpuFrame();
+  snes_rewind_configure();
+  snes_runahead_configure();
+  GameReset();
+  SetAudioPaused(g_paused);
+  return game;
+}
+
 int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **argv) {
   if (!game || !game->game_info || !game->display_name) {
     fprintf(stderr, "snesrecomp_desktop_main: descriptor needs display_name and game_info\n");
     return 2;
   }
-  g_game = game;
+  g_game = g_root_game = game;
 #if defined(__ANDROID__) && SNESRECOMP_SDL3 && defined(SNESRECOMP_NET_ROLLBACK)
   /* Android has no xdg-open: Discord sign-in hands its page to the system,
    * which opens it in the Discord app when that handles the link, else in
@@ -4320,6 +4354,7 @@ error_reading:;
     host_report_breadcrumb("resume state %s: %s", resumed ? "loaded" : "FAILED to load (kept)",
                            args.resume_state);
     if (resumed) remove(args.resume_state);
+    if (game->on_resume_state) game->on_resume_state(args.resume_state, resumed);
   }
 
   if (script_file)
@@ -4508,6 +4543,8 @@ error_reading:;
       /* Refused mid-match; dropped rather than left to fire when it ends. */
       g_open_launcher_hotkey = 0;
       snes_netplay_pump();
+      /* A program switch netplay asked for, with every peer held. */
+      if (g_program_switch) game = RunProgramSwitch(game);
       NetplayMenuSelftest(frameCtr);
       if (snes_netplay_is_host()) {
         uint32 human = snes_savestate_menu_filter_guest_input(netplay_capture_pad(NULL));
@@ -4529,7 +4566,7 @@ error_reading:;
       if (snes_netplay_menu_paused() && !g_overlay_modal) {
         g_overlay_modal = true;
         SetAudioPaused(true);
-        snes_osd_push("Host is managing savestates", 3000);
+        snes_osd_push(snes_netplay_switching() ? "Changing games" : "Host is managing savestates", 3000);
       } else if (!snes_netplay_menu_paused() && g_overlay_modal) {
         g_overlay_modal = false;
         GameReset();
@@ -4907,6 +4944,8 @@ error_reading:;
       running = false;
       exit_reason = "RUN_FRAMES reached";
     }
+    if (g_program_switch && running)
+      game = RunProgramSwitch(game);
   }
 
   const double run_end = MonotonicSeconds();

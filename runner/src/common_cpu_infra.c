@@ -1063,6 +1063,25 @@ void WatchdogCheck(void) {
   }
 }
 
+/* Make an existing machine current again. A session that runs several
+ * programs (content variants) keeps one Snes per program, so each cart keeps
+ * whatever its own plugins patched into it; the caller restores that
+ * program's guest state with a snapshot right after. */
+void SnesAdopt(Snes *snes) {
+  g_snes = snes;
+  cpu_state_init(&g_cpu, g_ram);
+  cart_set_master_clock_source(g_snes->cart,
+                               &g_cpu.coprocessor_master_cycles);
+  g_snes_cpu = g_snes->cpu;
+  g_dma = g_snes->dma;
+  g_ppu = g_snes->ppu;
+  g_rom = g_snes->cart->rom;
+  g_sram = g_snes->cart->ram;
+  g_sram_size = g_snes->cart->ramSize;
+  rtl_reset_host_pacing();
+  g_snes->beamMasterLast = g_cpu.master_cycles;
+}
+
 Snes *SnesInit(const uint8 *data, int data_size) {
 #if defined(SNESRECOMP_SETUP_HOST)
   /* A setup host carries no recompiled code (runner.cmake,
