@@ -6,7 +6,7 @@
 [submodule "snesrecomp"]
 	path = snesrecomp
 	url = https://github.com/KamiSquadX/MegaManXSNESRecomp.git
-	branch = components/snesrecomp
+	branch = components/snesrecomp-xtensions
 [submodule "third_party/dizProjects"]
 	path = third_party/dizProjects
 	url = https://github.com/bogaa/dizProjects.git

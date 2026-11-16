@@ -1,0 +1,35 @@
+format_version = 1
+id = "megaman-x.xtension.x2-password-save"
+version = "xx0.0.1"
+name = "X2 Password Saves (SRAM)"
+author = "KamiSquad_X"
+description = "Password Saves for the X2 game extension: X2's passwords are remembered like X1's, and the password screen has an X2 page."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "megaman-x-us"
+rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
+
+[[feature]]
+id = "password_save"
+name = "X2 Password Saves (SRAM)"
+description = "Needs the X2 game extension. On the Password screen, R (NEXT WEAPON) turns to X2's password screen and L (PREV WEAPON) back to X1's. Start on either page checks both: with both passwords right it goes on to X1's stage select with both applied (X2's shows when you turn to it); with the other page's password wrong, that page comes up so it can be fixed, and Start there finishes. X2's last password is saved after X2 stages and filled in. With no file selected, creates mmx2-password.srm beside the game. Offline only."
+group = "X-tensions"
+order = 1
+default_enabled = true
+
+[[resource]]
+feature = "password_save"
+id = "save_file"
+label = "SRAM file"
+description = "Choose an existing X2 password save to use and update, or leave empty for mmx2-password.srm beside the game."
+format = "file"
+file_patterns = "*.srm"
+file_description = "Mega Man X2 password save"
+required = false
+
+[[plugin]]
+feature = "password_save"
+id = "megaman-x.xtension.x2-password-save"

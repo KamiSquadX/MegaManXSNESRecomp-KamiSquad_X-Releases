@@ -70,6 +70,8 @@ void MmxZeroSetExtension(const MmxZeroExtension *ext);
  * per-hit callbacks are skipped while the gate is false, leaving the owner's
  * state untouched for its own seat. */
 void MmxZeroSetExtensionGate(bool (*gate)(void));
+typedef bool (*MmxZeroExtensionGate)(void);
+MmxZeroExtensionGate MmxZeroGetExtensionGate(void);
 void MmxZeroExtPrePlayer(uint8_t *ram);
 /* Zero-filled when no extension is set. */
 void MmxZeroExtSaveState(uint8_t out[MMX_ZERO_EXTENSION_STATE_BYTES]);
@@ -124,6 +126,7 @@ typedef struct MmxZeroBodyHooks {
   unsigned (*response)(uint8_t *ram, unsigned enemy, unsigned projectile, unsigned value);
 } MmxZeroBodyHooks;
 void MmxZeroSetBodyHooks(const MmxZeroBodyHooks *hooks);
+const MmxZeroBodyHooks *MmxZeroGetBodyHooks(void);
 unsigned MmxZeroWeaponCost(unsigned weapon_id, unsigned cost, bool charged);
 unsigned MmxZeroPlayerDamage(const uint8_t ram[0x20000], unsigned incoming,
                              unsigned native);

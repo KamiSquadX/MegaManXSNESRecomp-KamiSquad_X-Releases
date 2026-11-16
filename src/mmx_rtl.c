@@ -30,6 +30,9 @@
 #include <stdlib.h>
 #include "fiber_compat.h"   /* Win32 Fibers on Windows, ucontext shim on POSIX */
 #include "apu_frame_clock.h"
+#if MMX_X2_EXTENSION
+#include "x2ext/mmx_x2ext.h"
+#endif
 
 #ifndef MMX_VARIANT_JP
 #define MMX_VARIANT_JP 0
@@ -1167,6 +1170,10 @@ void RunOneFrameOfGame(void) {
     }
     if(MmxArmorFrameTick(g_ram,pad,available))return;
   }
+#if MMX_X2_EXTENSION
+  /* X-tensions: Heart Tanks and Sub Tanks shared with the X2 page. */
+  MmxX2ExtX1Frame(g_ram);
+#endif
   MmxBossRushFrame(g_ram,RtlGetPadState(0));
   if(MmxBossRushGetState().mode==MMX_RUSH_FINISHED) return;
   MmxKncBugfixTick(g_ram,RtlGetPadState(0),RtlGetPadState(1));

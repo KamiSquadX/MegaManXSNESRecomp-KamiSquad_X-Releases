@@ -2,6 +2,7 @@
 #include "mmx_axl.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "common_rtl.h"
@@ -13,6 +14,9 @@
 #include "mmx_wide_policy.h"
 #include "snes_overlay_draw.h"
 #include "netplay/snes_netplay.h"
+#if MMX_X2_EXTENSION
+#include "x2ext/mmx_x2ext.h"
+#endif
 
 extern int snes_frame_counter;
 
@@ -111,6 +115,10 @@ static uint16_t tap_seat(unsigned seat, uint16_t word, bool active) {
 
 bool MmxOptionsFrameBegin(uint32_t *inputs) {
   bool run = MmxReplayBegin(inputs);
+#if MMX_X2_EXTENSION
+  /* X2 Password Saves: Start for X1's password page as it comes back. */
+  MmxX2ExtX1Inputs(inputs);
+#endif
   /* Gameplay only: menus keep left/right for their own use. */
   bool active = !state.no_double_tap && MmxWidePolicy_IsStageScene(g_ram) &&
                 !MmxWeaponsMenuVisible(g_ram);
@@ -122,6 +130,53 @@ bool MmxOptionsFrameBegin(uint32_t *inputs) {
   MmxAxlFrameBegin(inputs);
   return run;
 }
+/* X-tensions: OPTION MODE on the X2 page (X2's own options screen is never
+ * reached). X2's gameplay is $D0 = 2, $D1 = 4, its pause $1F21 = 6 / 8 with
+ * $C4 bit 7; the player is at $09D8 with X1's action numbers (+$02; $12 on
+ * a wall).
+ *   DOUBLE TAP DASH: as in X1, a second tap of left or right is the dash
+ *     button (A), held while that direction is.
+ *   HOLD DASH: X2 itself gives a wall kick dash speed whenever dash is held.
+ *     Off (X1's way), held dash counts on a wall only when it was pressed in
+ *     the last ten frames ($0BFE's window in X1). */
+/* X2's own second-tap dash ($08:BB06, X1's $81:9742): nothing is armed,
+ * so only OPTION MODE's double tap dashes (or none, when it is off). */
+void MmxOptionsX2TapHook(CpuState *cpu) {
+  g_ram[(uint16_t)(cpu->D + 0x53)] = 0;
+}
+static void x2_tap_hook(CpuState *cpu, uint32_t pc24) {
+  (void)pc24;
+  MmxOptionsX2TapHook(cpu);
+}
+void MmxOptionsRegisterX2Hooks(void) {
+  static bool done;
+  if (done) return;
+  done = true;
+  interp_bridge_set_pre_opcode_hook_owner(1);
+  (void)interp_bridge_add_pre_opcode_hook(0x08bb06, x2_tap_hook);
+  (void)interp_bridge_add_pre_opcode_hook(0x88bb06, x2_tap_hook);
+  interp_bridge_set_pre_opcode_hook_owner(0);
+}
+
+bool MmxOptionsX2FrameBegin(uint32_t *inputs) {
+  static uint8_t since_dash = 255;
+  static bool dash_was;
+  if (!inputs) return true;
+  const bool paused = (g_ram[0x1f21] == 6 || g_ram[0x1f21] == 8) && (g_ram[0xc4] & 0x80);
+  const bool active = g_ram[0xd0] == 2 && g_ram[0xd1] == 4 && !paused;
+  uint32_t w = *inputs;
+  uint16_t p1 = tap_seat(0, (uint16_t)(w & 0x0fff), active && !state.no_double_tap);
+  uint16_t p2 = tap_seat(1, (uint16_t)((w >> 12) & 0x0fff), active && !state.no_double_tap);
+  const bool dash = (p1 & SNES_PAD_A) != 0;
+  if (dash && !dash_was) since_dash = 0;
+  else if (since_dash < 255) ++since_dash;
+  dash_was = dash;
+  if (active && !state.hold_dash && dash && g_ram[0x09d8 + 2] == 0x12 && since_dash > 10)
+    p1 &= (uint16_t)~SNES_PAD_A;
+  *inputs = (w & ~0x00ffffffu) | p1 | ((uint32_t)p2 << 12);
+  return true;
+}
+
 void MmxOptionsFrameEnd(void) {
   MmxAxlFrameEnd();
   MmxReplayEnd();

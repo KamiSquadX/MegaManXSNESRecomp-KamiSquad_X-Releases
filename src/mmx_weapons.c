@@ -39,6 +39,14 @@ static bool ksx_virtual(void) { return ksx_ram() != NULL; }
  * (page 0), so the HUD still shows Rakuhouha when L/R selects it. */
 extern bool MmxZeroActive(void);
 static bool ksx_pages_locked(void) { return ksx_menu_choice && MmxZeroActive(); }
+/* X-tensions (X1 to X2 boss weapons): an extended page's weapon is owned
+ * only when this says so (its boss beaten in that game). NULL: all owned. */
+static bool (*owned_query)(unsigned page, unsigned weapon);
+void MmxWeaponsSetOwnedQuery(bool (*owned)(unsigned page, unsigned weapon)) { owned_query = owned; }
+static bool page_weapon_owned(unsigned page, unsigned weapon) {
+  return !owned_query || owned_query(page, weapon);
+}
+bool MmxWeaponsPageWeaponOwned(unsigned page, unsigned weapon) { return page_weapon_owned(page, weapon); }
 _Static_assert(sizeof(MmxWeaponsState) == 40 && offsetof(MmxWeaponsState,fraction) == MMX_WEAPONS_LEGACY_STATE_SIZE, "Weapon save ABI");
 static unsigned word(const uint8_t *p) { return p[0] | (p[1] << 8); }
 static unsigned weapon_index(unsigned page, unsigned weapon) { return (page - 1) * 8 + weapon - 1; }
@@ -259,6 +267,8 @@ void MmxWeaponsMenuTick(uint8_t r[0x20000], unsigned dp) {
   unsigned cursor = r[dp + 10];
   if (!state.menu_page && cursor >= 1 && cursor <= 8 && !(r[0x1f86 + cursor * 2] & 64)) r[dp + 10] = 0;
   if (state.menu_page && cursor >= 1 && cursor <= 8 && ksx_pages_locked()) r[dp + 10] = 0;
+  if (state.menu_page && cursor >= 1 && cursor <= 8 && !page_weapon_owned(state.menu_page, cursor))
+    r[dp + 10] = 0;
   /* Use the native menu movement sound and its existing SPC command ring. */
   unsigned index = r[0xba3] & 0x1e;
   r[0xb72 + index] = 0x2c; r[0xb73 + index] = 0; r[0xba3] = (uint8_t)((index + 2) & 0x1e);
@@ -296,6 +306,8 @@ unsigned MmxWeaponsMenuRead(uint8_t r[0x20000], unsigned pc, unsigned dp, unsign
     default:
       /* Locked pages: not owned, so the cursor passes over them. */
       if (locked && state.menu_page && index < 16) return 0;
+      /* Not yet beaten in its own game: not owned, a blank slot. */
+      if (state.menu_page && index < 16 && !page_weapon_owned(state.menu_page, index / 2 + 1)) return 0;
       return state.menu_page && index < 16 ? 0xc0 | state.energy[(state.menu_page - 1) * 8 + index / 2] : original;
   }
 }

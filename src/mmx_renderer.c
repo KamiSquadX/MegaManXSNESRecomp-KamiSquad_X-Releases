@@ -195,6 +195,9 @@ static MmxRendererAxlSeatProvider axl_seat_provider;
 static MmxRenderAxlFrame frame_partner_axl;
 enum { MAX_WORLD_SPRITES = 24 };
 static MmxRendererWorldSpriteProvider world_sprite_provider;
+/* The X2 page draws through the standard PPU; it asks the same providers. */
+MmxRendererPlayerOverlayProvider MmxRendererGetPlayerOverlayProvider(void);
+MmxRendererWorldSpriteProvider MmxRendererGetWorldSpriteProvider(void);
 static MmxRenderWorldSprite frame_world_sprites[MAX_WORLD_SPRITES];
 static unsigned frame_world_sprite_count;
 enum { MAX_DEBUG_RECTS = 64 };
@@ -216,6 +219,7 @@ bool g_mmx_custom_renderer;
 bool g_mmx_custom_hud = true;
 static bool coop_hud_compact = true;
 void MmxRendererSetCompactCoopHud(bool compact) { coop_hud_compact=compact; }
+bool MmxRendererCompactCoopHud(void) { return coop_hud_compact; }
 static bool coop_hide_learner_health;
 void MmxRendererSetHideLearnerHealth(bool hide) { coop_hide_learner_health=hide; }
 bool MmxRendererHidesLearnerHealth(void) { return coop_hide_learner_health; }
@@ -1488,6 +1492,8 @@ static uint16_t weapon_menu_tile(unsigned tx, unsigned ty, uint16_t original) {
   if (!frame_weapons.menu_page || !MmxWeaponsMenuVisible(frame.ram) || ty < 5 || ty > 14) return original;
   unsigned column = tx >= 17, local = tx - (column ? 13 : 0), item = (ty - 5) / 2 + column * 5;
   if (!item || item > 8) return original;
+  /* Not yet earned (X1 to X2 boss weapons): no icon, bar or name at all. */
+  if (!MmxWeaponsPageWeaponOwned(frame_weapons.menu_page, item) && local >= 4 && local <= 16) return 0;
   if (local == 4 || local == 5) return 0; /* Icons use their original source-game palette below. */
   if (!(ty & 1) && local >= 6 && local <= 14) {
     unsigned flags = frame.ram[0x1ed2] == item ? 0x0800 : 0x2800;
@@ -1511,7 +1517,7 @@ static int weapon_menu_icon(int x, int y) {
   int column = x >= 136, left = column ? 136 : 32;
   if (x < left || x >= left + 16) return -1;
   unsigned row = (y - 40) / 16, item = row + column * 5;
-  if (!item || item > 8) return -1;
+  if (!item || item > 8 || !MmxWeaponsPageWeaponOwned(frame_weapons.menu_page, item)) return -1;
   const MmxWeaponPose *pose = MmxWeaponsIcon(frame_weapons.menu_page, item);
   const uint16_t *colors = MmxWeaponsIconPalette(frame_weapons.menu_page, item);
   if (!pose || !colors) return -1;
@@ -3750,4 +3756,11 @@ bool MmxRendererDrawLocalPair(uint8_t *output,size_t pitch,MmxRenderView view,bo
   peer_seat=saved_seat;view_dx=saved_dx;view_dy=saved_dy;local_pane=saved_local;
   return ok && SnesLocalViews_ComposeSideBySide(output,pitch,view.width,MMX_RENDER_HEIGHT,
       panes[0],(size_t)view.width*4,independent?panes[1]:NULL,(size_t)view.width*4);
+}
+
+MmxRendererPlayerOverlayProvider MmxRendererGetPlayerOverlayProvider(void) {
+  return player_overlay_provider;
+}
+MmxRendererWorldSpriteProvider MmxRendererGetWorldSpriteProvider(void) {
+  return world_sprite_provider;
 }

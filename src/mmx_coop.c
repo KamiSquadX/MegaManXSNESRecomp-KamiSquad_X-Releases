@@ -87,6 +87,9 @@ typedef struct DiagnosticFile {
   bool checked, reported_error;
 } DiagnosticFile;
 static DiagnosticFile physics_file, netplay_file;
+/* The X2 page's co-op (src/x2ext/mmx_x2coop.c) writes its own CSVs in the
+ * same session: logs/coop-x2physics-<stem> and logs/coop-x2netplay-<stem>. */
+static DiagnosticFile x2_physics_file, x2_netplay_file;
 static char diagnostic_stamp[32];
 static unsigned long diagnostic_pid;
 static bool diagnostic_enabled;
@@ -103,6 +106,7 @@ static void diagnostic_close(DiagnosticFile *t) {
 }
 static void diagnostic_shutdown(void) {
   diagnostic_close(&physics_file);diagnostic_close(&netplay_file);
+  diagnostic_close(&x2_physics_file);diagnostic_close(&x2_netplay_file);
 }
 static bool rule_select_teleport, rule_shared_death, rule_superstars;
 void MmxCoopSetViewRules(bool select_teleport, unsigned death) {
@@ -326,6 +330,16 @@ void MmxCoopDiagnosticFrame(const uint8_t *r) {
   diagnostic_event(r,NULL,0,"frame-end");
   diagnostic_netplay(r);
 }
+/* Another program's rows (the X2 page): kind "x2physics" or "x2netplay". */
+bool MmxCoopDiagnosticWrite(const char *kind,const char *header,const char *row,size_t size) {
+  if(!diagnostic_enabled || !kind) return false;
+  DiagnosticFile *t=!strcmp(kind,"x2physics")?&x2_physics_file:
+      !strcmp(kind,"x2netplay")?&x2_netplay_file:NULL;
+  if(!t) return false;
+  SnesTraceWriter *out=diagnostic_ready(t,kind,header);
+  return out && SnesTraceWriterWrite(out,row,size);
+}
+unsigned MmxCoopDiagnosticSequence(void) { return ++diagnostic_sequence; }
 /* A transition that freezes the world. Learner Mode's live transport keeps
  * the world (and its rendering) running around the teleporting partner. */
 bool MmxCoopTransitionActive(void) {
@@ -426,7 +440,14 @@ bool MmxCoopValidState(const MmxCoopState *s) {
   return s->players[0].character != s->players[1].character ||
       (s->players[0].character == MMX_COOP_X && starting_character == partner_character);
 }
-unsigned MmxCoopCurrentSeat(void) { return state.current; }
+/* The X2 page's co-op (src/x2ext/mmx_x2coop.c) runs its own seats; Zero's
+ * code reads them through these calls. */
+static struct { bool on; uint8_t seat; uint16_t input, pressed; } seat_override;
+void MmxCoopSetSeatOverride(bool on, unsigned seat, uint16_t input, uint16_t pressed) {
+  seat_override.on = on; seat_override.seat = (uint8_t)(seat & 1);
+  seat_override.input = input; seat_override.pressed = pressed;
+}
+unsigned MmxCoopCurrentSeat(void) { return seat_override.on ? seat_override.seat : state.current; }
 void MmxCoopSeatCamera(unsigned seat,int *x,int *y) {
   extern uint8_t g_ram[0x20000];
   MmxCoopView v=MmxCoopViewForPlayer(g_ram,&state,seat&1);*x=v.x;*y=v.y;
@@ -753,6 +774,11 @@ void MmxCoopPoll(uint16_t p1, uint16_t p2) {
   }
 }
 void MmxCoopSeatButtons(bool *x_held, bool *y_pressed) {
+  if (seat_override.on) {
+    if (x_held) *x_held = (seat_override.input & (1u << 9)) != 0;
+    if (y_pressed) *y_pressed = (seat_override.pressed & (1u << 1)) != 0;
+    return;
+  }
   /* Seat input bit n is joypad bit 15-n: Y is bit 1 and X is bit 9. */
   const MmxCoopPlayer *p = &state.players[state.current];
   bool live = enabled && state.initialized;
@@ -760,6 +786,12 @@ void MmxCoopSeatButtons(bool *x_held, bool *y_pressed) {
   if (y_pressed) *y_pressed = live && (p->pressed & (1u << 1));
 }
 uint16_t MmxCoopSeatPad(void) {
+  if (seat_override.on) {
+    unsigned pad = 0;
+    for (unsigned bit = 0; bit < 12; ++bit)
+      if (seat_override.input & (1u << bit)) pad |= 0x8000u >> bit;
+    return (uint16_t)pad;
+  }
   const MmxCoopPlayer *p = &state.players[state.current];
   unsigned pad = 0;
   if (!enabled || !state.initialized) return 0;

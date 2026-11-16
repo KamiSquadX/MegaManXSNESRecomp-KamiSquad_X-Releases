@@ -1,0 +1,193 @@
+format_version = 1
+id = "megaman-x.coop-axl"
+version = "xx0.0.2"
+name = "X / Zero / Axl Co-op"
+author = "mstan; Axl integration by KamiSquad_X"
+description = "Play together as X, Zero or Axl with separate health and weapons. Axl is from Mega Man X8 16-bit by Alysson da Paz (Zashiko / TagTeam mod)."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "megaman-x-us"
+rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
+
+[[feature]]
+id = "coop"
+name = "Co-op"
+description = "Player 2 joins automatically. Hold P2 Select for 1.5 seconds to leave; press Select to rejoin. Start opens each player's weapon menu. Axl can take either seat, beside X or Zero, with his own moves (rapid fire, hover, air dash, roll, GigaCrash) and his own health and weapons. Selecting co-op turns off Add Zero, Add Axl and Solo Team select."
+group = "Characters"
+order = 20
+default_enabled = false
+
+[[option]]
+feature = "coop"
+id = "player1"
+label = "Player 1 character"
+description = "Each player is a different character."
+type = "choice"
+default = "x"
+distinct_from = "player2"
+[[option.choice]]
+value = "x"
+label = "X"
+[[option.choice]]
+value = "zero"
+label = "Zero"
+[[option.choice]]
+value = "axl"
+label = "Axl"
+
+[[option]]
+feature = "coop"
+id = "player2"
+label = "Player 2 character"
+description = "Each player is a different character."
+type = "choice"
+default = "zero"
+distinct_from = "player1"
+[[option.choice]]
+value = "x"
+label = "X"
+[[option.choice]]
+value = "zero"
+label = "Zero"
+[[option.choice]]
+value = "axl"
+label = "Axl"
+
+[[option]]
+feature = "coop"
+id = "behavior"
+label = "Zero behavior"
+description = "Shared with Add Zero. Modern replaces Zero's buster with a direct saber and adds a double jump and air dash. Saber Zero (by RaphaelAzev) adds a Y-button Z-Saber with a 3-hit ground combo, air, wall and dash slashes, and the X3 finisher wave; tune it with Saber Zero settings. Special weapons remain available. KSX Zero (by KamiSquad_X, Saber Zero as the base) keeps the Y-button saber, moves the buster to R2, and learns Special Moves (X) and a Giga Attack (L2) from defeated Mavericks instead of special weapons; tune it with KSX Zero settings."
+type = "choice"
+default = "ksx"
+[[option.choice]]
+value = "x3"
+label = "X3 Behavior"
+[[option.choice]]
+value = "modern"
+label = "Modern"
+[[option.choice]]
+value = "saber"
+label = "Saber Zero"
+[[option.choice]]
+value = "ksx"
+label = "KSX Zero"
+
+[[option]]
+feature = "coop"
+id = "cameras"
+label = "Netplay cameras"
+description = "Unified keeps both players on one shared screen. Independent is experimental and may show graphics glitches or camera shaking. The host chooses for both peers. Local co-op display is a separate setting."
+type = "choice"
+default = "unified"
+[[option.choice]]
+value = "unified"
+label = "Unified"
+[[option.choice]]
+value = "independent"
+label = "Independent (Experimental)"
+
+[[option]]
+feature = "coop"
+id = "local_cameras"
+label = "Local co-op display"
+description = "Unified shares one screen. Side by side gives each local player an independent camera and HUD, at 5:4 per screen by default. Widescreen applies to each screen; Adaptive fits each half of the window. Shared menus and story scenes appear in both screens. Requires a restart; online cameras are unchanged."
+type = "choice"
+default = "unified"
+[[option.choice]]
+value = "unified"
+label = "Unified"
+[[option.choice]]
+value = "split"
+label = "Side by side (Experimental)"
+
+[[option]]
+feature = "coop"
+id = "hud"
+label = "HUD layout"
+description = "Compact stacks Player 1 above Player 2 in two aligned columns. Horizontal places all meters side by side."
+type = "choice"
+default = "horizontal"
+[[option.choice]]
+value = "compact"
+label = "Compact"
+[[option.choice]]
+value = "horizontal"
+label = "Horizontal"
+
+[[feature]]
+id = "views"
+name = "Co-op camera settings"
+description = "Extra rules for co-op, in local co-op and netplay alike. In netplay the host chooses for both players."
+group = "Characters"
+order = 30
+default_enabled = false
+requires = "megaman-x.coop-axl/coop"
+
+[[option]]
+feature = "views"
+id = "select_teleport"
+label = "Select button teleports to other player"
+description = "Available with Local co-op display: Side by side (Experimental) for local co-op, or Netplay cameras: Independent (Experimental) for netplay. Tap Select to beam to the other player. From off their screen you land at the edge you came from; on their screen, beside them at their level. Tap again before moving to try the next spot: left edge, right edge, their level, then right where they stand. Hold Select for 5 seconds to beam back to the start of the stage. Only on the ground, outside boss and miniboss fights, and not attacking, hurt, collecting an item or in a Dr. Light capsule. The beam can't be hurt. While on, holding Select no longer leaves the game. Off: Select works as before."
+type = "boolean"
+default = false
+
+[[option]]
+feature = "views"
+id = "death"
+label = "Death behavior"
+description = "What happens when one player dies or falls into a pit."
+type = "choice"
+default = "normal"
+[[option.choice]]
+value = "normal"
+label = "Normal"
+description = "The other player continues. The fallen player presses Select to return beside them for one of the team's lives, outside boss and miniboss fights."
+[[option.choice]]
+value = "shared"
+label = "Shared"
+description = "If either player dies, the game restarts from the checkpoint, as a single-player death does."
+[[option.choice]]
+value = "superstars"
+label = "Superstars"
+description = "The other player continues, and the fallen player's head appears at the bottom of the screen with a 10-second timer. When it runs out, Start or Select beams them back beside the other player without spending a life. A red sign shows while respawning is not allowed: during a boss or miniboss fight, until its explosion ends."
+
+[[resource]]
+feature = "coop"
+id = "x3-rom"
+label = "Mega Man X3 ROM"
+description = "Select your original Mega Man X3 USA ROM."
+format = "file"
+file_patterns = "*.sfc,*.smc"
+file_description = "Mega Man X3 USA ROM"
+shared_key = "megaman-x.source.x3"
+normalized_sha256 = "65b03268afac296330e8ff8d60dd0825879e13ed658b37713c034a3bd074f1d7"
+required = true
+
+[[plugin]]
+feature = "coop"
+id = "megaman-x.coop-axl"
+
+# Claim the character plugins too: features sharing a plugin are
+# alternatives, so this co-op deselects Add Zero, Add Axl, Solo Team select
+# and the 0.0.1 co-op, and they deselect it.
+[[plugin]]
+feature = "coop"
+id = "megaman-x.zero"
+
+[[plugin]]
+feature = "coop"
+id = "megaman-x.coop"
+
+# Add Axl and Solo Team select own the solo characters: features sharing a
+# plugin are alternatives, so co-op and they deselect each other.
+[[plugin]]
+feature = "coop"
+id = "megaman-x.axl"
+
+[[plugin]]
+feature = "coop"
+id = "megaman-x.team"

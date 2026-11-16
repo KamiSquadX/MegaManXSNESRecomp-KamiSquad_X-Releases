@@ -133,6 +133,12 @@ bool MmxCoopSuperstars(void);
 /* Respawning is refused now (a boss or miniboss fight is running). */
 bool MmxCoopRespawnBlocked(const uint8_t *ram);
 void MmxCoopDiagnosticFrame(const uint8_t ram[0x20000]);
+/* Another program's co-op rows in this session's diagnostics (the X2 page):
+ * `kind` "x2physics" / "x2netplay" opens logs/coop-<kind>-<stem>-NNN.csv with
+ * `header` on first use. False when diagnostics are off or the writer failed. */
+bool MmxCoopDiagnosticWrite(const char *kind, const char *header, const char *row, size_t size);
+/* The shared row sequence (one counter across both programs' rows). */
+unsigned MmxCoopDiagnosticSequence(void);
 bool MmxCoopSelect(uint8_t ram[0x20000], unsigned player);
 void MmxCoopPoll(uint16_t p1, uint16_t p2);
 void MmxCoopApplyInput(uint8_t ram[0x20000]);
@@ -142,6 +148,9 @@ void MmxCoopSeatButtons(bool *x_held, bool *y_pressed);
  * 0 when co-op is off. */
 uint16_t MmxCoopSeatPad(void);
 bool MmxCoopFrameTick(uint8_t ram[0x20000]);
+/* The X2 page's co-op: the seat whose code runs and its 12-bit input and new
+ * presses, for MmxCoopCurrentSeat / MmxCoopSeatButtons / MmxCoopSeatPad. */
+void MmxCoopSetSeatOverride(bool on, unsigned seat, uint16_t input, uint16_t pressed);
 bool MmxCoopTransitionActive(void);
 bool MmxCoopFindLanding(const uint8_t ram[0x20000],uint16_t *x,uint16_t *y);
 /* Caller must first validate the landing space. This does not grant re-entry

@@ -242,7 +242,8 @@ static const MmxSaberAttack kSaberAttacks[] = {
         .bounds_segment_count = sizeof(kRyuenjinBounds) / sizeof(kRyuenjinBounds[0]),
         .damage = 0,
         .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
-        .rehit_ticks = 6},
+        /* Every frame, as Fire Wave's flame hits (its weapon). */
+        .rehit_ticks = 1},
     {
         /* The end pose after the rise (or after releasing X early). */
         .kind = SABER_KIND_RYUENJIN,
@@ -319,7 +320,8 @@ static const MmxSaberAttack kSaberAttacks[] = {
         .bounds_segment_count = sizeof(kKuuenbuBounds) / sizeof(kKuuenbuBounds[0]),
         .damage = 0,
         .bounds_pointer = MMX_SABER_KSX_BOUNDS_POINTER,
-        .rehit_ticks = 0},
+        /* Every frame, multi-hit like Ryuenjin. */
+        .rehit_ticks = 1},
     {
         .kind = SABER_KIND_HYOURETSUZAN,
         .index = 0,
@@ -400,6 +402,11 @@ static const MmxSaberAttack kSaberAttacks[] = {
 typedef struct MmxSaberAttackState {
   MmxSaberPadKind kind;
   uint8_t index;
+  /* Enemies that deflected this attack (a met under its hat), tested again
+   * every few ticks. In the padding before `phase`: the snapshot's size and
+   * layout stay as they were (older snapshots hold zeros here). */
+  uint8_t immune_age;
+  uint16_t immune_slots;
   MmxSaberPadPhase phase;
   uint8_t tick;
   uint8_t buffer_slot;
@@ -416,6 +423,7 @@ typedef struct MmxSaberAttackState {
   bool previous_grounded;
   bool previous_grounded_valid;
 } MmxSaberAttackState;
+_Static_assert(offsetof(MmxSaberAttackState, phase) == 8, "saber snapshot layout");
 
 static MmxSaberAttackState state;
 static uint8_t projectile_generation;
@@ -770,6 +778,7 @@ static void release_current_projectile(uint8_t *ram) {
   state.projectile_tag_generation = 0;
   state.projectile_swing_id = 0;
   state.hit_slots = 0;
+  state.immune_slots = 0;
 }
 
 static bool tick_in_window(uint8_t tick, uint8_t open, uint8_t close) {
@@ -852,6 +861,7 @@ static void clear_attack(void) {
   state.projectile_tag_generation = 0;
   state.projectile_swing_id = 0;
   state.hit_slots = 0;
+  state.immune_slots = 0;
   state.cue = MMX_SABER_SFX_ATTACK_COUNT;
   state.cue_pending = false;
 }
@@ -1113,6 +1123,7 @@ static void start_attack(const MmxSaberAttack *attack, uint8_t facing) {
   state.swing_id = swing_id;
   state.anim_id = attack->visual_animation;
   state.hit_slots = 0;
+  state.immune_slots = 0;
   state.cue = attack_cue(attack);
   state.cue_pending = state.cue < MMX_SABER_SFX_ATTACK_COUNT;
   update_animation();
@@ -1157,6 +1168,7 @@ static void ksx_step(const MmxSaberAttack *attack, bool grounded) {
     }
   }
   ++state.tick;
+  if (state.immune_slots && ++state.immune_age >= 4) state.immune_slots = state.immune_age = 0;
   if (state.tick >= attack->total_ticks) {
     if (attack->kind == SABER_KIND_HYOURETSUZAN && attack->index == 0) {
       state.tick = (uint8_t)(attack->total_ticks - 2);
@@ -1166,8 +1178,10 @@ static void ksx_step(const MmxSaberAttack *attack, bool grounded) {
     }
   }
   if (attack->rehit_ticks && state.tick > attack->startup_ticks &&
-      (state.tick - attack->startup_ticks) % attack->rehit_ticks == 0)
+      (state.tick - attack->startup_ticks) % attack->rehit_ticks == 0) {
     state.hit_slots = 0;
+    state.immune_slots = 0;
+  }
   state.phase = MmxSaberAttackPhaseForTick(attack, state.tick);
   update_animation();
 }
@@ -1325,6 +1339,7 @@ void MmxSaberAttackStepWithWallAndDash(bool saber_pressed, bool grounded,
   }
 
   ++state.tick;
+  if (state.immune_slots && ++state.immune_age >= 4) state.immune_slots = state.immune_age = 0;
   if (state.tick >= attack->total_ticks) {
     MmxSaberAttackExit(runtime_ram, MMX_SABER_ATTACK_EXIT_NATURAL);
     return;
@@ -1517,6 +1532,7 @@ static bool allocate_projectile(uint8_t *ram, const MmxSaberAttack *attack) {
   state.projectile_tag_generation = generation;
   state.projectile_swing_id = state.swing_id;
   state.hit_slots = 0;
+  state.immune_slots = 0;
   ++ram[0x0bdd];
   anchor_projectile(ram, d, attack);
   return true;
@@ -1882,7 +1898,7 @@ unsigned MmxSaberAttackHitbox(const uint8_t *ram, unsigned enemy,
   if (MmxSaberWaveRuntimeOwns(ram, projectile))
     return MmxSaberWaveRuntimeHitbox(ram, enemy, projectile, value);
   if (saber_projectile_owned(ram, projectile) && enemy_slot_valid(enemy) &&
-      (state.hit_slots & (1u << ((enemy - 0xe68) / 64))))
+      ((state.hit_slots | state.immune_slots) & (1u << ((enemy - 0xe68) / 64))))
     return 0;
   return value;
 }
@@ -1892,11 +1908,14 @@ unsigned MmxSaberAttackHitbox(const uint8_t *ram, unsigned enemy,
  * deflect response ($84:9E50) and no damage, so it never joins hit_slots.
  * Left alone, one immune enemy overlapping a swing (an igloo under
  * Ryuenjin) would keep every enemy in a later slot from being tested on
- * every frame of the swing. The swing is done with it after one deflect. */
+ * every frame of the swing. A deflect takes it out for four ticks, then it is
+ * tested again: a met that ducked under its hat is hit when it looks out. */
 void MmxSaberAttackNoteImmune(const uint8_t *ram, unsigned enemy,
                               unsigned projectile) {
-  if (saber_projectile_owned(ram, projectile) && enemy_slot_valid(enemy))
-    state.hit_slots |= (uint16_t)(1u << ((enemy - 0xe68) / 64));
+  if (saber_projectile_owned(ram, projectile) && enemy_slot_valid(enemy)) {
+    if (!state.immune_slots) state.immune_age = 0;
+    state.immune_slots |= (uint16_t)(1u << ((enemy - 0xe68) / 64));
+  }
 }
 
 uint16_t MmxSaberAttackHitSlots(void) {

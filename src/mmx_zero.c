@@ -51,6 +51,7 @@ static bool modern_movement(void) {
 void MmxZeroSetStartCharacter(bool x) { start_x = x; }
 void MmxZeroSetExtension(const MmxZeroExtension *ext) { extension = ext; }
 void MmxZeroSetExtensionGate(bool (*gate)(void)) { extension_gate = gate; }
+MmxZeroExtensionGate MmxZeroGetExtensionGate(void) { return extension_gate; }
 /* Per-frame and per-hit callbacks belong to the seat that owns the extension.
  * Lifecycle callbacks (state_reset, collision_rom) are not seat-owned. */
 static const MmxZeroExtension *live_extension(void) {
@@ -501,6 +502,7 @@ void MmxZeroSlideTick(uint8_t r[0x20000]) {
 }
 static const MmxZeroBodyHooks *body_hooks;
 void MmxZeroSetBodyHooks(const MmxZeroBodyHooks *hooks) { body_hooks = hooks; }
+const MmxZeroBodyHooks *MmxZeroGetBodyHooks(void) { return body_hooks; }
 unsigned MmxZeroUpgradeBits(unsigned pc, unsigned original) {
   original=MmxArmorUpgradeBits(pc,original);
   if (!MmxZeroActive())

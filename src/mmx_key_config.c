@@ -15,6 +15,9 @@
 #include "mmx_replay.h"
 #include "mmx_wide_policy.h"
 #include "mmx_weapons.h"
+#if MMX_X2_EXTENSION
+#include "x2ext/mmx_x2ext.h"
+#endif
 
 /* X8 16-bit's ActionLoader order and English labels. Its cancel row has no
  * translation ("CANCEL_ACT"); it reads as the action it is. */
@@ -261,13 +264,20 @@ void MmxKeyConfigMapSeat(int seat, uint16_t *snes, uint8_t *ext) {
   /* Both wheel sides at once is GIGA ATTACK's code (MMX_EXT_GIGA). */
   if ((x & MMX_EXT_GIGA) == MMX_EXT_GIGA) x &= (uint8_t)~MMX_EXT_WHEEL_RIGHT;
   if (action_held(phys, MMX_KEY_GIGA)) x |= MMX_EXT_GIGA;
-  /* X1's menus confirm with Start. Outside a stage (title, stage select,
-   * password, options) and on the pause menu, menu confirm is Start too. */
-  /* Not on the password screen: there the confirm button is also a digit
-   * button (it would change a digit and submit at once); Start submits. */
-  if ((x & MMX_EXT_CONFIRM) && !MmxWidePolicy_IsPasswordScreen(g_ram) &&
-      (!MmxWidePolicy_IsStageScene(g_ram) || MmxWeaponsMenuVisible(g_ram)))
-    out |= SNES_PAD_START;
+  /* MENU CONFIRM rebinds the games' own menu confirm, Y (X1, X2 and X3
+   * alike). On menus -- outside a stage (title, stage select, password,
+   * options) and on the pause menu -- Y comes from MENU CONFIRM alone, so a
+   * remapped confirm replaces Y there instead of adding a second button.
+   * In a stage Y stays SHOT. */
+  bool menu = !MmxWidePolicy_IsStageScene(g_ram) || MmxWeaponsMenuVisible(g_ram);
+#if MMX_X2_EXTENSION
+  /* Those are X1's screens, read from X1's RAM layout; X2 has its own. */
+  if (MmxX2ExtInX2()) menu = MmxX2ExtInMenu();
+#endif
+  if (menu) {
+    out &= (uint16_t)~SNES_PAD_Y;
+    if (x & MMX_EXT_CONFIRM) out |= SNES_PAD_Y;
+  }
   /* Never all eight at once: that is KEY CONFIG's close signal. */
   if (x == MMX_EXT_CLOSE_KEY_CONFIG) x &= (uint8_t)~MMX_EXT_CANCEL;
   *snes = out;

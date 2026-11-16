@@ -1,4 +1,7 @@
 #include "mmx_replay.h"
+#if MMX_X2_EXTENSION
+#include "x2ext/mmx_x2ext.h"
+#endif
 #include "diagnostics/replay_writer.h"
 #include "mmx_coop.h"
 #include "mmx_coop_view.h"
@@ -60,6 +63,7 @@ static bool enabled, playing, finished, failed, pending;
 static bool recording;
 static unsigned playback_format;
 static SnesReplayWriter *writer;
+static bool hold_frame;   /* playback waits a frame for a page turn */
 static FILE *stream, *states;
 static char stem[1200], path[1280];
 static char config_path[1200]="config.ini";
@@ -97,7 +101,7 @@ static unsigned policy(void) {
       (!MmxNetplayActive() && MmxCoopEnabled() && MmxCoopViewsLocalSplit())<<7;
 }
 void MmxReplayViewport(int *width,int *extra) {
-  if(playing && playback_loaded) { *width=playback_width; *extra=(playback_width-256)/2; }
+  if(playing && playback_loaded && playback_width>=256) { *width=playback_width; *extra=(playback_width-256)/2; }
 }
 
 static uint32_t hash_continue(uint32_t h,const void *data,size_t size) {
@@ -317,6 +321,13 @@ static bool write_snapshot(void) {
   }
   while(oldest_segment<segment && history_bytes+size>history_limit())
     if(!evict_segment()) {error(SnesReplayWriterError(writer));return false;}
+#if MMX_X2_EXTENSION
+  /* X2 game extension: the checkpoint's program (0 X1, 1 X2, 2 X2's password
+   * page), so playback turns to it before loading. */
+  {int program=MmxX2ExtProgramId();
+   if(program>=0) {char tag[16];snprintf(tag,sizeof(tag),"P %d\n",program);
+     if(!SnesReplayWriterLine(writer,tag)) {error(SnesReplayWriterError(writer));return false;}}}
+#endif
   if(!SnesReplayWriterSnapshot(writer,snapshot,size)) {error(SnesReplayWriterError(writer));return false;}
   segment_state_bytes+=size;history_bytes+=size;history_sizes[segment%SEGMENTS]+=size;
   return true;
@@ -324,12 +335,28 @@ static bool write_snapshot(void) {
 static uint32_t playback_begin(uint32_t inputs) {
   if(!playback_loaded && !load_playback()) return inputs;
   char line[256]; unsigned frame,word,flags; int width,peer;
+  long line_start=ftell(stream);
   if(!fgets(line,sizeof(line),stream)) {
     if(ferror(stream)) error("input read failed");
     else if(!playback_rows) error("replay contains no completed frames");
     else { finished=true; MmxReplayClose(); fprintf(stderr,"[mmx-replay] all recorded checkpoints matched\n"); }
     return inputs;
   }
+#if MMX_X2_EXTENSION
+  if(line[0]=='P') {
+    /* The checkpoint below belongs to this program: turn to it first (the
+     * frame waits; the page turn runs at the frame boundary). */
+    int program=-1;
+    if(sscanf(line,"P %d",&program)!=1) { error("invalid program record"); return inputs; }
+    if(program!=MmxX2ExtProgramId()) {
+      if(MmxX2ExtProgramId()<0) { error("enable the X2 game extension before replay"); return inputs; }
+      MmxX2ExtRequestProgram(program);
+      fseek(stream,line_start,SEEK_SET);
+      hold_frame=true; return inputs;
+    }
+    if(!fgets(line,sizeof(line),stream)) { error("missing machine checkpoint"); return inputs; }
+  }
+#endif
   if(line[0]=='S') {
     unsigned offset,size,digest;
     if(sscanf(line,"S %u %u %x",&offset,&size,&digest)!=3 || offset>STATE_LIMIT ||
@@ -415,6 +442,10 @@ bool MmxReplayBegin(uint32_t *inputs) {
   if(playing) {
     if(finished || failed) return false;
     *inputs=playback_begin(*inputs);
+    /* Waiting for a page turn: this program runs one unrecorded frame with
+     * no buttons (skipping it would leave the renderer's frame unfinished);
+     * the checkpoint replaces its result. */
+    if(hold_frame) { hold_frame=false; *inputs=0; return true; }
     return !finished && !failed;
   }
   /* Include snapshot serialization and queue submission.

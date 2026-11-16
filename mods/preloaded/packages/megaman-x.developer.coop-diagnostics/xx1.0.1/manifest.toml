@@ -1,0 +1,24 @@
+format_version = 1
+id = "megaman-x.developer.coop-diagnostics"
+version = "xx1.0.1"
+name = "Mega Man X Co-op Physics Diagnostics"
+author = "mstan; X2 support by KamiSquad_X"
+description = "Writes co-op movement, collision, platform, pickup and freeze traces, including shot contact with enemies, for bug reports. During netplay it also writes a second netplay diagnostics file. On the X2 page it writes X2 co-op CSVs beside them."
+license = "MIT"
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "megaman-x-us"
+rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
+
+[[feature]]
+id = "coop-diagnostics"
+name = "Co-op physics diagnostics"
+description = "Add detailed co-op physics CSVs to the replay diagnostics already recorded by default in logs/mmx-replay-*. After a problem, stop playing and zip the session's replay files, sidecars and CSVs. For netplay, collect both players' logs. On the X2 page the same switch writes logs/coop-x2physics-* (and coop-x2netplay-* in netplay). Disable run-ahead while recording."
+group = "Developer"
+default_enabled = false
+
+[[plugin]]
+feature = "coop-diagnostics"
+id = "megaman-x.coop-diagnostics"

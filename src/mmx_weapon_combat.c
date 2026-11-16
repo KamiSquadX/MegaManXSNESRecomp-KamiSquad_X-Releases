@@ -181,7 +181,15 @@ static void cycle_weapon(uint8_t *r) {
   if (!pressed || r[0xd1]!=2 || r[0xd2]!=4 || r[0xd3]!=4 || r[0xba9]!=2 ||
       r[0x1f23] || (r[0xbdd] && !bubble_shield) || r[0x1f31] ||
       r[0xbaa]==0x18 || r[0xbaa]==0x42) return;
-  unsigned weapon=held==0x30 ? 0 : (s.weapon+(pressed&0x20 ? 8 : 1))%9;
+  unsigned weapon=s.weapon;
+  if (held==0x30) weapon=0;
+  else {
+    /* Unearned weapons (X1 to X2 boss weapons) are skipped. */
+    for (unsigned step=0;step<9;++step) {
+      weapon=(weapon+(pressed&0x20 ? 8 : 1))%9;
+      if (!weapon || MmxWeaponsPageWeaponOwned(s.page,weapon)) break;
+    }
+  }
   if (weapon==s.weapon) return;
   MmxZeroCancel(r); stop_charge(r); MmxWeaponsCancelShots(r);
   s.weapon=(uint8_t)weapon; s.charge=s.cooldown=0; MmxWeaponsSetState(s);
@@ -436,7 +444,11 @@ static void muzzle_origin(const uint8_t *r, unsigned d, MmxWeaponShot *s) {
 }
 /* X1 $84:90B3/$916A: live screen layout -> metatile -> collision class.
  * Read the current RAM map so destroyed terrain is immediately reflected. */
+/* X-tensions: another game's terrain (X2's map and cart) while it runs. */
+static unsigned (*terrain_source)(int x, int y);
+void MmxWeaponsSetTerrainSource(unsigned (*source)(int x, int y)) { terrain_source = source; }
 static unsigned terrain_type(const uint8_t *r, int x, int y) {
+  if (terrain_source) return terrain_source(x, y);
   if (!collision_rom || x < 0 || x >= 8192 || y < 0 || y >= 8192) return 0;
   unsigned screen = r[0xe800 + (y >> 8)*32 + (x >> 8)];
   unsigned cell = 0x2000 + ((screen*512 + ((y & 240) << 1) + ((x & 240) >> 3)) & 65535);

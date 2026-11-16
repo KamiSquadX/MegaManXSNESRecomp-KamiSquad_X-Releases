@@ -1,4 +1,13 @@
 /* Game identity and widescreen policy; the desktop loop belongs to snesrecomp. */
+#if MMX_X2_EXTENSION
+#include "x2ext/mmx_x2ext.h"
+#include "x2ext/mmx_x2share.h"
+#include "x2ext/x2_runtime.h"
+/* mmx_x2split.c: Side by side co-op on the X2 page. */
+bool MmxX2SplitWanted(void);
+void MmxX2SplitPrepareFrame(int *frame_w, int *frame_h);
+int MmxX2SplitDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field, int w, int h);
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -225,6 +234,11 @@ static void MmxPublishNativeField(uint8_t *field, unsigned number) {
         MmxRendererDraw(s_composed_pixels,g_mmx_custom_view,g_mmx_custom_hud);
     if (!ok)
       Die("Native frame composition failed");
+#if MMX_X2_EXTENSION
+    /* X2 game extension: Xtreme Sub Tanks on X1's pause screen. */
+    if (!split && MmxX2ShareX1PauseShown(g_ram))
+      MmxX2ShareDrawX1Pause(s_composed_pixels, width, g_mmx_custom_view.extra);
+#endif
     s_composed_view=g_mmx_custom_view; s_composed_hud=g_mmx_custom_hud;
     s_composed_split=split;
     s_composed_ready=true;
@@ -246,6 +260,14 @@ static int MmxDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field,
   if (!g_mmx_custom_renderer) {
     /* The overlay never enables the compositor: that also widens culling
      * and spawn policy, which would make a drawing aid change the game. */
+#if MMX_X2_EXTENSION
+    if (w == 256 && h == 224 && MmxX2ShareX1PauseShown(g_ram)) {
+      if (!MmxHitboxOverlayDrawStock(output, field)) memcpy(output, field, 256 * 224 * 4);
+      MmxX2ShareDrawX1Pause(output, 256, 0);
+      RtlWidescreenPresent(dst, pitch, (const uint8_t *)output, w, h);
+      return 1;
+    }
+#endif
     if (w != 256 || h != 224 || !MmxHitboxOverlayDrawStock(output, field)) return 0;
     RtlWidescreenPresent(dst, pitch, (const uint8_t *)output, w, h);
     return 1;
@@ -279,16 +301,36 @@ static int MmxDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field,
     for (int y = 0; y < h; ++y)
       memcpy(output + y * w + (w - 256) / 2, field + y * 256 * 4, 256 * 4);
   }
+#if MMX_X2_EXTENSION
+  /* X2 game extension: Xtreme Sub Tanks on X1's pause screen. */
+  if (h == 224 && MmxX2ShareX1PauseShown(g_ram))
+    MmxX2ShareDrawX1Pause(output, w, (w - 256) / 2);
+#endif
   RtlWidescreenPresent(dst, pitch, (const uint8_t *)output, w, h);
   return 1;
 }
 static void MmxViewport(int w, int h, int dw, int dh, SnesDisplayViewport *view) {
+#if MMX_X2_EXTENSION
+  /* X2 has its own presenter: both panes at 5:4 when Side by side. */
+  if (MmxX2ExtInX2()) {
+    if (MmxX2SplitWanted()) *view = SnesLocalViews_Viewport(5.0 / 4, dw, dh);
+    else MmxDisplay_ComputeViewport(w, h, dw, dh,
+        SnesDisplayAspect_Clamp(g_config.display_aspect), g_config.ignore_aspect_ratio, false, view);
+    return;
+  }
+#endif
   if(MmxLocalSplit()) *view=SnesLocalViews_Viewport(g_mmx_custom_view.aspect,dw,dh);
   else if (g_mmx_custom_renderer) *view = MmxRendererDestination(g_mmx_custom_view, dw, dh);
   else MmxDisplay_ComputeViewport(w, h, dw, dh,
       SnesDisplayAspect_Clamp(g_config.display_aspect), g_config.ignore_aspect_ratio, false, view);
 }
 static int MmxWindowWidth(int w) {
+#if MMX_X2_EXTENSION
+  if (MmxX2ExtInX2()) {
+    if (MmxX2SplitWanted()) return (int)(2 * 5.0 / 4 * MmxDisplay_GetWindowBaseHeight() + .5);
+    return MmxDisplay_GetWindowBaseWidth(w, SnesDisplayAspect_Clamp(g_config.display_aspect));
+  }
+#endif
   if(MmxLocalSplit()) {
     double aspect=!g_config.widescreen ? 5.0/4 :
         g_mmx_custom_aspect==MMX_ASPECT_21_9 ? 21.0/9 :
@@ -298,6 +340,18 @@ static int MmxWindowWidth(int w) {
   }
   return MmxDisplay_GetWindowBaseWidth(w, SnesDisplayAspect_Clamp(MmxNetplayActive() ? 0 : g_config.display_aspect));
 }
+
+#if MMX_X2_EXTENSION
+static void MmxX2PrepareFrame(int dw, int dh, int *w, int *h) {
+  (void)dw; (void)dh;
+  MmxX2SplitPrepareFrame(w, h);
+}
+static int MmxX2DrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field,
+                          int w, int h, double alpha) {
+  (void)alpha;
+  return MmxX2SplitDrawFrame(dst, pitch, field, w, h);
+}
+#endif
 
 /* Keep the existing benchmark entry points while using the host's run limit. */
 static int s_benchmark_frames, s_benchmark_audio;
@@ -341,6 +395,9 @@ static void MmxShutdown(void) {
   MmxCoopSetDiagnosticsEnabled(false);
 }
 static void MmxAfterFrame(const SnesDesktopHostFrameStats *stats) {
+#if MMX_X2_EXTENSION
+  MmxX2ExtAfterFrame(stats);
+#endif
   if (MmxReplayPlaying() && (MmxReplayFinished() || MmxReplayFailed())) {
     SDL_Event quit = {0}; quit.type = SDL_QUIT; SDL_PushEvent(&quit);
   }
@@ -564,7 +621,38 @@ int MMX_DESKTOP_ENTRY(int argc, char **argv) {
     .prepare_netplay = MmxNetplayPrepare,
     .netplay_ready = MmxNetplayReady,
     .on_shutdown = MmxShutdown,
+#if MMX_X2_EXTENSION
+    .save_resume_state = MmxX2ExtSaveResume,
+    .on_resume_state = MmxX2ExtResumeLoaded,
+#endif
   };
+#if MMX_X2_EXTENSION
+  /* X-tensions: Mega Man X2 as a second program in this session. Only the
+   * generic host services; X1's renderer, co-op and mod hooks stay with X1. */
+  static const SnesDesktopHostGame x2_game = {
+    .display_name = "Mega Man X2", .region = "USA",
+    .num_players = 2,
+    .rom_file = "mmx2.sfc", .game_id = "megaman-x2-us",
+    .build_version = SNESRECOMP_BUILD_VERSION,
+    .game_info = &kX2ExtGameInfo,
+    .default_config_ini = kMmxDefaultConfig,
+    .env_prefix = "MMX", .debug_port = 4377,
+    .native_widescreen = 0, .state_menu_hotkeys = 1,
+    .display_aspect_supported = 1, .shader_supported = 1,
+    .rewind_settings = 1,
+    /* The in-game launcher is X1's (the host seeds it from the session's
+     * first descriptor); what it changes applies to both pages. */
+    .in_game_launcher = 1,
+    .save_resume_state = MmxX2ExtSaveResume,
+    .map_seat_input = MmxKeyConfigMapSeat,
+    .after_run_frame = MmxX2ExtAfterFrame,
+    .prepare_frame = MmxX2PrepareFrame, .draw_frame = MmxX2DrawFrame,
+    .compute_viewport = MmxViewport, .window_base_width = MmxWindowWidth,
+    .window_base_height = MmxDisplay_GetWindowBaseHeight,
+    .on_shutdown = MmxShutdown,
+  };
+  MmxX2ExtSetHost(&game, &x2_game);
+#endif
   int result = snesrecomp_desktop_main(&game, argc, argv);
   MmxReplayClose();
   return MmxReplayPlaying() && (MmxReplayFailed() || !MmxReplayFinished()) ? 2 : result;

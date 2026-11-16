@@ -137,6 +137,9 @@ typedef unsigned (*MmxRendererWorldSpriteProvider)(MmxRenderWorldSprite *out,
                                                    unsigned max);
 
 void MmxRendererSetWorldSpriteProvider(MmxRendererWorldSpriteProvider provider);
+/* The registered providers, for a renderer other than this one (X2 page). */
+MmxRendererPlayerOverlayProvider MmxRendererGetPlayerOverlayProvider(void);
+MmxRendererWorldSpriteProvider MmxRendererGetWorldSpriteProvider(void);
 /* Copy the immutable snapshot captured by BeginFrame. */
 unsigned MmxRendererWorldSpriteSnapshot(MmxRenderWorldSprite *out,
                                         unsigned max);
@@ -168,6 +171,7 @@ extern bool g_mmx_render_asset_repairs;
 extern MmxRenderAspect g_mmx_custom_aspect;
 extern MmxRenderView g_mmx_custom_view;
 void MmxRendererSetCompactCoopHud(bool compact);
+bool MmxRendererCompactCoopHud(void);
 /* Co-op Superstars: the fallen player's head at the bottom of the screen with
  * a clock ring for the wait, a red sign while a fight forbids the respawn, and
  * "PRESS START" once it is allowed. pixels are BGR555 with bit 15 set where

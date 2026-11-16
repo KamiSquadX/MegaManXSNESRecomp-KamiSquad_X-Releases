@@ -38,6 +38,8 @@ unsigned MmxWeaponsTimePhase(const MmxWeaponCombatState *state);
 /* Live X1 terrain, available even when no imported weapon pack is enabled. */
 unsigned MmxWeaponsTerrainClass(const uint8_t ram[0x20000],int x,int y);
 bool MmxWeaponsTerrainSolid(const uint8_t ram[0x20000],int x,int y,bool floor,int *surface);
+/* Terrain classes from another source (X2's page); NULL: X1's map. */
+void MmxWeaponsSetTerrainSource(unsigned (*source)(int x, int y));
 bool MmxWeaponsCombatActive(void);
 void MmxWeaponsPlayerTick(uint8_t ram[0x20000]);
 void MmxWeaponsPlayerMotion(uint8_t ram[0x20000],unsigned object);

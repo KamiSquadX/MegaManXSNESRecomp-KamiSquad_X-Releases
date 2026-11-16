@@ -44,6 +44,11 @@ unsigned MmxWeaponsEnergyRead(unsigned address, unsigned original);
 /* The guest RAM the energy hooks read $0BDB from (sub tank protection). */
 void MmxWeaponsSetGuestRam(const uint8_t *ram);
 void MmxWeaponsSetKsx(uint8_t *(*active)(void), void (*menu_choice)(uint8_t *ram, unsigned item));
+/* An extended page's weapon (page 1 X2, 2 X3; weapon 1..8) is offered only
+ * when `owned` says so; NULL offers them all (the default). */
+void MmxWeaponsSetOwnedQuery(bool (*owned)(unsigned page, unsigned weapon));
+/* An extended page's weapon is owned (always, without an owned query). */
+bool MmxWeaponsPageWeaponOwned(unsigned page, unsigned weapon);
 bool MmxWeaponsEnergyStore(unsigned value, bool pickup);
 void MmxWeaponsEnergyOverflow(uint8_t ram[0x20000], unsigned index);
 void MmxWeaponsRefill(void);

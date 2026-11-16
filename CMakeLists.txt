@@ -245,6 +245,51 @@ add_mmx_variant(RockmanXSNESRecomp "${CMAKE_CURRENT_SOURCE_DIR}/variants/jp/gen"
     "${CMAKE_CURRENT_SOURCE_DIR}/variants/jp/config"
     MMX_VARIANT_JP=1 SNESRECOMP_LLE_BOUNCE_DEFAULT=0)
 
+# X-tensions: X2 game extension (alpha). Mega Man X2 as a second program in
+# the USA executable: x2/src/gen is generated from the player's own X2 ROM
+# with module id and symbol prefix "x2" (x2/recomp/generate.toml), and is
+# never committed. Its objects build with the game target's definitions but
+# X2's own headers first, since both programs ship a funcs.h, variables.h and
+# banks.h.
+set(MMX_X2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/x2")
+option(MMX_X2_EXTENSION "Link Mega Man X2 (x2/src/gen) as a second program"
+    ON)
+if(MMX_X2_EXTENSION AND TARGET MegaManXSNESRecomp AND
+        EXISTS "${MMX_X2_DIR}/src/gen/dispatch_v2.c")
+    file(GLOB mmx_x2_generated CONFIGURE_DEPENDS "${MMX_X2_DIR}/src/gen/*.c")
+    add_library(mmx_x2_program OBJECT ${mmx_x2_generated}
+        src/x2ext/x2_runtime.c src/x2ext/x2_game_info.c)
+    target_include_directories(mmx_x2_program PRIVATE
+        "${MMX_X2_DIR}/src/gen" "${MMX_X2_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/x2ext"
+        $<TARGET_PROPERTY:MegaManXSNESRecomp,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(mmx_x2_program PRIVATE
+        $<TARGET_PROPERTY:MegaManXSNESRecomp,COMPILE_DEFINITIONS>)
+    target_compile_options(mmx_x2_program PRIVATE
+        $<TARGET_PROPERTY:MegaManXSNESRecomp,COMPILE_OPTIONS>)
+    if(MSVC)
+        target_compile_options(mmx_x2_program PRIVATE /bigobj)
+    else()
+        target_compile_options(mmx_x2_program PRIVATE -w)
+    endif()
+    target_link_libraries(mmx_x2_program PRIVATE ${SNESRECOMP_RUNNER_LIBRARIES})
+    # Zero's X2 hooks (docs/x2-zero-port.md), idempotent like X1's.
+    add_custom_target(mmx_x2_program_hooks
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/apply_x2_zero_hooks.py
+                --gen-dir ${MMX_X2_DIR}/src/gen
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Applying Zero's X2 hooks to the generated X2 program" VERBATIM)
+    add_dependencies(mmx_x2_program mmx_x2_program_hooks)
+    set_property(SOURCE ${mmx_x2_generated} APPEND PROPERTY OBJECT_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/apply_x2_zero_hooks.py)
+    target_sources(MegaManXSNESRecomp PRIVATE
+        $<TARGET_OBJECTS:mmx_x2_program> src/x2ext/mmx_x2ext.c src/x2ext/mmx_x2zero.c src/x2ext/mmx_x2coop.c
+        src/x2ext/mmx_x2split.c src/x2ext/mmx_x2share.c src/x2ext/mmx_x2pass.c src/x2ext/mmx_x2pause.c)
+    target_compile_definitions(MegaManXSNESRecomp PRIVATE MMX_X2_EXTENSION=1)
+    list(LENGTH mmx_x2_generated _mmx_x2_count)
+    message(STATUS "MegaManXSNESRecomp: X2 game extension, ${_mmx_x2_count} generated X2 translation unit(s)")
+endif()
+
 if(NOT ANDROID)
 include(CTest)
 endif()

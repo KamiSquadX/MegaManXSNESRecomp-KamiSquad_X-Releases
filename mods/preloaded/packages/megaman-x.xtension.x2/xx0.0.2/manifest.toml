@@ -1,0 +1,36 @@
+format_version = 1
+id = "megaman-x.xtension.x2"
+version = "xx0.0.2"
+name = "X2 game extension (alpha)"
+author = "KamiSquad_X"
+description = "Adds Mega Man X2 to Mega Man X as a second stage select page, running X2's own code from your X2 ROM (based on MegaManX2Recomp)."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "megaman-x-us"
+rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
+
+[[feature]]
+id = "game"
+name = "X2 game extension"
+description = "On the stage select, R (NEXT WEAPON) turns the page to Mega Man X2's stage select and L (PREV WEAPON) turns back to X1's. X2 plays as normal. Heart Tanks, Sub Tanks and extra lives are shared: an item taken in either game counts in both (max HP up to 32, up to four Sub Tanks), and lives and Sub Tank energy carry over at each page turn. Each game keeps its own items to collect. Sub Tanks five to eight turn tanks 1-4 into Xtreme Sub Tanks: each holds a whole health bar and gives only what is missing, keeping the rest. OPTION MODE, KEY CONFIG and the launcher's settings apply on both pages."
+group = "X-tensions"
+default_enabled = false
+
+[[resource]]
+feature = "game"
+id = "x2-rom"
+label = "Mega Man X2 ROM"
+description = "Select your original Mega Man X2 USA ROM. This selection is shared with the X2 weapons and Boss Rush."
+format = "file"
+file_patterns = "*.sfc,*.smc"
+file_description = "Mega Man X2 USA ROM"
+shared_key = "megaman-x.source.x2"
+normalized_sha256 = "f3246755f608a1e1dc9c848b61da3b824c7853b29b3be40df6fc7f2793a887ed"
+required = true
+
+[[plugin]]
+feature = "game"
+id = "megaman-x.xtension.x2"

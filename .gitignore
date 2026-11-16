@@ -135,3 +135,13 @@ ghidra/*
 !/assets/ksx-zero/sprites/*.png
 !/assets/ksx-zero/icons/
 !/assets/ksx-zero/icons/*.png
+
+# X-tensions: the vendored MegaManX2Recomp (x2/). Its generated recompiler
+# output is ROM-derived and never committed (as upstream); the toolkit is the
+# root snesrecomp (x2/snesrecomp links to it) and the Diz project is only
+# needed to regenerate.
+/x2/src/gen/*
+!/x2/src/gen/.gitkeep
+/x2/recomp/funcs.h
+/x2/snesrecomp
+/x2/third_party/dizProjects

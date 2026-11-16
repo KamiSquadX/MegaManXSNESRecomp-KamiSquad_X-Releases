@@ -1,0 +1,25 @@
+format_version = 1
+id = "megaman-x.xtension.x1-x2-weapons"
+version = "xx0.0.2"
+name = "X1 to X2 boss weapons"
+author = "KamiSquad_X"
+description = "Boss weapons across the X1 and X2 pages of the X2 game extension: an X1 weapons page in X2's pause screen, and X2 weapons in X1 earned by beating their bosses in X2."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "megaman-x-us"
+rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
+
+[[feature]]
+id = "weapons"
+name = "X1 to X2 boss weapons"
+description = "Needs the X2 game extension. In X2's pause screen, for X and Zero, L (PREV WEAPON) / R (NEXT WEAPON) turn between X2's weapons and an X1 weapons page in X2's layout (blank for X for now; KSX Zero's lists his X1 skills, in X1's order, as their Mavericks are beaten in X1). With X2 boss weapons on, X1's X2 weapons page shows each X2 weapon, and L / R in a stage switch to it, only after its boss is beaten on the X2 page."
+group = "X-tensions"
+order = 2
+default_enabled = false
+
+[[plugin]]
+feature = "weapons"
+id = "megaman-x.xtension.x1-x2-weapons"

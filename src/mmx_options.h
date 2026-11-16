@@ -45,6 +45,10 @@ bool MmxOptionsScreenActive(void);
  * dash window) answers a double tap too. Runs on the recorded word, so
  * replays and netplay reproduce it. */
 bool MmxOptionsFrameBegin(uint32_t *inputs);
+/* X2 game extension: DOUBLE TAP DASH and HOLD DASH on X2's frames. */
+bool MmxOptionsX2FrameBegin(uint32_t *inputs);
+/* X2's own second-tap dash disarmed (once, when the extension activates). */
+void MmxOptionsRegisterX2Hooks(void);
 /* Host frame_end: Axl's post-frame work, then the replay. */
 void MmxOptionsFrameEnd(void);
 
