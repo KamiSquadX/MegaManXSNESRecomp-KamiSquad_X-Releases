@@ -80,8 +80,9 @@ bool MmxX2SplitWanted(void);
  * player 2's pane from it. */
 void MmxX2SplitFrameStart(void);
 void MmxX2SplitRenderPane(void);
-/* Host presenter: both panes side by side (frame_w = 2 * 256). */
-void MmxX2SplitPrepareFrame(int *frame_w, int *frame_h);
+/* Host presenter: both panes side by side (frame_w = 2 * pane_w; pane_w is
+ * 256, or wider in widescreen). */
+void MmxX2SplitPrepareFrame(int pane_w, int *frame_w, int *frame_h);
 int MmxX2SplitDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field, int w, int h);
 
 #ifdef __cplusplus
