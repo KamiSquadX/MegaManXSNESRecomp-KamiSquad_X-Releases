@@ -3391,9 +3391,13 @@ void draw_source_selectables(LauncherModel* m, int p) {
     const bool n64_prof = src_prof && src_prof->id &&
                           !strcmp(src_prof->id, "n64");
 #if defined(__ANDROID__) || defined(__SWITCH__)
-    /* The on-screen gamepad: drawn over the game, driven by touch. */
-    if (p == 0 && ImGui::Selectable(ui_text("On-screen Gamepad"),
-                                    m->s.player_src[p] == RECOMP_LAUNCHER_SRC_TOUCH)) {
+    /* The on-screen gamepad: drawn over the game, driven by touch. Player 1
+     * or player 2 (co-op with a real pad on the other player); there is one,
+     * so the other player gives it up. */
+    if (p < 2 && ImGui::Selectable(ui_text("On-screen Gamepad"),
+                                   m->s.player_src[p] == RECOMP_LAUNCHER_SRC_TOUCH)) {
+        if (m->s.player_src[1 - p] == RECOMP_LAUNCHER_SRC_TOUCH)
+            launcher_model_set_source(m, 1 - p, 0, 0, nullptr, nullptr);
         launcher_model_set_source(m, p, RECOMP_LAUNCHER_SRC_TOUCH, 0, nullptr, nullptr);
         launcher_binds_refresh(m);
     }
