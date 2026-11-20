@@ -434,7 +434,8 @@ static bool ParseVSync(const char *value, uint8 *result) {
 }
 
 /* [Controller] SourceP1/SourceP2: which device drives each player, matching
- * the launcher's three-way row -- 0 none, 1 keyboard, 2 gamepad. EnableGamepadN
+ * the launcher's row -- 0 none, 1 keyboard, 2 gamepad, 3 on-screen gamepad
+ * (Android / Switch; one player at a time). EnableGamepadN
  * cannot carry this: it has no way to say "player 2 is on the keyboard". */
 static bool ParsePlayerSource(int player, const char *value) {
   long v = strtol(value, (char **)NULL, 10);

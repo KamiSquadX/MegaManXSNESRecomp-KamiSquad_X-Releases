@@ -25,4 +25,9 @@
 int snes_state_dump(const char *dir, const char *tag, const uint8_t *pixels,
                     int pitch_bytes, int x0, int height, uint32_t frame);
 
+/* <tag>.screen.bmp: the frame as the player sees it (width x height BGRX,
+ * widescreen margins and side-by-side panes included). Returns 0 on success. */
+int snes_state_dump_screen(const char *dir, const char *tag, const uint8_t *pixels,
+                           int pitch_bytes, int width, int height);
+
 #endif

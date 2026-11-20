@@ -65,6 +65,25 @@ void RtlWidescreenPresent(uint8_t *dst, size_t pitch, const uint8_t *src,
     }
   }
   extern int snes_frame_counter;
+  /* The frame number is the game's own, and it can go back or jump ahead: a
+   * state load, rewind or reset, or a second game in the same window (the X2
+   * extension counts X2's frames apart from X1's). After a jump the capture
+   * follows the number it lands on instead of waiting for the old one (a
+   * long jump ahead is not filled with copies of one image either). */
+  static int last_frame = -1;
+  const int frame_now = snes_frame_counter;
+  if (last_frame >= 0 && (frame_now < last_frame || frame_now > last_frame + 600)) {
+    if (frame_now < last_frame)
+      dumped_target = 0;
+    if (dump_dir_next >= 0) {
+      const char *start = getenv("SNESRECOMP_FRAME_BMP_START");
+      int next = start && *start ? atoi(start) : 0;
+      if (frame_now > next)
+        next += (frame_now - next + dump_dir_step - 1) / dump_dir_step * dump_dir_step;
+      dump_dir_next = next;
+    }
+  }
+  last_frame = frame_now;
   if (dump_path) {
     if (dump_frame >= 0 && !dumped_target &&
         snes_frame_counter >= dump_frame) {

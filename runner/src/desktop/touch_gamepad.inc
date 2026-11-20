@@ -69,7 +69,7 @@ typedef struct TouchFinger {
   float x, y;           /* window pixels */
 } TouchFinger;
 
-static GamepadInfo g_touch_gi;          /* the virtual controller (index 0) */
+static GamepadInfo g_touch_gi;          /* the virtual controller (index = its seat) */
 static TouchFinger g_touch_fingers[10];
 static uint32 g_touch_held;             /* kGamepadBtn_* bits sent as held */
 static uint32 g_touch_down;             /* ... actually under a finger */
@@ -80,8 +80,16 @@ static float g_touch_stick[2][2];       /* knob offset per stick, -1..1 */
 static TouchShape g_touch_shape[kTouchControls + 1];
 static int g_touch_w, g_touch_h;
 
+/* The player the on-screen gamepad drives: the first seat whose input
+ * source is the on-screen gamepad (3), else -1. Player 1 by default, but
+ * player 2 may take it (co-op with a real pad on player 1). */
+static int TouchPadSeat(void) {
+  for (int seat = 0; seat < kSnesHostPadSeats; ++seat)
+    if (g_config.player_src[seat] == 3) return seat;
+  return -1;
+}
 static bool TouchPadActive(void) {
-  return g_config.player_src[0] == 3;
+  return TouchPadSeat() >= 0;
 }
 static bool TouchShown(int control) {
   return control == kTouchMenu || (g_config.touch_buttons >> control & 1u);
@@ -187,6 +195,11 @@ static void TouchApply(void) {
   held |= g_touch_latch;
   uint32 changed = held ^ g_touch_held;
   g_touch_held = held;
+  /* Its presses go through that player's gamepad bindings. A release keeps
+   * the command its press found (last_cmd), so a seat change cannot strand a
+   * button on the old player. */
+  const int seat = TouchPadSeat();
+  if (seat >= 0) g_touch_gi.index = (uint8)seat;
   for (int b = 0; b < kGamepadBtn_Count; ++b)
     if (changed >> b & 1u) HandleGamepadInput(&g_touch_gi, b, (held >> b & 1u) != 0);
 }

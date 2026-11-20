@@ -193,6 +193,36 @@ static int write_apu_events(const char *dir, const char *tag) {
   return rc;
 }
 
+int snes_state_dump_screen(const char *dir, const char *tag, const uint8_t *pixels,
+                           int pitch_bytes, int width, int height) {
+  if (!pixels || width <= 0 || height <= 0) return -1;
+  FILE *f = open_out(dir, tag, ".screen.bmp", "wb");
+  if (!f) return -1;
+  const int row = (width * 3 + 3) & ~3;
+  uint8_t hdr[54] = { 'B', 'M' };
+  put_le32(hdr + 2, 54u + (uint32_t)(row * height));
+  put_le32(hdr + 10, 54);
+  put_le32(hdr + 14, 40);
+  put_le32(hdr + 18, (uint32_t)width);
+  put_le32(hdr + 22, (uint32_t)height);
+  put_le16(hdr + 26, 1);
+  put_le16(hdr + 28, 24);
+  put_le32(hdr + 34, (uint32_t)(row * height));
+  fwrite(hdr, 1, sizeof(hdr), f);
+  uint8_t *line = (uint8_t *)calloc(1, (size_t)row);
+  for (int y = height - 1; y >= 0 && line; y--) {
+    const uint8_t *s = pixels + (size_t)y * pitch_bytes;
+    for (int x = 0; x < width; x++) {
+      line[x * 3 + 0] = s[x * 4 + 0];
+      line[x * 3 + 1] = s[x * 4 + 1];
+      line[x * 3 + 2] = s[x * 4 + 2];
+    }
+    fwrite(line, 1, (size_t)row, f);
+  }
+  free(line);
+  return fclose(f) == 0 && line ? 0 : -1;
+}
+
 int snes_state_dump(const char *dir, const char *tag, const uint8_t *pixels,
                     int pitch_bytes, int x0, int height, uint32_t frame) {
   int rc = 0;

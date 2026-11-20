@@ -137,6 +137,10 @@ typedef struct SnesDesktopHostGame {
 
   /* Decide this frame's dimensions from the window's drawable size. */
   void (*prepare_frame)(int drawable_w, int drawable_h, int *frame_w, int *frame_h);
+  /* Native widescreen only: the PPU field's width when the frame holds more
+   * than one field (two panes side by side, composed by draw_frame). NULL,
+   * or a width outside 256..frame_w: the field is the whole frame. */
+  int (*field_width)(int frame_w);
   /* Around the game's draw_ppu_frame (the raster). `field` is the PPU's
    * 256-wide ARGB output, pitch 256*4. */
   void (*begin_sim_frame)(unsigned number);

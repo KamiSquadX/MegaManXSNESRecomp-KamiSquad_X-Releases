@@ -298,6 +298,9 @@ static uint8 g_seat_keymap_ext[kSnesHostPadSeats];
 static uint8 g_seat_pad_ext[kSnesHostPadSeats];
 static int g_ppu_render_flags = 0;
 static int g_snes_width = 256, g_snes_height = 224;
+/* The PPU field's width (g_my_pixels' row): the frame's, 256 for a game-owned
+ * compositor, or one pane of a native widescreen side-by-side frame. */
+static int g_field_width = 256;
 static double g_present_alpha = 1;
 static bool g_reset_clock;
 static double g_simulation_hz = SNES_HOST_NTSC_HZ;
@@ -740,13 +743,19 @@ static void PreparePpuFrame(void) {
   int fh = g_game->frame_height > 0 ? g_game->frame_height : 224;
   if (g_game->prepare_frame)
     g_game->prepare_frame(drawable_width, drawable_height, &fw, &fh);
-  int max_width = g_game->native_widescreen ? kPpuBufWidth : kSnesDesktopMaxFrameWidth;
-  if (fw <= 0 || fw > max_width) fw = 256;
+  int field_w = g_game->native_widescreen ? fw : 256;
+  if (g_game->native_widescreen && g_game->field_width) {
+    const int f = g_game->field_width(fw);
+    if (f >= 256 && f <= fw && !(f & 1)) field_w = f;
+  }
+  int max_width = g_game->native_widescreen && field_w == fw ? kPpuBufWidth : kSnesDesktopMaxFrameWidth;
+  if (fw <= 0 || fw > max_width || field_w > kPpuBufWidth) fw = field_w = 256;
   if (fh <= 0 || fh > 240) fh = 224;
   g_snes_width = fw;
   g_snes_height = fh;
+  g_field_width = field_w;
   /* Native widescreen ports rasterize directly into the widened field. */
-  g_ws_extra = g_game->native_widescreen ? (fw - 256) / 2 : 0;
+  g_ws_extra = g_game->native_widescreen ? (field_w - 256) / 2 : 0;
   g_ws_active = g_ws_extra != 0;
   g_new_ppu = (g_ppu_render_flags & kPpuRenderFlags_NewRenderer) != 0;
   if (g_config.no_sprite_limits)
@@ -764,7 +773,7 @@ static void PreparePpuFrame(void) {
   uint32 flags = g_ppu_render_flags;
   if (g_ws_active) flags |= kPpuRenderFlags_NewRenderer;
   PpuBeginDrawing(g_ppu, g_my_pixels,
-                  (g_game->native_widescreen ? fw : 256) * 4, flags);
+                  field_w * 4, flags);
   PpuSetExtraSpace(g_ppu, (uint8)g_ws_extra);
   if (g_config.mode7.enabled && !g_game->hd_frame &&
       g_config.output_method == kOutputMethod_OpenGL) {
@@ -1109,11 +1118,23 @@ static bool ScriptCondHolds(const ScriptEntry *e) {
   return (v == e->cond_value) != (e->cond_ne != 0);
 }
 
+static int ComposeStateThumbnail(uint32_t *dst, size_t cap, int *w, int *h);
 static void ScriptDump(const char *tag, unsigned frame) {
   const char *dir = getenv("SNESRECOMP_DUMP_DIR");
-  const int pitch = (g_game->native_widescreen ? g_snes_width : 256) * 4;
+  const int pitch = g_field_width * 4;
   int rc = snes_state_dump(dir ? dir : "", tag, g_my_pixels, pitch, g_ws_extra,
                            g_snes_height, frame);
+  /* The frame as shown: a game-owned compositor's (both panes side by side,
+   * a widened view), else the field itself. */
+  {
+    static uint32_t screen[kSnesDesktopMaxFrameWidth * 240];
+    int w = 0, h = 0;
+    if (ComposeStateThumbnail(screen, sizeof(screen) / sizeof(screen[0]), &w, &h))
+      rc |= snes_state_dump_screen(dir ? dir : "", tag, (const uint8_t *)screen, w * 4, w, h);
+    else
+      rc |= snes_state_dump_screen(dir ? dir : "", tag, g_my_pixels, pitch,
+                                   g_field_width, g_snes_height);
+  }
   fprintf(stderr, "script f=%u dump %s %s\n", frame, tag, rc ? "partial" : "ok");
 }
 
@@ -1380,7 +1401,7 @@ static int ComposeStateThumbnail(uint32_t *dst, size_t cap, int *w, int *h) {
 /* Snapshots and their thumbnails share the same completed raster boundary. */
 static void NoteStateFrame(void) {
   if (g_ppu && g_ppu->renderBuffer) {
-    int width = g_game->native_widescreen ? g_snes_width : 256;
+    int width = g_field_width;
     snes_savestate_menu_note_frame((const uint32_t *)g_ppu->renderBuffer, width, g_snes_height);
     snes_rewind_note_framebuffer((const uint32_t *)g_ppu->renderBuffer, width, g_snes_height);
   }
@@ -4026,7 +4047,8 @@ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **ar
   }
 
   for (int i = 0; i < kSnesHostPadSeats; ++i) g_gamepad[i].joystick_id = -1;
-  g_ws_extra = g_game->native_widescreen ? (g_snes_width - 256) / 2 : 0;
+  g_field_width = g_game->native_widescreen ? g_snes_width : 256;
+  g_ws_extra = (g_field_width - 256) / 2;
   g_ws_active = g_ws_extra != 0;
   g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
     g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
@@ -4566,7 +4588,8 @@ error_reading:;
       if (snes_netplay_menu_paused() && !g_overlay_modal) {
         g_overlay_modal = true;
         SetAudioPaused(true);
-        snes_osd_push(snes_netplay_switching() ? "Changing games" : "Host is managing savestates", 3000);
+        /* A program switch is the game's own page turn: no notice. */
+        if (!snes_netplay_switching()) snes_osd_push("Host is managing savestates", 3000);
       } else if (!snes_netplay_menu_paused() && g_overlay_modal) {
         g_overlay_modal = false;
         GameReset();
@@ -5260,7 +5283,7 @@ static void RequestScreenshot(void) {
 static uint32 GetActiveControllers(void) {
   uint32 ctrl = g_script_controllers |
                 (g_config.player_src[0] == 1 || g_config.player_src[0] == 3 ? 1u : 0u) |
-                (g_config.player_src[1] == 1 ? 2u : 0u);
+                (g_config.player_src[1] == 1 || g_config.player_src[1] == 3 ? 2u : 0u);
   ctrl |= g_gamepad[0].joystick_id != -1 ? 1 : 0;
   ctrl |= g_gamepad[1].joystick_id != -1 ? 2 : 0;
   return ctrl << 30;
