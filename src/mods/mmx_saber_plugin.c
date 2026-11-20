@@ -58,6 +58,12 @@ static void coop_seat_pad(const uint8_t *ram, MmxSaberFramePad *pad) {
 }
 
 static uint8_t seat_ext(void) {
+#if MMX_X2_EXTENSION
+  /* X2 co-op: the seat Zero's code runs for, not X1 co-op's seat. */
+  extern int MmxX2CoopZeroSeat(void);
+  const int x2_seat = MmxX2CoopZeroSeat();
+  if (x2_seat >= 0) return RtlGetPadExt(x2_seat);
+#endif
   return RtlGetPadExt(MmxCoopEnabled() ? (int)MmxCoopCurrentSeat() : 0);
 }
 

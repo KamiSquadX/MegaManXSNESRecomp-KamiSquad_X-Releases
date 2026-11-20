@@ -355,6 +355,12 @@ void MmxCoopSetLearner(bool active) { configured_learner = active; }
 bool MmxCoopLearner(void) { return learner_mode; }
 /* Generated $84:9F2F/9F2A enter the interpreter, where learner_hurt_hook runs. */
 bool MmxCoopLearnerRoute(const CpuState *cpu) { (void)cpu; return learner_mode && state.initialized; }
+/* A seat's body (live or stored) while it plays (shared items). */
+uint8_t *MmxCoopSeatBody(uint8_t *ram,unsigned seat) {
+  if(!enabled || !state.initialized || !ram || seat>1 || state.players[seat].status!=MMX_COOP_ALIVE) return NULL;
+  return seat==state.current?ram+0xba8:state.players[seat].body;
+}
+unsigned MmxCoopSeatCharacter(unsigned seat) { return seat<2?state.players[seat].character:0; }
 uint8_t *MmxCoopCharacterBody(uint8_t *ram,unsigned character) {
   if(!enabled || !state.initialized || !ram || character>MMX_COOP_ZERO)return NULL;
   for(unsigned i=0;i<2;++i)if(state.players[i].character==character && state.players[i].status==MMX_COOP_ALIVE)

@@ -1,10 +1,9 @@
 /* Mega Man X2's frame driver inside the Mega Man X executable (X-tensions:
  * X2 game extension). Adapted from MegaManX2Recomp's src/x2_rtl.c
  * (PolyForm Noncommercial 1.0.0, see x2/LICENSE): the same whole-program LLE
- * frame loop, PPU presentation and save-state cursor. Its widescreen HUD and
- * background-margin passes are left out; X2 runs at 4:3 here. The object
- * window helpers stay, because X2's generated code calls them, and they are
- * the vanilla constants while widescreen is inactive. */
+ * frame loop, PPU presentation and save-state cursor, and its widescreen
+ * passes: HUD anchoring, margin backgrounds and the object windows (the
+ * vanilla constants while widescreen is inactive). */
 /* Mega Man X2 — LLE-first bring-up runtime.
  *
  * The faithful floor per PRINCIPLES.md: boot the real RESET vector through the
@@ -45,6 +44,9 @@ void MmxX2BridgeLoadState(const uint8_t *in, size_t size);
 #include "snes/ppu.h"
 #include "snes/saveload.h"
 #include "snes/ws_shadow.h"
+#include "snes/mmx23_background.h"
+#include "widescreen.h"
+#include <stdlib.h>
 #include "types.h"
 #include "widescreen.h"
 
@@ -216,6 +218,181 @@ void X2RunOneFrameOfGame(void) {
   MmxX2CoopDiagnosticFrame();
 }
 
+/* ── 16:9 HUD anchoring ───────────────────────────────────────────────────
+ *
+ * Measured OAM slot map (docs/OAM_SURVEY.md), confirmed in gameplay against
+ * owner-supplied save states:
+ *
+ *   HP bar      slots  0-5   screen X 8     attr 0x34   anchors LEFT
+ *   weapon bar  slots  7-13  screen X 24    attr 0x36   anchors LEFT
+ *   boss bar    slots 16-22  screen X 232   attr 0x34   anchors RIGHT
+ *   actors      slots 24+
+ *
+ * The bars anchor to OPPOSITE edges, so they cannot be shifted as one block.
+ * PpuAdjustWidescreenHudOamX already handles that: it pushes sprites left of
+ * wsHudLeftEnd outward by extraLeftCur and sprites at/after wsHudRightStart
+ * outward by extraRightCur. So this only has to configure it correctly.
+ *
+ * The layout is symmetric -- HP's left edge is 8px from the left, and the boss
+ * bar at X=232 is 16px wide so its right edge is 8px from the right -- so both
+ * sides move by the same margin and stay symmetric at any width.
+ */
+enum {
+  kX2HudSlotFirst = 0,        /* HP / weapon occupy 0..15 */
+  kX2HudBandHeight = 96,      /* measured HUD Y extent is 0..80       */
+  kX2HudLeftEnd = 64,         /* HP X=8 and weapon X=24 are below this */
+  kX2HudRightStart = 192,     /* boss X=232 is at/above this          */
+};
+
+static int s_x2_hud_left;
+
+/* True when the health bar's measured signature is present in live OAM.
+ *
+ * Cutscenes reuse slots 0-23 for actors, so the shift MUST NOT be applied
+ * whenever those slots merely happen to be populated. Gating on the HUD's own
+ * fingerprint avoids inventing a WRAM game-state byte and fails safe: no
+ * signature, no shift, authentic placement. Requires only the HP bar -- the
+ * weapon bar is absent until a special weapon is equipped, and the boss bar
+ * only exists during a fight. */
+static int x2_ws_hud_present(void) {
+  if (!g_ppu) return 0;
+
+  /* Slot 0 is the bar's "X" icon: tile 0x86, palette 0x34, hard against the
+   * left edge. Distinctive enough that a cutscene actor will not impersonate it. */
+  const unsigned icon_x = g_ppu->oam[0] & 0xFFu;
+  const unsigned icon_y = g_ppu->oam[0] >> 8;
+  const unsigned icon_tile = g_ppu->oam[1] & 0xFFu;
+  const unsigned icon_attr = g_ppu->oam[1] >> 8;
+  const unsigned icon_xhi = g_ppu->highOam[0] & 1u;
+  if (icon_x != 8u || icon_xhi || icon_attr != 0x34u ||
+      icon_tile != 0x86u || icon_y >= kX2HudBandHeight)
+    return 0;
+
+  /* Corroborate with the bar frame, slots 0-4. Do NOT demand an exact count:
+   * the bar's length varies with max health and slot 5 parks at Y=224 in most
+   * of the stage. An earlier version required all of 0-5 and therefore
+   * evaluated 5/6 and disabled itself nearly everywhere -- the HUD stayed at
+   * 4:3, which is the failure this tolerance exists to prevent. */
+  unsigned frame_slots = 0;
+  for (unsigned slot = 0; slot <= 4; slot++) {
+    const unsigned w = slot * 2u;
+    const unsigned x = g_ppu->oam[w] & 0xFFu;
+    const unsigned y = g_ppu->oam[w] >> 8;
+    const unsigned attr = g_ppu->oam[w + 1] >> 8;
+    const unsigned xhi = (g_ppu->highOam[w >> 3] >> (w & 7)) & 1u;
+    if (x == 8u && !xhi && attr == 0x34u && y < kX2HudBandHeight)
+      frame_slots++;
+  }
+  return frame_slots >= 4u;
+}
+
+static bool x2_ws_boss_hud_present(void) {
+  unsigned matches=0;
+  for (unsigned slot=16; slot<23; ++slot) {
+    unsigned w=slot*2;
+    unsigned x=g_ppu->oam[w]&255, y=g_ppu->oam[w]>>8;
+    unsigned attr=g_ppu->oam[w+1]>>8;
+    unsigned xhi=(g_ppu->highOam[slot>>2]>>((slot&3)*2))&1;
+    matches += x==232 && !xhi && attr==0x34 && y<kX2HudBandHeight;
+  }
+  return matches>=4;
+}
+
+/* Call once per frame from the host's frame-prep, after g_ws_extra is known. */
+void X2ConfigureWsHud(void) {
+  extern bool g_ws_active;
+  if (!g_ppu) return;
+  /* X2's bars are sprites. BG3 carries the rocket scenery/masks, so shifting
+   * its top corners as HUD creates black rectangles inside the native view.
+   * Use the same independent OAM anchor already used by X3. */
+  PpuSetWidescreenHudSplit(g_ppu, 0, 0, 0);
+  s_x2_hud_left = 0;
+  if (!g_ws_active || !x2_ws_hud_present()) {
+    PpuSetWsHudOamShiftRange2(g_ppu, 0, 0);
+    PpuSetWsHudOamShiftRange(g_ppu, 0, 0);   /* off = authentic placement */
+    return;
+  }
+  PpuSetWsHudOamBand(g_ppu, kX2HudBandHeight,
+                           kX2HudLeftEnd, kX2HudRightStart);
+  PpuSetWsHudOamShiftRange(g_ppu, kX2HudSlotFirst, 16);
+  PpuSetWsHudOamShiftRange2(g_ppu, 16, x2_ws_boss_hud_present() ? 7 : 0);
+  s_x2_hud_left = g_ws_extra;
+}
+
+/* How far the left-anchored HUD (HP and weapon bars, x < 64) moves out this
+ * frame: what the extension draws on those bars moves with them. */
+int X2WsHudLeftShift(void) { return s_x2_hud_left; }
+
+/* The shared X2/X3 host's begin_sim_frame (mmx23_host_main.inc): HUD
+ * anchoring, Wire Sponge's BG3 weather repeat, the margin backgrounds. */
+void X2WsBeginFrame(void) {
+  if (!g_ppu) return;
+  X2ConfigureWsHud();
+  static int s_bg3_enabled = -1;
+  if (s_bg3_enabled < 0) {
+    const char *e = getenv("SNESRECOMP_WS_BG3");
+    s_bg3_enabled = (e && e[0] == '0') ? 0 : 1;
+  }
+  const bool bg3_sub_overlay = s_bg3_enabled &&
+      g_ppu->screenEnabled[1] == 0x04 && !(g_ppu->screenEnabled[0] & 0x04);
+  PpuSetWidescreenLayerRepeat(g_ppu, bg3_sub_overlay ? 0x04 : 0x00);
+  PpuSetWidescreenLineEnhancer(g_ppu, NULL, NULL);
+  X2ConfigureWsBgMargins();
+}
+
+/* Exact background source for the widescreen margins. */
+void X2ConfigureWsBgMargins(void) {
+  /* The authored Serges room ends at camera-max+256. Its foreground is the
+   * repeating wall/spike backdrop; the moving machine is a separate BG2
+   * canvas and the seat/pilot are OAM. Select the room from its authored
+   * camera limit and resident machine, including the camera's approach to
+   * the lock: its right boundary is already visible in a widescreen gutter
+   * before the live scroll reaches the limit. Continue the backdrop there.
+   * Preserve the real left gutter (including its door at wider aspects);
+   * repeating the composed frame would also duplicate the boss/platforms. */
+  uint16_t repeat_right=0;
+  if (g_ws_active && g_ppu && g_ram[0x1fad] == 10 &&
+      (g_ppu->bgmode & 0x37) == 1 &&
+      (g_ram[0x1e70] | g_ram[0x1e71] << 8) == 0x0a80) {
+    for (unsigned object=0xd18; object<0x1518; object+=0x40) {
+      if (g_ram[object] && g_ram[object+10] == 0x61 && !g_ram[object+11]) {
+        repeat_right=0x0b80;
+        break;
+      }
+    }
+  }
+  /* This actor's BG2 art is already in its local map before the native
+   * streamer uploads the full front. Resolve gutters from that live map,
+   * including cannon destruction, even while the native view is empty. */
+  Mmx23ConfigureWsBgMarginsForRoom(g_snes,g_ppu,g_ram,g_ws_active,
+                                  repeat_right,repeat_right != 0);
+  /* The arena's BG2 is a complete circular parallax canvas. Its HDMA scroll
+   * exposes columns beyond the finite world-source layout (for example
+   * worldX768), where an exact-source query returns black padding instead
+   * of the scenery already present in VRAM. Keep the real hardware canvas
+   * for this layer, including per-line scroll. The ride retains its policy. */
+  if (g_ws_active && g_ram[0x1fad] == 7 &&
+      g_ram[0xd1] == 4 && g_ram[0xd2] == 4 &&
+      (g_ram[0x1e60] | g_ram[0x1e61] << 8) == 0x0318 &&
+      g_ram[0x9da] != 0x40)
+    WsShadowUseVram(1);
+  /* The fixed final arena has no authored scenery outside its side walls.
+   * Extend only the wall-edge pixels with the existing elastic compositor;
+   * retain the native room 1:1 and contain the BG2 boss canvas so its circular
+   * map cannot echo a second head into a gutter. Bounds, rather than the live
+   * scroll, keep the policy stable through the original camera shake. */
+  static const uint8_t sigma_bounds[10] = {
+      0x00,0x0e,0x00,0x0d,0x00,0x0d,0x00,0x0e,0x00,0x0e};
+  if (g_ws_active && g_ppu && g_ram[0x1fad] == 5 &&
+      (g_ram[0x1fae] == 4 || g_ram[0x1fae] == 5) && g_ram[0xd1] == 4 &&
+      (g_ppu->bgmode & 7) == 1 &&
+      (g_ppu->bgXsc[0] & 0xfc) == 0x50 && (g_ppu->bgXsc[1] & 0xfc) == 0x58 &&
+      !memcmp(g_ram+0x1e68,sigma_bounds,sizeof(sigma_bounds))) {
+    PpuSetWidescreenLayerElasticSplitBandSlot(g_ppu,0,0,0,224,0,1,255,256);
+    PpuSetWidescreenLayerClamp(g_ppu,2);
+  }
+}
+
 
 bool X2UseNativeFrame(void) {
   return g_ram[0x1fad] == 12 && g_ram[0xd1] == 4;
@@ -247,16 +424,14 @@ static int x2_ws_spawn_margin(void) {
   /* Side by side co-op: objects in player 2's view, around player 1's
    * camera, stay alive (mmx_x2coop.c's leash). */
   const int split = MmxX2CoopSplitMargin();
-  if (split && !g_ws_active)
-    return split;
   if (!g_ws_active)
-    return 0;
+    return split;
   /* Margin alone is not enough: a window widened by exactly the margin
    * activates objects ON the outermost visible wide column — the pop-in
    * just moves to the 16:9 edge (owner-observed; WIDESCREEN.md's "+32"
    * rule). Add slack so activation happens beyond the visible edge; 32px
    * matches MMX1 and covers most sprite half-widths. */
-  return g_ws_extra + 32;
+  return g_ws_extra + 32 > split ? g_ws_extra + 32 : split;
 }
 
 uint16 X2WsObjWinAdd(uint16 base) {

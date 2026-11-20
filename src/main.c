@@ -5,7 +5,7 @@
 #include "x2ext/x2_runtime.h"
 /* mmx_x2split.c: Side by side co-op on the X2 page. */
 bool MmxX2SplitWanted(void);
-void MmxX2SplitPrepareFrame(int *frame_w, int *frame_h);
+void MmxX2SplitPrepareFrame(int pane_w, int *frame_w, int *frame_h);
 int MmxX2SplitDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field, int w, int h);
 #endif
 #include <stdio.h>
@@ -17,6 +17,7 @@ int MmxX2SplitDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field, int w,
 #include "snes/snes.h"
 #include "snes/apu.h"
 #include "snes/ws_shadow.h"
+#include "snes/tier2_capture.h"
 #include "widescreen.h"
 #include "mmx_rtl.h"
 #include "mmx_display.h"
@@ -35,6 +36,7 @@ int MmxX2SplitDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field, int w,
 #include "mmx_netplay.h"
 #include "mmx_key_config.h"
 #include "mmx_options.h"
+#include "mmx_escape.h"
 #include "mmx_startup.h"
 #include "mmx_coop_trace.h"
 #include "mmx_coop.h"
@@ -64,6 +66,18 @@ int MmxX2SplitDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field, int w,
 #endif
 extern const RtlGameInfo kMmxGameInfo;
 extern int mmx_tier2_diagnostics_enabled(void);
+/* X1's RtlGameInfo (main): its tier2_capture follows the Tier 2 diagnostics
+ * mod, which is switched on after main reads it (mods activate later). */
+static RtlGameInfo mmx_game_info;
+void MmxTier2DiagnosticsChanged(void) {
+  const int on = mmx_tier2_diagnostics_enabled();
+  mmx_game_info.tier2_capture = on;
+#if MMX_X2_EXTENSION
+  kX2ExtGameInfo.tier2_capture = on;
+#endif
+  /* The program running now (X1, or X2 on the X2 page) records from here. */
+  tier2_capture_set_default_enabled(on);
+}
 
 static bool s_render_valid;
 static uint64_t s_benchmark_native_lines;
@@ -239,6 +253,12 @@ static void MmxPublishNativeField(uint8_t *field, unsigned number) {
     if (!split && MmxX2ShareX1PauseShown(g_ram))
       MmxX2ShareDrawX1Pause(s_composed_pixels, width, g_mmx_custom_view.extra);
 #endif
+    /* Escape Bugs: ESCAPE.U's command list. */
+    if (!split) MmxEscapeDrawX1(s_composed_pixels, width, g_mmx_custom_view.extra);
+#if MMX_X2_EXTENSION
+    /* Heart Tanks past eight: blue health over the HP bar. */
+    if (!split) MmxX2ShareDrawX1Blue(s_composed_pixels, width, g_mmx_custom_view.extra);
+#endif
     s_composed_view=g_mmx_custom_view; s_composed_hud=g_mmx_custom_hud;
     s_composed_split=split;
     s_composed_ready=true;
@@ -264,10 +284,25 @@ static int MmxDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field,
     if (w == 256 && h == 224 && MmxX2ShareX1PauseShown(g_ram)) {
       if (!MmxHitboxOverlayDrawStock(output, field)) memcpy(output, field, 256 * 224 * 4);
       MmxX2ShareDrawX1Pause(output, 256, 0);
+      MmxEscapeDrawX1(output, 256, 0);
       RtlWidescreenPresent(dst, pitch, (const uint8_t *)output, w, h);
       return 1;
     }
 #endif
+#if MMX_X2_EXTENSION
+    const bool blue = MmxX2ShareBlueShown(g_ram, false);
+#else
+    const bool blue = false;
+#endif
+    if (w == 256 && h == 224 && (MmxEscapeX1ListShown(g_ram) || blue)) {
+      if (!MmxHitboxOverlayDrawStock(output, field)) memcpy(output, field, 256 * 224 * 4);
+      MmxEscapeDrawX1(output, 256, 0);
+#if MMX_X2_EXTENSION
+      MmxX2ShareDrawX1Blue(output, 256, 0);
+#endif
+      RtlWidescreenPresent(dst, pitch, (const uint8_t *)output, w, h);
+      return 1;
+    }
     if (w != 256 || h != 224 || !MmxHitboxOverlayDrawStock(output, field)) return 0;
     RtlWidescreenPresent(dst, pitch, (const uint8_t *)output, w, h);
     return 1;
@@ -306,14 +341,20 @@ static int MmxDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field,
   if (h == 224 && MmxX2ShareX1PauseShown(g_ram))
     MmxX2ShareDrawX1Pause(output, w, (w - 256) / 2);
 #endif
+  if (h == 224) MmxEscapeDrawX1(output, w, (w - 256) / 2);
+#if MMX_X2_EXTENSION
+  if (h == 224) MmxX2ShareDrawX1Blue(output, w, (w - 256) / 2);
+#endif
   RtlWidescreenPresent(dst, pitch, (const uint8_t *)output, w, h);
   return 1;
 }
 static void MmxViewport(int w, int h, int dw, int dh, SnesDisplayViewport *view) {
 #if MMX_X2_EXTENSION
-  /* X2 has its own presenter: both panes at 5:4 when Side by side. */
+  /* X2 has its own presenter: both panes at their aspect when Side by side;
+   * Mega Man X Widescreen's view fitted as X1's. */
   if (MmxX2ExtInX2()) {
-    if (MmxX2SplitWanted()) *view = SnesLocalViews_Viewport(5.0 / 4, dw, dh);
+    if (MmxX2SplitWanted()) *view = SnesLocalViews_Viewport(g_mmx_custom_view.aspect, dw, dh);
+    else if (g_config.widescreen) *view = MmxRendererDestination(g_mmx_custom_view, dw, dh);
     else MmxDisplay_ComputeViewport(w, h, dw, dh,
         SnesDisplayAspect_Clamp(g_config.display_aspect), g_config.ignore_aspect_ratio, false, view);
     return;
@@ -327,7 +368,7 @@ static void MmxViewport(int w, int h, int dw, int dh, SnesDisplayViewport *view)
 static int MmxWindowWidth(int w) {
 #if MMX_X2_EXTENSION
   if (MmxX2ExtInX2()) {
-    if (MmxX2SplitWanted()) return (int)(2 * 5.0 / 4 * MmxDisplay_GetWindowBaseHeight() + .5);
+    if (MmxX2SplitWanted()) return (int)(2 * g_mmx_custom_view.aspect * MmxDisplay_GetWindowBaseHeight() + .5);
     return MmxDisplay_GetWindowBaseWidth(w, SnesDisplayAspect_Clamp(g_config.display_aspect));
   }
 #endif
@@ -341,15 +382,107 @@ static int MmxWindowWidth(int w) {
   return MmxDisplay_GetWindowBaseWidth(w, SnesDisplayAspect_Clamp(MmxNetplayActive() ? 0 : g_config.display_aspect));
 }
 
+/* Test-run watchdog. An unattended run (--script, --replay-diagnostic,
+ * --benchmark) must end on its own: a run whose frames stop advancing for
+ * MMX_TEST_STALL_SECONDS (default 60; an error dialog waiting for a click,
+ * a deadlock) or that outlives MMX_TEST_TIMEOUT_SECONDS (default 1800) is a
+ * hang. It is reported as one and the process exits with code 124, so no
+ * test window is ever left open. Interactive play never starts it. */
+static volatile unsigned s_watchdog_frames;
+static unsigned WatchdogSeconds(const char *name, unsigned fallback) {
+  const char *e = getenv(name);
+  const long v = e && *e ? strtol(e, NULL, 10) : 0;
+  return v > 0 ? (unsigned)v : fallback;
+}
+static int SDLCALL MmxWatchdog(void *what) {
+  const unsigned stall_limit = WatchdogSeconds("MMX_TEST_STALL_SECONDS", 60);
+  const unsigned total_limit = WatchdogSeconds("MMX_TEST_TIMEOUT_SECONDS", 1800);
+  unsigned last = s_watchdog_frames, still = 0, total = 0;
+  for (;;) {
+    SDL_Delay(1000);
+    ++total;
+    const unsigned now = s_watchdog_frames;
+    still = now == last ? still + 1 : 0;
+    last = now;
+    const char *why = still >= stall_limit ? "no frame advanced for" :
+                      total >= total_limit ? "still running after" : NULL;
+    if (!why) continue;
+    fprintf(stderr, "[mmx-test] HANG (%s): %s %u s, at frame %u. This is a bug.\n",
+            (const char *)what, why, still >= stall_limit ? still : total, now);
+    fflush(stderr); fflush(stdout);
+    _Exit(124);
+  }
+}
+static void MmxStartWatchdog(int argc, char **argv) {
+  const char *what = NULL;
+  for (int i = 1; i < argc && !what; ++i)
+    if (!strcmp(argv[i], "--script")) what = "script";
+    else if (!strcmp(argv[i], "--replay-diagnostic")) what = "replay";
+    else if (!strcmp(argv[i], "--benchmark") || !strcmp(argv[i], "--benchmark-audio")) what = "benchmark";
+  if (!what) return;
+  SDL_Thread *thread = SDL_CreateThread(MmxWatchdog, "mmx-watchdog", (void *)what);
+  if (thread) SDL_DetachThread(thread);
+}
+
 #if MMX_X2_EXTENSION
+/* X2's after_run_frame: the extension's per-frame work, and a finished or
+ * failed replay ends the session here too (X1's MmxAfterFrame does the
+ * same), or a replay that ends on the X2 page would leave the window open. */
+static void MmxX2AfterFrame(const SnesDesktopHostFrameStats *stats) {
+  ++s_watchdog_frames;
+  MmxX2ExtAfterFrame(stats);
+  if (MmxReplayPlaying() && (MmxReplayFinished() || MmxReplayFailed())) {
+    SDL_Event quit = {0}; quit.type = SDL_QUIT; SDL_PushEvent(&quit);
+  }
+}
+/* Mega Man X Widescreen on the X2 page: the view (each pane, Side by side)
+ * as X1 widens its own, with X2's native-frame room kept at 256. Replays
+ * record and restore its width like X1's (it moves X2's object windows). */
 static void MmxX2PrepareFrame(int dw, int dh, int *w, int *h) {
-  (void)dw; (void)dh;
-  MmxX2SplitPrepareFrame(w, h);
+  const bool split = MmxX2SplitWanted();
+  SnesDisplayAspect display = SnesDisplayAspect_Clamp(MmxNetplayActive() ? 0 : g_config.display_aspect);
+  MmxRenderView view;
+  if (split) {
+    const double aspect = !g_config.widescreen ? 5.0 / 4 :
+        g_mmx_custom_aspect == MMX_ASPECT_16_9 ? 16.0 / 9 :
+        g_mmx_custom_aspect == MMX_ASPECT_21_9 ? 21.0 / 9 :
+        g_mmx_custom_aspect == MMX_ASPECT_32_9 ? 32.0 / 9 :
+        dw > 0 && dh > 0 ? (double)dw / (2 * dh) : 5.0 / 4;
+    const SnesDisplayFrame pane = SnesLocalViews_ComputePane(256, 224, 5.0 / 4, aspect);
+    view = (MmxRenderView){pane.width, pane.extra, pane.aspect};
+  } else if (g_config.widescreen) {
+    view = MmxRendererViewport(g_mmx_custom_aspect, dw, dh, display);
+  } else {
+    int pw, ph;
+    MmxDisplay_ComputePresentationSize(256, 224, display, &pw, &ph);
+    view = (MmxRenderView){256, 0, (double)pw / ph};
+  }
+  if (view.width < 256 || X2UseNativeFrame()) view.width = 256;
+  if (view.width > 256 + 2 * kWsExtraMax) view.width = 256 + 2 * kWsExtraMax;
+  view.width &= ~1;
+  view.extra = (view.width - 256) / 2;
+  MmxReplayViewport(&view.width, &view.extra);
+  g_mmx_custom_view = view;
+  MmxX2SplitPrepareFrame(view.width, w, h);
+}
+/* Side by side: the PPU field is player 1's pane, half the frame. */
+static int MmxX2FieldWidth(int frame_w) {
+  return MmxX2SplitWanted() ? frame_w / 2 : frame_w;
+}
+static void MmxX2BeginFrame(unsigned number) {
+  (void)number;
+  X2WsBeginFrame();
 }
 static int MmxX2DrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field,
                           int w, int h, double alpha) {
   (void)alpha;
-  return MmxX2SplitDrawFrame(dst, pitch, field, w, h);
+  /* Composed into a frame of its own, then presented the way every other
+   * frame is (RtlWidescreenPresent), so frame captures see both panes. */
+  static uint32_t frame[2 * kPpuBufWidth * 224];
+  if (w <= 0 || h <= 0 || (size_t)w * h > sizeof(frame) / sizeof(frame[0])) return 0;
+  if (!MmxX2SplitDrawFrame((uint8_t *)frame, (size_t)w * 4, field, w, h)) return 0;
+  RtlWidescreenPresent(dst, pitch, (const uint8_t *)frame, w, h);
+  return 1;
 }
 #endif
 
@@ -395,6 +528,7 @@ static void MmxShutdown(void) {
   MmxCoopSetDiagnosticsEnabled(false);
 }
 static void MmxAfterFrame(const SnesDesktopHostFrameStats *stats) {
+  ++s_watchdog_frames;
 #if MMX_X2_EXTENSION
   MmxX2ExtAfterFrame(stats);
 #endif
@@ -542,6 +676,7 @@ int MMX_DESKTOP_ENTRY(int argc, char **argv) {
   MmxArmorSetActorQuery(MmxCoopActorIsX);
   MmxArmorSetBodyQuery(MmxArmorBody);
   MmxStartupLogging();
+  MmxStartWatchdog(argc, argv);
   for(int arg=1;arg+1<argc;++arg)
     if(!strcmp(argv[arg],"--config")) MmxReplaySetConfigPath(argv[arg+1]);
   for (int arg = 1; arg < argc; ++arg) {
@@ -568,7 +703,6 @@ int MMX_DESKTOP_ENTRY(int argc, char **argv) {
     argc -= 2;
     break;
   }
-  static RtlGameInfo mmx_game_info;
   mmx_game_info = kMmxGameInfo;
   mmx_game_info.tier2_capture = mmx_tier2_diagnostics_enabled();
 
@@ -637,7 +771,8 @@ int MMX_DESKTOP_ENTRY(int argc, char **argv) {
     .game_info = &kX2ExtGameInfo,
     .default_config_ini = kMmxDefaultConfig,
     .env_prefix = "MMX", .debug_port = 4377,
-    .native_widescreen = 0, .state_menu_hotkeys = 1,
+    /* Mega Man X Widescreen: X2 is drawn wide by the PPU itself. */
+    .native_widescreen = 1, .state_menu_hotkeys = 1,
     .display_aspect_supported = 1, .shader_supported = 1,
     .rewind_settings = 1,
     /* The in-game launcher is X1's (the host seeds it from the session's
@@ -645,8 +780,9 @@ int MMX_DESKTOP_ENTRY(int argc, char **argv) {
     .in_game_launcher = 1,
     .save_resume_state = MmxX2ExtSaveResume,
     .map_seat_input = MmxKeyConfigMapSeat,
-    .after_run_frame = MmxX2ExtAfterFrame,
-    .prepare_frame = MmxX2PrepareFrame, .draw_frame = MmxX2DrawFrame,
+    .after_run_frame = MmxX2AfterFrame,
+    .prepare_frame = MmxX2PrepareFrame, .field_width = MmxX2FieldWidth,
+    .begin_sim_frame = MmxX2BeginFrame, .draw_frame = MmxX2DrawFrame,
     .compute_viewport = MmxViewport, .window_base_width = MmxWindowWidth,
     .window_base_height = MmxDisplay_GetWindowBaseHeight,
     .on_shutdown = MmxShutdown,

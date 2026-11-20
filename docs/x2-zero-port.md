@@ -1,5 +1,282 @@
 # Zero on the X2 page: port plan and findings
 
+Status (xx0.3.1alpha, released): **the dev builds xx0.1.10alpha to
+xx0.1.21alpha, released for Windows, Android and Switch.** Android: the
+On-screen Gamepad is an input source for player 2 too (one player at a
+time; picking it for one player sets the other to None), so player 1 can
+use a real pad while player 2 plays on the touch screen. The touch pad
+drives the seat whose source is 3 (touch_gamepad.inc TouchPadSeat), through
+that player's gamepad bindings.
+
+Status (xx0.1.21alpha): **Widescreen on the X2 page; screenshots of the
+whole frame; Tier 2 diagnostics on both programs.**
+
+* Mega Man X Widescreen (xx1.0.0, "mstan; X2 support by KamiSquad_X"): X2's
+  host is native widescreen. The view is X1's (MmxRendererViewport, the
+  mod's aspect option; Side by side: each pane as X1's), 256 in X2's
+  native-frame room ($1FAD 12), recorded and replayed like X1's width. X2's
+  own widescreen passes from MegaManX2Recomp are back in x2_runtime.c: HUD
+  anchoring (X2ConfigureWsHud), margin backgrounds (X2ConfigureWsBgMargins
+  with snesrecomp's mmx23_background, cherry-picked from the X2 project's
+  pinned framework: 9473530b 6f83dc1f 0c86f5f2 0f68883a a77c1f72 d980d852
+  dec36f37), Wire Sponge's BG3 weather repeat, and the object windows (Side by
+  side: the larger of the co-op leash and the widescreen margin).
+* The host takes a field width per game (SnesDesktopHostGame.field_width):
+  Side by side, X2's field is one pane of the two-pane frame.
+* Overlays draw in screen coordinates: screen_row is renderBuffer +
+  extraLeftRight (it was the leftmost drawn column, the same only at 4:3).
+  Zero's canvas spans the margins; Zero's badge, player 2's meter and blue
+  health move with the anchored HUD (X2WsHudLeftShift).
+* Script `dump` also writes <tag>.screen.bmp: the frame as shown (both panes,
+  margins). <tag>.fb.* stay the native 256 columns (snesref comparisons).
+* Tier 2 diagnostics: X1's coverage capture never started (its flag was read
+  in main before mods activate); the mod's switch now sets both programs'
+  flag and the running capture. Replays record X2 since xx0.0.17alpha.
+* Escape Bugs: xx1.0.0.
+
+Status (xx0.1.20alpha): **frame captures on the X2 page.**
+
+* `SNESRECOMP_FRAME_BMP` / `_DIR` captures stopped at X2's stage select: X2
+  counts its own frames (the number drops from X1's to X2's), and the
+  capture waited for the old number. It now follows the number after a jump
+  back or a long jump ahead (`snesrecomp/runner/src/widescreen.c`).
+* X2's frame (side by side included) is presented through
+  `RtlWidescreenPresent`, so captures see both panes.
+* Checked on the Bubble Crab fight of a co-op session with no X1 progress:
+  KSX Zero's saber is green. (Save slot 1 of the test folder has X1 progress
+  with Rekkyoudan learned, where purple is correct.)
+
+Status (xx0.1.19alpha): **a pass across a lag frame; Zero's upgrades from X1
+only; no X2 weapons for Zero.**
+
+* A lag frame (Bubble Crab's mini boss arriving) can end inside a pass: X2's
+  routine yields at the frame's end and goes on in the next. The frame start
+  cleared the terrain pass's flag while player 2's body was in $09D8, so the
+  pass's end ($08:C325) never put player 1 back: X vanished and port 1 drove
+  Zero. The frame start now leaves a pass with the other seat live alone.
+* KSX Zero on the X2 page: skills from X1's record only (no record: none),
+  and his armor parts ($1F99 bits 0-3 in his view: the Saber's purple arms)
+  from X1's $1F99 as last recorded, not X2's capsules ($1FD0 bits 0-3, which
+  the write-back now keeps as X2 had them). X1's armor rides in the bridge
+  chunk's head (byte 10; older snapshots: none).
+* No X2 weapons for Zero (his X2 page skills come later): X2's weapon switch
+  ($08:BED3, L / R, both, Up + Down) is skipped for his body (to its RTS
+  $08:BECB; +$33 kept 0), and while X2's menu is up for him its weapons'
+  owned bits ($1FB9 + 2n bit 6, n 1..10) are taken away and put back as it
+  closes (bridge head bytes 11-12).
+* Player 2's pause in co-op: the close's fade ends in $00:CB7E, equipping
+  the menu's choice ($1EE2) on $09D8, player 1 by then; $1EE2 is set to
+  player 1's own weapon as the main role goes back.
+
+Status (xx0.1.18alpha): **Wheel Gator's oil holds player 2.**
+
+* The oil in Wheel Gator's room is no terrain or solid object: its object
+  ($05:8639, through $00:FDB3) ends each frame in $05:87AF, which puts player 1
+  ($09DD/$09E0) on the surface from a wave table ($6B00 + x/2 + $1F57,
+  low bytes only) and sets $0A04 bit 2. Player 2 sank through it (it only
+  stood on the walls), and the Gator's grab of player 1 ($1F54 set, $0A3C
+  in the held body) skips that call for everyone. At the routine's RTL
+  ($05:8654: generated-code patch and interpreter twin) the same check runs
+  for the other seat's body, unless the Gator holds it (+$64).
+
+Status (xx0.1.17alpha): **revives near a boss door; player 2's Start as
+the main seat.**
+
+* The beam-in's end ($08:A624: JSL $00:E67B) sets the camera's top limit
+  ($1E6A/$1E78) from the checkpoint's table, right at a stage's start.
+  For a co-op arrival (a revive, a door's far side) past a boss door it
+  left the camera between two rooms (Flame Stag's: Y 1024 against 544 every
+  other frame); the players were off screen and the one placed again fell
+  as in a pit. With the other seat on the stage the call is skipped
+  (generated-code patch and interpreter twin).
+* A beam whose column has terrain over the partner's level (the low
+  corridor past a boss door) starts at the partner's height, not on top.
+* X2's pause ($00:9F3E) wants Start in the main seat's new buttons ($0A13
+  bit 4). Player 2's input as the main seat (player 1 down) left Start out,
+  and the main pass's set-up runs twice a frame, so the second call saw any
+  new button as held: Start's edge comes from the frame's own press.
+* Checked with the user's replay (segments 28 and 31: one camera height,
+  nobody falls) and a script (player 1 down, player 2 opens Zero's menu).
+
+Status (xx0.1.16alpha): **Flame Stag's rising lava burns player 2.**
+
+* The lava (object id $2E) tests the player in its own routine, $07:E22A
+  (JSR from $07:E15F, RTS at $E264): a player below the surface ($09E0 >=
+  its y) is pushed up a pixel and takes 8 (or $7F 256 px under) through
+  $08:DBE4, unless invincible ($0A62). It never called the touch test, so
+  only the main seat was ever burned; player 2 stood in it unharmed and died
+  at once on becoming the main seat. It now runs once per seat like
+  $08:CC7F (the solid-object pass). Checked with the user's replay.
+
+Status (xx0.1.15alpha): **player 2's health pickups and pause menu.**
+
+* Health ($01:D58D states D59A/D62A/D65F) and Heart Tank ($01:E488 states
+  E4BD/E4CA/E502) pickups run over several frames: the touch freezes the
+  world and holds the collector ($08:DC64: $0A46 set, action $18 via
+  $0A7B), later states refill $09FF a unit at a time and release it
+  ($08:DC9C). Only the touch tests the player, so the later states acted on
+  player 1: player 2 kept its health and stayed held for good. At those
+  states' entries (generated-code block hooks) the held seat is put in for
+  the rest of the item when the other is not held.
+* Pause: X2's menu shows the main seat. Player 2's Start is port 1's
+  Start; once the pause begins ($1F21 set) player 2 is the main seat, until
+  $1F21 is back to 0 (or 30 frames without a pause). Handing the main seat
+  over on the press itself lost the press.
+* Checked with the user's replay (health refill 6 to 14 for player 2, then
+  moving) and the P2 Start script (Zero's menu; X's for player 1).
+
+Status (xx0.1.14alpha): **player 2 takes Sub Tanks without leaving.**
+
+* X2's player action $18 is its frozen pose for any world freeze (Sub Tank
+  and Heart Tank pickups, boss intros, a door's start); a boss door's walk
+  is $18, $1C (through the door), $1E. Only $1C sends the other seat out to
+  beam in beyond the door; $18-$1E still hold it in place. Before, a Sub
+  Tank player 2 picked up froze the main seat in $18, which took player 2
+  off the stage until it beamed back in. Checked with the user's replay.
+
+Status (xx0.1.13alpha): **both players on one pillar; a partner's death no
+longer freezes the stage; the buster after a restart.**
+
+* **Solid objects, per seat:** $08:CC7F (the solid-object routine: touch
+  test, push out, landing on the top with the object's .2C bit 0 and the
+  player's $0A04, crushing) and $08:D651 (touching: $0A04 bits 7/6) run once
+  per seat from the same entry registers and .2C; the .2C answers are OR-ed
+  and the caller goes on with player 1's scratch ($0000..$001F). Both run
+  interpreted while a second seat could answer (generated-code dispatch in
+  tools/apply_xtreme_tank_hooks.py). $08:CD2E (the rider carry: the object's
+  movement added to the player, called while .2C bit 0 is set) moves exactly
+  the seats that landed on that object this frame. Wire Sponge's pillars
+  (object id $2C, $07:DCAE/DCB2/DDF7) and the id $20 blocks ($04:9920/9924)
+  use them. Before this, the touch test's fallback gave player 2 a turn only
+  when player 1 missed, so player 2 fell through a pillar player 1 landed on.
+* **The world's freeze flags ($1F25..$1F2B):** a player's death sets them
+  (objects stop, a pillar with them). Put back as the pass found them after
+  a death that leaves the other playing: player 2's pass and terrain run,
+  and the main seat's death handover. Only the last player's death freezes.
+* **Shot count:** settle_shots compares $0A0D as a signed byte. The other
+  seat's shot ending while the main seat had none out left $FF (255 shots
+  out, no buster until the stage ended); now it is given back the next
+  frame, and a count below zero is never kept.
+* **Revive:** Select while fallen stays pending until the other seat can
+  receive it (not hurt, not in a door or an event).
+* Checked with the user's Wire Sponge replay (segments 63-64): both ride the
+  pillar down and back up with no deaths; player 1's count recovers from
+  $FF in one frame and the buster fires.
+
+Status (xx0.1.12alpha): **X2 co-op objects, doors, pits; per-player blue health.**
+
+* **Objects testing the player ($08:D865, X1's $84:9C0E, byte for byte):**
+  51 callers pass X = $09D8 (item drops, solid blocks: $08:D654 / $03:A836
+  push and carry through $0A04, spotlights, event boxes, boss doors). While
+  player 2 plays, the generated code runs it interpreted; on a miss for
+  player 1 it is run again with player 2's body, and a hit keeps player 2 in
+  the player struct until that object's update ends (the interpreted object
+  loops' returns: items $00:CFB6/CFE4 at $1518 step $30, enemy shots
+  D16F/D19D, enemies D1D6/D204 at $0D18 step $40). Checked: an object moved
+  onto player 2 (player 1 away) reports the touch. Limit: when both touch,
+  player 1 is the one (a block pushes player 1 only).
+* **Boss doors ($01:DCD1 / $01:DFD6, from $01:DCE0 / DFE5):** player 2
+  touching one becomes the main seat (the door walk, scroll and boss are
+  its); the main seat's door walk (action $18-$1E) sends the other out, to
+  beam in beside it once the door and its event locks ($1F1D / $1F36) are
+  over. Not tested on a real door.
+* **Vertical, as X1 ($00:E12D):** at $00:E0EA (main seat below the camera's
+  bottom: death) the shared camera above is not a pit while the main seat is
+  above the room's lowest camera; the other seat below that ($1E6C + 224)
+  dies as in a pit.
+* **Hitbox overlay:** both players' boxes (the X1-layout view holds one).
+* **Blue health per player:** each seat's own pool (X1 co-op and X2 co-op
+  bodies, live or stored); drawn over each meter (X2: the main bar and
+  player 2's meter, x+3, 6 above its badge; X1 co-op: x+5, 2 above). A new
+  heart past eight fills a unit per tick (X1 4 frames, X2 2) with the tank
+  refill tick's sound. Health a pickup gives a full bar (the Sub Tanks'
+  rise) goes to the player missing the most blue first. Heart pickups past
+  eight also hook the interpreted path ($81:EAEA / $01:E477 twins).
+* **Escape Bugs teleport:** the player who pressed Select moves (a menu
+  player 2 opened gets its buttons in player 1's place, so player 2 is
+  checked first; Start closes from player 1's place too). X and Select act
+  once the menu has closed (the menu keeps the live camera aside while it is
+  up). Landings: left, right, middle, back on the path (where that player
+  last stood on ground in this stage), the other player.
+* **KSX Giga on X2:** player 2's Giga press now reaches KSX (learned,
+  energy, grounded all pass); no freeze reproduced; Rakuhouha does not show
+  on the X2 page yet.
+
+Status (xx0.1.11alpha): **Escape Bugs rework, X2 co-op input, blue health.**
+
+* **Escape Bugs restart:** no death any more. X1's death state ($D3 = 6,
+  $00:9B23) and X2's ($D2 = 6, $00:99AF) wait for "death done" ($1F0B /
+  $1F1C), then fade, take a life and reload at the checkpoint (the stage's
+  start when none). The restart sets that state and flag with a life added:
+  an immediate fade, nobody's health touched (the X1 co-op soft lock came
+  from zeroing both bodies). Every command closes the menu first (Start,
+  the cursor back on the weapon it opened on; X2's column sub-state $1EDA
+  follows the cursor). X2's EXIT is cursor $1E with $1EDA = 4 ($1A was the
+  third Sub Tank). New: Start + Select 5 s anywhere in a stage sets the exit
+  state (X1 $D3 = $0A, X2 $D2 = $0A), with a progress bar; Start and Select
+  stay out of the game meanwhile (no pause, no CHANGE PLAYER).
+* **X2 co-op input:** player 2's Start pauses and drives the menu it opened
+  (MmxX2CoopMenuInputs). KSX's extended buttons (Giga Attack, R2) were read
+  from X1 co-op's seat on the X2 page, so player 2's Zero read player 1's;
+  now X2 co-op's Zero seat. The pause page (X2 / X1) is remembered; in play
+  L / R work on it only (X keeps the buster on the X1 page; Zero's
+  Rakuhouha only there); Start on a skill row chooses it from the buster's
+  place. The Giga freeze itself was not reproduced (the test setup has no
+  KSX).
+* **X2 co-op revive:** beams in (X2's action $22) from the screen's top onto
+  ground beside the other player at its level (32-96 px, nearer side first);
+  the life is taken only when the revive happens. Zero's canvas sorts after
+  X's last OAM piece, so X is always in front.
+* **Netplay:** X2's background boot runs online too (deterministic per
+  peer), so the first page turn needs no boot inside the held switch; the
+  host no longer shows "Changing games". Not tested between two peers.
+* **Heart Tanks past eight (up to 24):** the pickup (X1 $81:EAEA, X2
+  $01:E477) skipped the chime and health-up at 32 max HP; with room it now
+  goes the full way. Past eight, each heart is 2 HP of blue health over the
+  bar from its bottom (x 13-18, 2 px per HP from y 78), taken first by hits
+  (the yellow bar is topped up from it), full again at each stage start or
+  restart. The main player only in co-op. A real pickup past eight was not
+  seen in a test (hook in place; the blue health was).
+
+Status (xx0.1.10alpha): **X2 co-op fixes, Escape Bugs, test watchdog.**
+
+* **X2 co-op shot count:** X2's shot routines take a finished shot off the
+  main seat's count ($0A0D) whoever fired it, and only the routines that
+  count (Zero's saber objects never do). The old fix gave X a shot back for
+  every one of the other seat's objects that ended, so X's count climbed
+  past 3 and X stopped firing. Now the drop is measured: the main seat's
+  count and live slots as its pass ends, against the next main pass; what
+  X's own ended shots don't explain goes back to X (and off the other seat).
+  Checked: X and Zero firing together for 6 rounds, X's count back to 0
+  after each shot; P2's L/R leaves X's weapon ($0A0B) alone.
+* **X2 co-op deaths:** the main seat falling while the other is alive hands
+  the main role over at $00:990E (before X2 sets death mode $D2 = 6), so the
+  stage goes on. The fallen player comes back with Select once its death has
+  played out (180 frames), for an extra life ($1FB3), beside the other
+  player. Checked: P1 falls, Zero plays on, Select brings X back, lives 2 to 1.
+  P2's meter is the non-main seat's (it showed the main seat's after a
+  handover).
+* **X2 co-op sprites:** X's pose tiles are never replaced by Zero's pass
+  (checked over Zero walking, jumping, slashing and passing through X).
+* **Escape Bugs** (Accessibility, on by default, src/mmx_escape.c): with
+  ESCAPE.U (X1 item 9) or EXIT (X2, cursor $1A) highlighted, X resets the
+  camera (a second X opens the room a screen wider each way), Select moves
+  to standing ground on screen (left, right, middle in turn), holding B 3 s
+  restarts at the checkpoint without losing a life, holding Start 3 s goes to
+  stage select from any stage. A short B or Start is the game's own. The
+  list shows over the pause screen. Escape check hooks: X1 $00:C93C (answer
+  from $C94E), X2 $00:C622 (answer from $C641; X2 calls it from EXIT's
+  sub-state only, $1EDA = 4 at D = $1ED8, so a held Start sets it). Its
+  bytes ride in OPTION MODE's state (both games' snapshots). Checked in X1
+  (solo Zero, Spark Mandrill) and X2 co-op (X + Zero); X1 co-op's restart
+  (both bodies to the end of their death, as Boss Rush's escape does) is
+  not checked yet.
+* **Test watchdog:** a `--script`, `--replay-diagnostic` or `--benchmark`
+  run ends itself with exit code 124 and a `[mmx-test] HANG` line when no
+  frame advances for MMX_TEST_STALL_SECONDS (60) or it outlives
+  MMX_TEST_TIMEOUT_SECONDS (1800). tools/replay_diagnostic.py stops a run
+  after 2400 s and reports the hang.
+
 Status (xx0.0.19alpha): **Flame Stag soft lock, final Xtreme tank.**
 
 * **Flame Stag soft lock (X2's own):** climbing the ladder up into the
@@ -309,7 +586,7 @@ Status (xx0.0.7alpha): **saber hits X2 enemies; developer mods on X2.**
   `$11`), damage 3 each (X2 native 8 overridden), one hit per swing.
 * Hitbox overlay draws on the X2 page (X1's collector on the view, X2's cart,
   KSX box looked up at `$86:FE00`). Tier 2 diagnostics sets X2's
-  `tier2_capture` (coverage `tier2_x2_*`); its replay recorder stays X1-only.
+  `tier2_capture` (coverage `tier2_x2_*`); replays record X2 too (xx0.0.17alpha).
 * Labels: Hitbox overlay and Tier 2 diagnostics `xx1.0.1`, authors with
   "; X2 support by KamiSquad_X".
 

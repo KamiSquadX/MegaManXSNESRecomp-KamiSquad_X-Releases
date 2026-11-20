@@ -123,6 +123,8 @@ bool MmxSaberKsxBusterBlocked(void);
 void MmxSaberKsxShoulders(uint8_t *ram, unsigned pressed);
 /* The pause menu closed on X1 menu item `item`. */
 void MmxSaberKsxMenuChoice(uint8_t *ram, unsigned item);
+/* The X2 page's X1 skills page: Rakuhouha chosen or not (no X1 HUD). */
+void MmxSaberKsxSetRakuhouha(bool on);
 /* Zero's player end: weapon upkeep, the guard's blink and Rakuhouha's
  * block sound. */
 void MmxSaberKsxPlayerEnd(uint8_t *ram);

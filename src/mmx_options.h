@@ -20,7 +20,10 @@ extern "C" {
 typedef struct MmxOptionsState {
   uint8_t no_double_tap;  /* 0 = double-tap dash */
   uint8_t hold_dash;      /* 0 = X1's press-to-dash wall kick */
-  uint8_t reserved[2];
+  /* Escape Bugs (mmx_escape.c): frames B / Start is held on ESCAPE.U, and
+   * its flags. Here because both games' snapshots carry this state. */
+  uint8_t escape_hold;
+  uint8_t escape_flags;
   /* Double-tap tracking per seat (0, 1): left/right as bits 1 and 2. */
   uint8_t tap_held[2];    /* held last frame */
   uint8_t tap_dir[2];     /* armed by a first tap */

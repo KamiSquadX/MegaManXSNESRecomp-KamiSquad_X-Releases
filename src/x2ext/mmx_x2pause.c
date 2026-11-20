@@ -10,6 +10,12 @@
  *    boss has been beaten on the X2 page (X2's $1FBB + 2n bit 6, recorded at
  *    each page turn; mmx_x2share.c).
  *
+ *  - The page is remembered: the pause opens on it again, and in play L / R
+ *    work on that page only: X2's weapons on the X2 page (X2's own cycle;
+ *    Zero's Rakuhouha is off there), the X1 page's on the X1 page (X keeps
+ *    the buster, X2's cycle never sees L / R; Zero's L / R toggle
+ *    Rakuhouha). Start on one of Zero's skill rows chooses it, from the
+ *    buster's place, so X2 equips nothing hidden there.
  * X2's pause is shown while $1F21 is 6 or 8 with $C4 bit 7 set (X1's own test,
  * $1F10 / $C3, at X2's addresses). The page and the last L / R are part of X2
  * snapshots (the bridge chunk), since they change which buttons X2 sees. */
@@ -19,9 +25,11 @@
 
 #include "mmx_weapons.h"
 #include "mmx_x2share.h"
+#include "../mmx_escape.h"
 #include "mmx_x2zero.h"
 #include "saber/mmx_saber_ksx.h"
 #include "saber/mmx_saber_ksx_icons.h"
+#include "mmx_x2ext.h"
 #include "mods/mmx_mod_constructor.h"
 #include "snes/ppu.h"
 
@@ -65,12 +73,56 @@ static unsigned left_rows(uint8_t rows[9]) {
   return n;
 }
 
+enum { PAD_START = 1u << 3, KSX_GIGA_ROW = 2 * 2 /* X1 weapon 2 */ };
+
+bool MmxX2PauseKsxShoulders(void) {
+  return !s_enabled || !MmxX2ExtInX2() || s_page == 1;
+}
+
+/* Zero's X2 weapons: none for now (his X2 page skills come later). While
+ * X2's menu is up for him, its weapons' owned bits ($1FB9 + 2n bit 6, n 1..10:
+ * the eight boss weapons, then $12 and $14) are taken away, so its X2 page
+ * shows and offers none of them; they are put back as it closes (or as it
+ * becomes X's). Which ones are away is part of X2 snapshots (bridge chunk). */
+static uint16_t s_zero_hidden;
+uint16_t MmxX2PauseZeroHidden(void) { return s_zero_hidden; }
+void MmxX2PauseSetZeroHidden(uint16_t hidden) { s_zero_hidden = hidden & 0x3ff; }
+static void zero_weapons(void) {
+  const bool hide = g_ram[0xd0] == 2 && g_ram[0xd1] == 4 && g_ram[0x1f21] &&
+      MmxX2ZeroPausedIsZero();
+  for (unsigned n = 1; n <= 10; ++n) {
+    uint8_t *slot = g_ram + 0x1fb9 + 2 * n;
+    const uint16_t bit = (uint16_t)(1u << (n - 1));
+    if (hide && (*slot & 0x40)) {
+      *slot &= (uint8_t)~0x40;
+      s_zero_hidden |= bit;
+    } else if (!hide && (s_zero_hidden & bit)) {
+      *slot |= 0x40;
+      s_zero_hidden &= (uint16_t)~bit;
+    }
+  }
+}
+
 void MmxX2PauseFrameBegin(uint32_t *inputs) {
+  zero_weapons();
   if (!s_enabled || !inputs) return;
   if (!paused()) {
-    s_page = 0;
     s_previous = 0;
+    /* The X1 page in play: X keeps the buster (X2's cycle never sees L /
+     * R); Zero's L / R reach KSX through its own input. */
+    if (s_page && g_ram[0xd0] == 2 && g_ram[0xd1] == 4 && !MmxX2ZeroPausedIsZero())
+      *inputs &= ~(uint32_t)(PAD_L | PAD_R);
     return;
+  }
+  /* Start leaves the pause on this page. */
+  if ((*inputs & PAD_START) && g_ram[CURSOR] < CURSOR_RIGHT) {
+    if (!s_page) MmxSaberKsxSetRakuhouha(false);
+    else {
+      MmxSaberKsxSetRakuhouha(g_ram[CURSOR] == KSX_GIGA_ROW);
+      /* A skill row is no X2 weapon: leave from the buster's place. */
+      g_ram[CURSOR] = 0;
+      g_ram[0x1eda] = 0;
+    }
   }
   const uint8_t lr = (uint8_t)((*inputs >> 10) & 3);
   const uint8_t ud = (uint8_t)((*inputs >> 4) & 3);
@@ -123,8 +175,10 @@ static uint32_t screen_color(uint16_t c) {
 }
 
 static uint32_t *screen_row(int y) {
+  /* Screen x 0 (the native view's left edge): the row holds extraLeftRight
+   * columns before it (the PPU's compose offset plus extraLeftCur). */
   return (uint32_t *)(g_ppu->renderBuffer + (size_t)y * g_ppu->renderPitch) +
-      (g_ppu->extraLeftRight - g_ppu->extraLeftCur);
+      g_ppu->extraLeftRight;
 }
 
 static uint16_t bgr555(unsigned r, unsigned g, unsigned b) {
@@ -263,8 +317,16 @@ static void zero_skills(void) {
   }
 }
 
+static void after_draw(void);
 void MmxX2PauseAfterDraw(void) {
-  if (!g_ppu || !paused()) return;
+  if (!g_ppu) return;
+  if (paused()) after_draw();
+  /* Heart Tanks past eight: blue health over the HP bar. */
+  MmxX2ShareDrawX2Blue(screen_row(0), (int)(g_ppu->renderPitch / 4));
+  /* Escape Bugs: EXIT's command list, or Start + Select's progress. */
+  MmxEscapeDrawX2(screen_row(0), (int)(g_ppu->renderPitch / 4), g_ppu->brightnessMult);
+}
+static void after_draw(void) {
   /* X2 game extension: Xtreme Sub Tanks, whichever mods are on. */
   MmxX2ShareDrawX2Pause(screen_row(0), (int)(g_ppu->renderPitch / 4), g_ppu->brightnessMult);
   if (!s_enabled) return;
@@ -292,6 +354,7 @@ static bool weapon_owned(unsigned page, unsigned weapon) {
 
 static void reset(void) {
   s_enabled = false;
+  s_zero_hidden = 0;
   s_page = s_previous = 0;
   MmxWeaponsSetOwnedQuery(NULL);
 }

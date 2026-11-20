@@ -13,6 +13,9 @@ bool MmxX2PauseEnabled(void);
 /* X2's frame_begin: L / R turn the pause page; the X1 page holds back the
  * cursor and choice buttons. */
 void MmxX2PauseFrameBegin(uint32_t *inputs);
+/* Zero's hidden X2 weapons (owned bits taken away while his menu is up). */
+uint16_t MmxX2PauseZeroHidden(void);
+void MmxX2PauseSetZeroHidden(uint16_t hidden);
 /* After X2's PPU frame: the page's tag, and the X1 page's blank slots. */
 void MmxX2PauseAfterDraw(void);
 /* Snapshot bytes (X2's bridge chunk). */

@@ -1,8 +1,8 @@
 format_version = 1
 id = "megaman-x.enhancement.widescreen"
-version = "1.0.0"
+version = "xx1.0.0"
 name = "Mega Man X Widescreen"
-author = "mstan"
+author = "mstan; X2 support by KamiSquad_X"
 description = "Adaptive widescreen stage rendering with your selected display pixel shape, edge-anchored HUD and expanded sprite capacity."
 license = "MIT"
 resolver = "declarative"

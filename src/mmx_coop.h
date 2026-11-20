@@ -110,6 +110,9 @@ bool MmxCoopActorIsX(void);
 /* Owned body for a character's paused action. The caller may edit it only
  * while holding the scheduler; shared world and another seat stay untouched. */
 uint8_t *MmxCoopCharacterBody(uint8_t *ram,unsigned character);
+/* A seat's body (live or stored) while it plays, and its character. */
+uint8_t *MmxCoopSeatBody(uint8_t *ram,unsigned seat);
+unsigned MmxCoopSeatCharacter(unsigned seat);
 void MmxCoopReset(void);
 MmxCoopState MmxCoopGetState(void);
 bool MmxCoopValidState(const MmxCoopState *state);

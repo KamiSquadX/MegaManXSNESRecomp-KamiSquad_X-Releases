@@ -24,6 +24,7 @@
 #include "x2_runtime.h"
 #include "mmx_x2zero.h"
 #include "mmx_x2share.h"
+#include "mmx_x2coop.h"
 #include "mmx_x2pass.h"
 #include "mmx_x2pause.h"
 #include "mmx_options.h"
@@ -114,8 +115,9 @@ static bool x2_stage_select(const uint8_t *r) {
  * the host-side residue a frame reads and writes (CPU state, APU pacing and
  * port schedule, frame counter, refresh carry, interpreter state, MMIO
  * shadows; RtlHostResidueSave). X2's DSP output is muted meanwhile; nothing
- * X1 plays or shows is touched. In netplay the page turn still does this
- * inside the synchronized switch, on every peer alike.
+ * X1 plays or shows is touched. Netplay runs the slices too (each peer
+ * reaches the same X2 page); a peer not yet there finishes inside the
+ * synchronized switch.
  *
  * The slices work through jobs:
  *   JOB_BOOT      power-on to the stage select (GAME START), kept as the X2
@@ -492,7 +494,8 @@ static const SnesDesktopHostGame *swap_programs(X2ExtProgram *from, X2ExtProgram
      * runs writes X1's cart RAM, never X2's over it. */
     g_sram = s_x1.snes->cart->ram;
     g_sram_size = s_x1.snes->cart->ramSize;
-    /* X2 runs at 4:3; X1's widescreen state comes back with X1. */
+    /* X1's widescreen state comes back with X1; X2's own comes from its
+     * next frame's preparation (the host's field, native widescreen). */
     s_x1_ws_active = g_ws_active;
     s_x1_ws_extra = g_ws_extra;
     g_ws_active = false;
@@ -696,6 +699,8 @@ bool MmxX2ExtFrameBegin(uint32_t *inputs) {
   /* Shared items in X2's game modes ($D0 = 2). */
   if (s_enabled && !s_in_x2pw && g_ram[0xd0] == 2) MmxX2ShareFrame(g_ram, true);
   if (!s_in_x2pw) flame_stag_ladder_lock();
+  /* X2 co-op: player 2's Start pauses too. */
+  if (!s_in_x2pw) MmxX2CoopMenuInputs(inputs);
   /* OPTION MODE's dash rows, as X1's frames have them. */
   if (!s_in_x2pw) MmxOptionsX2FrameBegin(inputs);
   /* X1 to X2 boss weapons: the pause screen's pages. */
@@ -739,8 +744,14 @@ void MmxX2ExtAfterFrame(const SnesDesktopHostFrameStats *stats) {
     fprintf(stderr, "[x2ext] slow frame %u in %s: %.1f ms (D0..D3 %02X %02X %02X %02X)\n",
             stats->frame, s_in_x2 ? "X2" : "X1", stats->guest_seconds * 1000.0,
             g_ram[0xd0], g_ram[0xd1], g_ram[0xd2], g_ram[0xd3]);
-  /* Offline, X2 gets ready in the background while X1 runs. */
-  if (!s_in_x2 && !MmxNetplayActive()) bg_run(0.003, NULL);
+  /* X2 gets ready in the background while X1 runs, online too: the boot is
+   * X2's own machine from power-on with fixed inputs, X1 set aside, so every
+   * peer ends at the same X2 page however its slices fall, and the first
+   * page turn is as quick as every later one. */
+  if (!s_in_x2) bg_run(0.003, NULL);
+  /* A replay turns the page where its checkpoints say (P lines): a netplay
+   * recording turned it at the tick the peers agreed on, not on the press. */
+  if (MmxReplayPlaying()) return;
   const uint16_t pad = (uint16_t)g_snes->input1_currentState;
   const uint16_t pressed = (uint16_t)(pad & ~s_previous_pad);
   s_previous_pad = pad;

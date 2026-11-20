@@ -513,6 +513,11 @@ void MmxSaberKsxShoulders(uint8_t *ram, unsigned pressed) {
   select_rakuhouha(ram, !st.rakuhouha);
 }
 
+void MmxSaberKsxSetRakuhouha(bool on) {
+  if (!ksx_enabled || st.giga_active) return;
+  st.rakuhouha = on;
+}
+
 void MmxSaberKsxMenuChoice(uint8_t *ram, unsigned item) {
   if (!ksx_enabled || !ram || st.giga_active) return;
   select_rakuhouha(ram, item == KSX_GIGA_WEAPON &&

@@ -59,7 +59,7 @@ run_apprun "$state1/MegaManX.AppImage"
 
 # 1. First launch seeded state beside the simulated .AppImage.
 test -f "$state1/config.ini" || { echo "FAIL: config.ini not seeded beside the AppImage" >&2; exit 1; }
-test -f "$state1/mods/preloaded/packages/megaman-x.enhancement.widescreen/1.0.0/manifest.toml" || {
+test -f "$state1/mods/preloaded/packages/megaman-x.enhancement.widescreen/xx1.0.0/manifest.toml" || {
     echo "FAIL: release mod catalog not seeded beside the AppImage" >&2; exit 1; }
 test -f "$state1/mods/preloaded/packages/megaman-x.enhancement.msu1/1.0.0/manifest.toml" || {
     echo "FAIL: MSU-1 mod package not seeded beside the AppImage" >&2; exit 1; }

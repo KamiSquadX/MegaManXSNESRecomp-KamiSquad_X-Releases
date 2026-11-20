@@ -38,6 +38,18 @@ bool MmxX2CoopLiveOwnsZero(void);
 const uint8_t *MmxX2CoopDrawnSeat(MmxZeroState *state, unsigned *seat);
 /* The live seat is X (X2 draws it): its sprites stay. */
 bool MmxX2CoopLiveIsX(void);
+/* The seat whose Zero state runs now (its controller's extended buttons
+ * drive KSX: Giga Attack and the rest), or -1 off X2 co-op. */
+int MmxX2CoopZeroSeat(void);
+/* Player 2's Start pauses, and drives the menu it opened. */
+void MmxX2CoopMenuInputs(uint32_t *inputs);
+/* Objects testing the player ($08:D865) with player 2 too (generated code
+ * hooks: run it interpreted; the object loops' returns end a kept seat). */
+int MmxX2CoopOverlapInterp(void);
+void MmxX2CoopObjectDone(void);
+int MmxX2CoopMainBelowOk(void);
+/* The other seat's stored body while it plays, else NULL. */
+uint8_t *MmxX2CoopOtherBody(void);
 /* Player 2's meter, over the finished frame (Horizontal / Compact). */
 void MmxX2CoopDrawHud(int badge_x, int badge_y);
 

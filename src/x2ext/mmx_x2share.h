@@ -23,6 +23,9 @@ void MmxX2ShareFrame(uint8_t *ram, bool x2);
 void MmxX2ShareRecordWeapons(const uint8_t *ram, bool x2);
 bool MmxX2ShareX2BossBeaten(unsigned weapon);
 bool MmxX2ShareX1Weapons(uint8_t out[18]);
+/* X1's armor parts ($1F99 bits 0-3) as last recorded (0 when none). */
+uint8_t MmxX2ShareX1Armor(void);
+void MmxX2ShareSetX1Armor(uint8_t armor);
 /* Xtreme Sub Tanks (tanks five to eight upgrade slots 1-4): drawn over each
  * game's pause screen. X2: the finished frame from its top row (stride in
  * pixels) and the PPU's brightness table. X1: its composed frame, the 256
@@ -31,6 +34,10 @@ bool MmxX2ShareX1Weapons(uint8_t out[18]);
 void MmxX2ShareDrawX2Pause(uint32_t *top_row, int stride, const uint8_t *brightness);
 bool MmxX2ShareX1PauseShown(const uint8_t *ram);
 void MmxX2ShareDrawX1Pause(uint32_t *pixels, int width, int left);
+/* Blue health (Heart Tanks past eight), over each game's HP bar in play. */
+bool MmxX2ShareBlueShown(const uint8_t *ram, bool x2);
+void MmxX2ShareDrawX1Blue(uint32_t *pixels, int stride, int left);
+void MmxX2ShareDrawX2Blue(uint32_t *top_row, int stride);
 void MmxX2ShareXtremeSave(uint8_t out[4]);
 void MmxX2ShareXtremeLoad(const uint8_t in[4]);
 /* Sub Tanks five to eight can be picked up (interpreter twins of the

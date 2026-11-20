@@ -388,6 +388,7 @@ static uint32_t playback_begin(uint32_t inputs) {
     error("invalid input record"); return inputs;
   }
   if(frame!=(unsigned)snes_frame_counter) {
+    fprintf(stderr,"[mmx-replay] input record frame %u, machine frame %u\n",frame,(unsigned)snes_frame_counter);
     error("frame discontinuity has no machine checkpoint"); return inputs;
   }
   g_config.widescreen=(flags&1)!=0; g_mmx_custom_renderer=(flags&2)!=0;

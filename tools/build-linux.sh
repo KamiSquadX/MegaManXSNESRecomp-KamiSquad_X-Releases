@@ -57,7 +57,7 @@ BOXART="recomp/launcher/boxart.tga"          # AppImage icon source (optional)
 # Release-owned mod catalog: packaging fails if the built tree is missing it
 # rather than shipping an AppImage with an empty Mods page.
 REQUIRED_MOD_MANIFESTS=(
-  "preloaded/packages/megaman-x.enhancement.widescreen/1.0.0/manifest.toml"
+  "preloaded/packages/megaman-x.enhancement.widescreen/xx1.0.0/manifest.toml"
   "preloaded/packages/megaman-x.enhancement.msu1/1.0.0/manifest.toml"
   "preloaded/packages/megaman-x.enhancement.password-save/1.0.0/manifest.toml"
   "preloaded/packages/megaman-x.developer.tier2-diagnostics/1.0.0/manifest.toml"

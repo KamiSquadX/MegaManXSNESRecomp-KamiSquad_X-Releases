@@ -6,7 +6,10 @@
  * sum of both:
  *
  *   - Heart Tanks: max HP = 16 + 2 per heart taken in either game, up to the
- *     games' own maximum of 32 (eight hearts).
+ *     games' own maximum of 32 (eight hearts). Past eight (up to 24) each
+ *     heart adds 2 HP of blue health stacked over the full bar from its
+ *     bottom: hits take the blue first (the yellow bar is kept full while
+ *     any is left). It is full again at each stage start and restart.
  *   - Sub Tanks: one slot per tank taken in either game, up to the four slots
  *     both pause menus have. Their energy carries over at each page turn.
  *   - Extra lives: one count, carried over at each page turn.
@@ -25,10 +28,13 @@
  * kept to the sum from its own frame. */
 #include "mmx_x2share.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "cpu_state.h"
 #include "snes/interp_bridge.h"
+#include "snes/ppu.h"
+int X2WsHudLeftShift(void); /* x2_runtime.c: widescreen HUD shift */
 
 extern uint8_t g_ram[0x20000];
 
@@ -40,7 +46,7 @@ typedef struct Layout {
 } Layout;
 static const Layout kX1 = {0x1f80, 0x1f83, 0x1f99, 0x1f9c, 0x1f9a, 0x0bcf, 0x0b72, 0x0ba3, 0x0c, 1, 4};
 static const Layout kX2 = {0x1fb3, 0x1fb6, 0x1fd0, 0x1fd3, 0x1fd1, 0x09ff, 0x09a2, 0x09d3, 0x15, 2, 2};
-enum { TANKS = 4, MAX_HEARTS = 8 };
+enum { TANKS = 4, MAX_HEARTS = 8, TOTAL_HEARTS = 24 };
 
 /* Boss weapons (X1 to X2 boss weapons, Zero's Special Moves on the X2
  * page): X1's eight weapon bytes $1F87..$1F98 (bit 6 of $1F88 + 2n: the
@@ -52,6 +58,13 @@ static struct {
   uint8_t x2_bosses;
 } w;
 
+/* X1's armor parts ($1F99 bits 0-3) as X1 last had them: KSX Zero's own
+ * upgrades on the X2 page. Kept with X2 snapshots in the bridge chunk's head
+ * (older snapshots: none). */
+static uint8_t x1_armor;
+uint8_t MmxX2ShareX1Armor(void) { return w.x1_valid ? x1_armor : 0; }
+void MmxX2ShareSetX1Armor(uint8_t armor) { x1_armor = armor & 0x0f; }
+
 void MmxX2ShareRecordWeapons(const uint8_t *ram, bool x2) {
   if (x2) {
     w.x2_bosses = 0;
@@ -61,6 +74,7 @@ void MmxX2ShareRecordWeapons(const uint8_t *ram, bool x2) {
   } else {
     memcpy(w.x1_weapons, ram + 0x1f87, sizeof(w.x1_weapons));
     w.x1_valid = true;
+    x1_armor = ram[0x1f99] & 0x0f;
   }
 }
 
@@ -80,6 +94,11 @@ static struct {
   uint8_t other_hearts, other_tank_flags;
   uint8_t lives;
   uint8_t tank_levels[TANKS];
+  /* Blue health (hearts past eight): what is left, and its full amount as
+   * of the last frame (a new heart adds its 2 HP). */
+  uint8_t blue[2], pending[2], blue_full, tick;
+  bool blue_ready;            /* last frame was play (blue_full is current) */
+  uint8_t tank_prev[TANKS];   /* the tank slots as last frame ended */
 } s;
 
 static unsigned bits(unsigned v) {
@@ -93,6 +112,15 @@ static const Layout *layout(bool x2) { return x2 ? &kX2 : &kX1; }
 static unsigned tank_count(const uint8_t *ram, const Layout *g) {
   const unsigned n = bits(ram[g->tank_flags] & 0xf0) + bits(s.other_tank_flags & 0xf0);
   return n > TANKS ? TANKS : n;
+}
+
+static unsigned hearts_total(const uint8_t *ram, const Layout *g) {
+  const unsigned n = bits(ram[g->hearts]) + bits(s.other_hearts);
+  return n > TOTAL_HEARTS ? TOTAL_HEARTS : n;
+}
+static unsigned blue_full(const uint8_t *ram, const Layout *g) {
+  const unsigned n = hearts_total(ram, g);
+  return n > MAX_HEARTS ? 2 * (n - MAX_HEARTS) : 0;
 }
 
 static unsigned max_hp(const uint8_t *ram, const Layout *g) {
@@ -294,6 +322,7 @@ static void xtreme_frame(uint8_t *ram, const Layout *g) {
 }
 
 void MmxX2ShareReset(void) {
+  x1_armor = 0;
   memset(&s, 0, sizeof(s));
   memset(&xt, 0, sizeof(xt));
 }
@@ -364,10 +393,169 @@ bool MmxX2ShareLoadState(const void *in, size_t size) {
   return true;
 }
 
+/* Playing a stage (not its loading, death or exit): X1 $D1..$D3 = 2, 4, 4;
+ * X2 $D0..$D2. */
+static bool playing(const uint8_t *ram, bool x2) {
+  return x2 ? ram[0xd0] == 2 && ram[0xd1] == 4 && ram[0xd2] == 4
+            : ram[0xd1] == 2 && ram[0xd2] == 4 && ram[0xd3] == 4;
+}
+
+/* Blue health, each player's own (co-op: both seats; the seat's body is
+ * the live one or the co-op module's stored copy). Full outside play (a
+ * stage start or restart refills the players too). A new heart past eight
+ * fills its 2 HP a tick at a time with the refill tick's sound, as a heart's
+ * health-up does. While any is left the yellow bar is topped up from it, so
+ * damage comes off the blue first. Health a pickup gives a full bar goes to
+ * missing blue before the Sub Tanks (the tanks' rise is taken back). */
+extern uint8_t *MmxCoopSeatBody(uint8_t *ram, unsigned seat);
+extern bool MmxCoopEnabled(void);
+extern uint8_t *MmxX2CoopSeatBody(unsigned seat);
+extern bool MmxX2CoopActive(void);
+static uint8_t *seat_body(uint8_t *ram, const Layout *g, bool x2, unsigned seat) {
+  if (x2 && MmxX2CoopActive()) return MmxX2CoopSeatBody(seat);
+  if (!x2 && MmxCoopEnabled()) return MmxCoopSeatBody(ram, seat);
+  return seat ? NULL : ram + g->hp - 0x27;
+}
+static void tick_sound(uint8_t *ram, const Layout *g) {
+  const unsigned i = ram[g->sound_index] & 0x1e;
+  ram[g->sound_ring + i] = g->refill_sound;
+  ram[g->sound_ring + i + 1] = 0;
+  ram[g->sound_index] = (uint8_t)((i + 2) & 0x1e);
+}
+
+/* Pickups with the bar full: what the tanks gained this frame goes to the
+ * player missing the most blue instead (before the Xtreme tanks see it). */
+static void tanks_to_blue(uint8_t *ram, const Layout *g, bool x2, unsigned full) {
+  const unsigned hp = ram[g->hp] & 127, max = ram[g->max_hp];
+  if (!playing(ram, x2) || hp != max || xt.using || !s.blue_ready) return;
+  int seat = -1;
+  unsigned most = 0;
+  for (unsigned i = 0; i < 2; ++i) {
+    if (!seat_body(ram, g, x2, i)) continue;
+    const unsigned have = s.blue[i] + s.pending[i];
+    if (have < full && full - have > most) { most = full - have; seat = (int)i; }
+  }
+  if (seat < 0) return;
+  for (unsigned i = 0; i < TANKS && most; ++i) {
+    uint8_t *tank = ram + g->tanks + i;
+    const unsigned now = *tank & 15, before = s.tank_prev[i] & 15;
+    if (!(*tank & 128) || !(s.tank_prev[i] & 128) || now <= before) continue;
+    unsigned units = now - before, hp_gain = units * g->hp_per_unit;
+    if (hp_gain > most) { units = (most + g->hp_per_unit - 1) / g->hp_per_unit; hp_gain = most; }
+    *tank = (uint8_t)(*tank - units);
+    s.blue[seat] = (uint8_t)(s.blue[seat] + hp_gain);
+    most -= hp_gain;
+  }
+}
+
+static void blue_frame(uint8_t *ram, const Layout *g, bool x2) {
+  const unsigned full = blue_full(ram, g);
+  const bool play = playing(ram, x2);
+  bool ticked = false;
+  if (++s.tick >= g->tick_frames) { s.tick = 0; ticked = true; }
+  bool sounded = false;
+  for (unsigned i = 0; i < 2; ++i) {
+    uint8_t *b = seat_body(ram, g, x2, i);
+    if (!play || !b) {
+      if (!play) { s.blue[i] = (uint8_t)full; s.pending[i] = 0; }
+      continue;
+    }
+    /* A new heart: its 2 HP fill in. */
+    if (full > s.blue_full && s.blue_ready) s.pending[i] = (uint8_t)(s.pending[i] + (full - s.blue_full));
+    if (s.pending[i] && ticked) {
+      --s.pending[i];
+      if (s.blue[i] < full) ++s.blue[i];
+      if (!sounded) { tick_sound(ram, g); sounded = true; }
+    }
+    if (s.blue[i] > full) s.blue[i] = (uint8_t)full;
+    const unsigned hp = b[0x27] & 127, max = ram[g->max_hp];
+    if (s.blue[i] && hp && hp < max) {
+      const unsigned give = max - hp < s.blue[i] ? max - hp : s.blue[i];
+      b[0x27] = (uint8_t)((b[0x27] & 128) | (hp + give));
+      s.blue[i] = (uint8_t)(s.blue[i] - give);
+    }
+  }
+  s.blue_full = (uint8_t)full;
+  s.blue_ready = play;
+}
+
 void MmxX2ShareFrame(uint8_t *ram, bool x2) {
   const Layout *g = layout(x2);
   if (s.valid) enforce(ram, g);
+  tanks_to_blue(ram, g, x2, blue_full(ram, g));
   xtreme_frame(ram, g);
+  blue_frame(ram, g, x2);
+  for (unsigned i = 0; i < TANKS; ++i) s.tank_prev[i] = ram[g->tanks + i];
+}
+
+/* A Heart Tank taken with the bar already full (X1 $81:EAEA, X2 $01:E477:
+ * the flag set, then max HP 32 or more leaves without the chime or the
+ * health-up): with room for blue health, it goes the full-pickup way. */
+int MmxX2ShareHeartRoom(int x2) {
+  const Layout *g = layout(x2 != 0);
+  return bits(g_ram[g->hearts]) + bits(s.other_hearts) < TOTAL_HEARTS;
+}
+static void heart_hook(CpuState *cpu, uint32_t pc) {
+  const bool x2 = (pc & 0x7fff) == (0xe477 & 0x7fff) && (pc & 0x7f0000) == 0x010000;
+  if (!MmxX2ShareHeartRoom(x2)) return;
+  const uint16_t flags = x2 ? 0x1fd3 : 0x1f9c;
+  g_ram[flags] |= g_ram[(uint16_t)(cpu->D + 0x0b)];
+  interp_bridge_pre_opcode_redirect((pc & 0xff0000) | (x2 ? 0xe488 : 0xeafb));
+}
+
+/* Blue over a bar's fill (both games draw it alike: 6 px wide, a 2-pixel
+ * unit per HP up from the bottom unit's row), from the bottom. */
+extern Ppu *g_ppu;
+/* The drawn frame's widescreen margins left and right of x 0..255. */
+static int s_draw_left, s_draw_right;
+static void draw_blue(uint32_t *field, int stride, int x0, int bottom, unsigned blue) {
+  static const uint32_t edge = 0x002878f8, core = 0x00a8e8ff;
+  for (unsigned k = 0; k < blue && k < 30; ++k) {
+    const int y = bottom - 2 * (int)k;
+    if (y < 0 || y >= 224 || x0 < -s_draw_left || x0 + 5 >= 256 + s_draw_right) break;
+    uint32_t *row = field + (ptrdiff_t)y * stride + x0;
+    row[0] = row[1] = row[4] = row[5] = edge;
+    row[2] = row[3] = core;
+  }
+}
+static bool any_blue(void) { return s.blue[0] || s.blue[1]; }
+bool MmxX2ShareBlueShown(const uint8_t *ram, bool x2) {
+  return ram && any_blue() && playing(ram, x2) &&
+         !(x2 ? (ram[0x1f21] == 6 || ram[0x1f21] == 8) : (ram[0x1f10] == 6 || ram[0x1f10] == 8));
+}
+extern bool MmxRendererCompactCoopHud(void);
+extern unsigned MmxCoopCurrentSeat(void);
+extern unsigned MmxCoopSeatCharacter(unsigned seat);
+void MmxX2ShareDrawX1Blue(uint32_t *pixels, int stride, int left) {
+  if (!pixels || !MmxX2ShareBlueShown(g_ram, false)) return;
+  uint32_t *field = pixels + left;
+  if (!MmxCoopEnabled()) { draw_blue(field, stride, 13, 78, s.blue[0]); return; }
+  /* X1 co-op's own meters (mmx_renderer.c coop_hud_seat_row). */
+  const bool compact = MmxRendererCompactCoopHud();
+  unsigned tallest = g_ram[0x1f9a] > 32 ? 32u : g_ram[0x1f9a];
+  if (tallest < 28) tallest = 28;
+  for (unsigned seat = 0; seat < 2; ++seat) {
+    if (!MmxCoopSeatBody(g_ram, seat)) continue;
+    const unsigned c = MmxCoopSeatCharacter(seat);
+    const bool lower = compact && (c == 1 || (seat && MmxCoopSeatCharacter(0) == c));
+    const int x = 8 + (compact ? 0 : (int)seat * 32), icon_y = lower ? 116 + 2 * (int)tallest : 80;
+    draw_blue(field, stride, x + 5, icon_y - 2, s.blue[seat]);
+  }
+}
+extern bool MmxX2CoopMeterPos(int *x, int *y, unsigned *seat);
+extern unsigned MmxX2CoopMainSeat(void);
+void MmxX2ShareDrawX2Blue(uint32_t *top_row, int stride) {
+  if (!top_row || !MmxX2ShareBlueShown(g_ram, true)) return;
+  const unsigned main = MmxX2CoopActive() ? MmxX2CoopMainSeat() : 0;
+  /* Widescreen: the HP bar is out at the edge (X2ConfigureWsHud). */
+  s_draw_left = g_ppu ? g_ppu->extraLeftCur : 0;
+  s_draw_right = g_ppu ? g_ppu->extraRightCur : 0;
+  draw_blue(top_row, stride, 13 - X2WsHudLeftShift(), 78, s.blue[main]);
+  int x, y;
+  unsigned seat;
+  if (MmxX2CoopActive() && MmxX2CoopMeterPos(&x, &y, &seat))
+    draw_blue(top_row, stride, x + 3, y - 6, s.blue[seat]);
+  s_draw_left = s_draw_right = 0;
 }
 
 /* -- Xtreme Sub Tanks: drawing ---------------------------------------------
@@ -595,9 +783,11 @@ void MmxX2ShareRegisterHooks(void) {
   if (done) return;
   done = true;
   (void)interp_bridge_add_pre_opcode_hook(0x81e662, pickup_hook);
+  (void)interp_bridge_add_pre_opcode_hook(0x81eaea, heart_hook);
   (void)interp_bridge_add_pre_opcode_hook(0x01e662, pickup_hook);
   interp_bridge_set_pre_opcode_hook_owner(1);
   (void)interp_bridge_add_pre_opcode_hook(0x01dc15, pickup_hook);
+  (void)interp_bridge_add_pre_opcode_hook(0x01e477, heart_hook);
   (void)interp_bridge_add_pre_opcode_hook(0x81dc15, pickup_hook);
   interp_bridge_set_pre_opcode_hook_owner(0);
 }

@@ -140,8 +140,18 @@ def main():
         env["SDL_VIDEODRIVER"] = env["SDL_AUDIODRIVER"] = "dummy"
         command += ["--benchmark", "100000"]
     with (work / "replay.log").open("wb") as log:
-        result = subprocess.run(command, cwd=work, env=env, stdout=log, stderr=subprocess.STDOUT)
+        # The host's own watchdog ends a stalled run (exit 124); this is the
+        # backstop for one that never reaches it. A hang is a bug either way.
+        try:
+            result = subprocess.run(command, cwd=work, env=env, stdout=log,
+                                    stderr=subprocess.STDOUT, timeout=2400)
+        except subprocess.TimeoutExpired:
+            print((work / "replay.log").read_text(encoding="utf-8", errors="replace"))
+            print("HANG: the replay run was still going after 2400 s and was stopped. This is a bug.")
+            return 124
     print((work / "replay.log").read_text(encoding="utf-8", errors="replace"))
+    if result.returncode == 124:
+        print("HANG: the host's watchdog stopped a stalled run. This is a bug.")
     return result.returncode
 
 

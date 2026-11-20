@@ -11,6 +11,12 @@ struct SaveLoadInfo;
 void X2RunOneFrameOfGame(void);
 void X2DrawPpuFrame(void);
 bool X2UseNativeFrame(void);
+/* Widescreen (Mega Man X Widescreen on the X2 page): once per frame before
+ * X2 runs; the left HUD's outward shift for overlays drawn on it. */
+void X2ConfigureWsHud(void);
+void X2ConfigureWsBgMargins(void);
+void X2WsBeginFrame(void);
+int X2WsHudLeftShift(void);
 void X2StateSaveExtra(struct SaveLoadInfo *sli);
 void X2StateLoadExtra(struct SaveLoadInfo *sli, uint32_t version);
 void X2OnStateLoaded(uint32_t version);

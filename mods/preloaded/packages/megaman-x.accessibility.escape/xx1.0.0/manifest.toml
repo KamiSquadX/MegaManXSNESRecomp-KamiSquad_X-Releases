@@ -1,0 +1,25 @@
+format_version = 1
+id = "megaman-x.accessibility.escape"
+version = "xx1.0.0"
+name = "Mega Man X Escape Bugs"
+author = "KamiSquad_X"
+description = "Commands on the pause menu's ESCAPE.U for getting out of a stuck spot."
+license = "MIT"
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "megaman-x-us"
+rom_sha256 = "b8f70a6e7fb93819f79693578887e2c11e196bdf1ac6ddc7cb924b1ad0be2d32"
+
+[[feature]]
+id = "escape"
+name = "Escape Bugs"
+description = "With ESCAPE.U (X1) or EXIT (X2) highlighted on the pause menu: X resets the camera, Select moves to ground on screen (left, right, middle in turn), hold B 3 seconds to restart at the last checkpoint without losing a life, hold Start 3 seconds to return to stage select. Each closes the menu first. Anywhere in a stage, hold Start + Select 5 seconds to return to stage select. The list shows on screen."
+group = "Accessibility"
+order = -1
+default_enabled = true
+
+[[plugin]]
+feature = "escape"
+id = "megaman-x.escape"

@@ -1,4 +1,5 @@
 #include "mmx_options.h"
+#include "mmx_escape.h"
 #include "mmx_axl.h"
 
 #include <stdio.h>
@@ -24,7 +25,7 @@ static MmxOptionsState state;
 
 MmxOptionsState MmxOptionsGetState(void) { return state; }
 bool MmxOptionsValidState(const MmxOptionsState *s) {
-  if (!s || s->no_double_tap > 1 || s->hold_dash > 1 || s->reserved[0] || s->reserved[1])
+  if (!s || s->no_double_tap > 1 || s->hold_dash > 1)
     return false;
   for (unsigned i = 0; i < 2; ++i)
     if (s->tap_held[i] > 3 || s->tap_dir[i] > 2 || s->tap_timer[i] > 12 || s->tap_dashing[i] > 2)
@@ -119,6 +120,8 @@ bool MmxOptionsFrameBegin(uint32_t *inputs) {
   /* X2 Password Saves: Start for X1's password page as it comes back. */
   MmxX2ExtX1Inputs(inputs);
 #endif
+  /* Escape Bugs: ESCAPE.U's commands take their buttons first. */
+  MmxEscapeFrameBegin(inputs, false);
   /* Gameplay only: menus keep left/right for their own use. */
   bool active = !state.no_double_tap && MmxWidePolicy_IsStageScene(g_ram) &&
                 !MmxWeaponsMenuVisible(g_ram);
@@ -162,6 +165,7 @@ bool MmxOptionsX2FrameBegin(uint32_t *inputs) {
   static uint8_t since_dash = 255;
   static bool dash_was;
   if (!inputs) return true;
+  MmxEscapeFrameBegin(inputs, true);
   const bool paused = (g_ram[0x1f21] == 6 || g_ram[0x1f21] == 8) && (g_ram[0xc4] & 0x80);
   const bool active = g_ram[0xd0] == 2 && g_ram[0xd1] == 4 && !paused;
   uint32_t w = *inputs;

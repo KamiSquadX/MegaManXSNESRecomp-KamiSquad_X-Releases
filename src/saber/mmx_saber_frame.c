@@ -384,6 +384,13 @@ static void pre_player(uint8_t *ram) {
      * Rakuhouha); X1's cycle never sees them, as with the X2/X3 packs. */
     const unsigned shoulders = ram[0x0be2] & 0x30;
     ram[0x0be2] &= (uint8_t)~0x30;
+#if MMX_X2_EXTENSION
+    /* X2 page: L / R cycle the pause page in use; Rakuhouha is the X1
+     * page's (mmx_x2pause.c). */
+    extern bool MmxX2PauseKsxShoulders(void);
+    if (!MmxX2PauseKsxShoulders()) {
+    } else
+#endif
     if ((ram[0x0bde] & 0x30) != 0x30) MmxSaberKsxShoulders(ram, shoulders);
   }
   mirror_native_fire_wave_repeat(ram, out.fire_blocked || zero.hurt);

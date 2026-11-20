@@ -22,10 +22,12 @@
 #include "mmx_x2ext.h"
 #include "mmx_x2share.h"
 #include "mmx_x2pause.h"
+int X2WsHudLeftShift(void); /* x2_runtime.c: widescreen HUD shift */
 #include "mmx_renderer.h"
 #include "mmx_weapon_combat.h"
 #include "mmx_zero.h"
 #include "mmx_options.h"
+#include "saber/mmx_saber_tuning.h"
 #include "snes/interp_bridge.h"
 #include "snes/ppu.h"
 #include "snes/cart.h"
@@ -98,8 +100,14 @@ static uint8_t *build_view(void) {
     view[kWords[i].x1 + 1] = g_ram[kWords[i].x2 + 1];
   }
   /* X1's boss weapons as X1 last had them ($1F87..$1F98): KSX Zero learns a
-   * Special Move from its X1 Maverick ($1F88 + 2n bit 6), here as in X1. */
-  (void)MmxX2ShareX1Weapons(view + 0x1f87);
+   * Special Move from its X1 Maverick ($1F88 + 2n bit 6), here as in X1, and
+   * from nothing else (no X1 record: none; never X2's RAM there). */
+  if (!MmxX2ShareX1Weapons(view + 0x1f87)) memset(view + 0x1f87, 0, 18);
+  /* His armor parts ($1F99 bits 0-3: the Saber's purple arms and the rest)
+   * are X1's too, not X2's capsules ($1FD0 bits 0-3, X's own); the high bits
+   * stay X2's tank flags. */
+  view[0x1f99] = (uint8_t)((g_ram[0x1fd0] & 0xf0) |
+      (MmxSaberTuningStartAllUpgrades() ? 0x0f : MmxX2ShareX1Armor()));
   /* Game mode: X2's $D0..$D3 are X1's $D1..$D4 (X1 gameplay is $D1 = 2,
    * $D2 = 4, $D3 = 4; X2's is $D0 = 2, $D1 = 4, $D2 = 4). */
   view[0xd1] = g_ram[0xd0];
@@ -143,8 +151,11 @@ static void write_back(void) {
   memcpy(g_ram + X2_SOUND, view + X1_SOUND, SOUND_SIZE);
   memcpy(g_ram + X2_OBJECTS, view + X1_OBJECTS, OBJECTS_SIZE);
   memcpy(g_ram + X2_ENEMY_SHOTS, view + X1_ENEMY_SHOTS, ENEMY_SHOTS_SIZE);
+  const uint8_t x2_armor = g_ram[0x1fd0] & 0x0f;
   for (unsigned i = 0; i < sizeof(kGlobals) / sizeof(kGlobals[0]); ++i)
     if (kGlobals[i].x2) g_ram[kGlobals[i].x2] = view[kGlobals[i].x1];
+  /* X2's armor parts are X's: Zero's (X1's) never go back into them. */
+  g_ram[0x1fd0] = (uint8_t)((g_ram[0x1fd0] & 0xf0) | x2_armor);
 }
 
 /* An X2 object address as X1's code knows it. */
@@ -443,12 +454,14 @@ static void interp_hook(CpuState *cpu, uint32_t pc) {
   }
 }
 
+static void weapon_switch_hook(CpuState *cpu, uint32_t pc);
 static void register_hooks(void) {
   static const uint32_t sites[] = {0x089479, 0x08947e, 0x08c690, 0x08c673, 0x00d0aa,
                                    0x08d870, 0x08d89e, 0x08daa3, 0x08dacc, 0x08dad7, 0x08db05};
   interp_bridge_set_pre_opcode_hook_owner(1);
   for (unsigned i = 0; i < sizeof(sites) / sizeof(sites[0]); ++i)
     (void)interp_bridge_add_pre_opcode_hook(sites[i], interp_hook);
+  (void)interp_bridge_add_pre_opcode_hook(0x08bed3, weapon_switch_hook);
   interp_bridge_set_pre_opcode_hook_owner(0);
 }
 
@@ -520,6 +533,8 @@ void MmxX2BridgeSaveState(uint8_t *out) {
   { const uint16_t page = MmxX2PauseState(); out[4] = (uint8_t)page; out[5] = (uint8_t)(page >> 8); }
   /* X2 game extension: the Xtreme Sub Tanks' energy. */
   MmxX2ShareXtremeSave(out + 6);
+  out[10] = MmxX2ShareX1Armor();
+  { const uint16_t hidden = MmxX2PauseZeroHidden(); out[11] = (uint8_t)hidden; out[12] = (uint8_t)(hidden >> 8); }
   uint8_t *p = out + BRIDGE_HEAD;
   MmxZeroState zero;
   memset(&zero, 0, sizeof(zero));
@@ -539,6 +554,8 @@ void MmxX2BridgeSaveState(uint8_t *out) {
 void MmxX2BridgeLoadState(const uint8_t *in, size_t size) {
   if (size == MmxX2BridgeStateSize() && !MmxX2ExtSwapping()) {
     MmxX2PauseSetState((uint16_t)(in[4] | in[5] << 8));
+    MmxX2ShareSetX1Armor(in[10]);
+    MmxX2PauseSetZeroHidden((uint16_t)(in[11] | in[12] << 8));
     const uint8_t *tail = in + BRIDGE_HEAD + zero_part();
     const size_t share = MmxX2ShareBlob(NULL, 0);
     (void)MmxX2ShareLoadState(tail, share);
@@ -639,15 +656,37 @@ static int badge_x = -1, badge_y = -1;
  * composed by the PPU as one host object (PpuSetExtraObjects) at X's own OBJ
  * priority and OAM slot, so walls and foreground tiles that cover X cover him
  * too, and fades, windows and brightness apply. canvas is the screen, row r
- * being scanline r + 1; bit 15 marks an opaque BGR555 pixel. */
-static uint16_t canvas[224 * 256];
+ * being scanline r + 1, column CANVAS_X0 + x screen x (widescreen margins:
+ * x < 0 and x >= 256 too); bit 15 marks an opaque BGR555 pixel. */
+enum { CANVAS_W = kPpuBufWidth, CANVAS_X0 = kPpuExtraLeftRight };
+static uint16_t canvas[224 * CANVAS_W];
 static bool canvas_used;
 static PpuExtraObject canvas_object;
 
+/* The drawn field's margins (g_ppu: the field, or player 2's pane). */
+static int view_left(void) { return g_ppu ? g_ppu->extraLeftCur : 0; }
+static int view_right(void) { return g_ppu ? g_ppu->extraRightCur : 0; }
+
+static void canvas_clear(void) {
+  memset(canvas, 0, sizeof(canvas));
+  canvas_used = false;
+}
+
 static void put(int x, int y, uint16_t color) {
-  if (x < 0 || x >= 256 || y < 0 || y >= 224) return;
-  canvas[y * 256 + x] = (uint16_t)(color | 0x8000);
+  if (x < -view_left() || x >= 256 + view_right() || y < 0 || y >= 224) return;
+  canvas[y * CANVAS_W + CANVAS_X0 + x] = (uint16_t)(color | 0x8000);
   canvas_used = true;
+}
+
+/* The canvas as one host object over the drawn field. */
+static void canvas_publish(unsigned priority, int slot) {
+  const int left = view_left();
+  canvas_object = (PpuExtraObject){
+      .x = -left, .y = 1, .width = (uint16_t)(256 + left + view_right()), .height = 224,
+      .stride = CANVAS_W, .priority = (uint8_t)priority, .math = 0,
+      .oamSlot = (uint8_t)(slot < 0 ? 0 : slot), .order = 1,
+      .pixels = canvas + CANVAS_X0 - left};
+  PpuSetExtraObjects(g_ppu, &canvas_object, 1);
 }
 
 /* As mmx_renderer.c's player_overlay_plane_row, over the whole plane. */
@@ -833,7 +872,9 @@ static void coop_before_draw(void) {
     if (hud_badge(i) && (g_ppu->oam[i * 2] >> 8) < 224) {
       coop_badge_x = g_ppu->oam[i * 2] & 0xff;
       coop_badge_y = g_ppu->oam[i * 2] >> 8;
-    } else if (x_sprite(i) && slot < 0) {
+    } else if (x_sprite(i) && (g_ppu->oam[i * 2] >> 8) < 224) {
+      /* X's last piece: Zero sorts behind every piece of X (as in X1
+       * co-op, X is always in front). */
       slot = (int)i;
       priority = (g_ppu->oam[i * 2 + 1] >> 12) & 3;
     }
@@ -841,15 +882,10 @@ static void coop_before_draw(void) {
   if (!MmxX2CoopLiveIsX()) return;
   MmxZeroState s;
   if (!MmxX2CoopDrawnSeat(&s, NULL)) return;
-  memset(canvas, 0, sizeof(canvas));
-  canvas_used = false;
+  canvas_clear();
   draw_body(build_view(), &s);
   if (!canvas_used) return;
-  canvas_object = (PpuExtraObject){
-      .x = 0, .y = 1, .width = 256, .height = 224, .stride = 256,
-      .priority = (uint8_t)priority, .math = 0, .oamSlot = (uint8_t)(slot < 0 ? 0 : slot),
-      .order = 1, .pixels = canvas};
-  PpuSetExtraObjects(g_ppu, &canvas_object, 1);
+  canvas_publish(priority, (slot < 0 ? 0 : slot));
 }
 
 /* Side by side, player 2's pane (g_ppu is that pane, its OAM already moved
@@ -859,25 +895,20 @@ void MmxX2ZeroPaneObjects(int camera_x, int camera_y) {
       !MmxX2CoopLiveIsX()) return;
   int slot = -1;
   unsigned priority = 2;
-  for (unsigned i = 0; i < 128 && slot < 0; ++i)
+  for (unsigned i = 0; i < 128; ++i)
     if (x_sprite(i) && (g_ppu->oam[i * 2] >> 8) < 224) {
       slot = (int)i;
       priority = (g_ppu->oam[i * 2 + 1] >> 12) & 3;
     }
   MmxZeroState s;
   if (!MmxX2CoopDrawnSeat(&s, NULL)) return;
-  memset(canvas, 0, sizeof(canvas));
-  canvas_used = false;
+  canvas_clear();
   uint8_t *v = build_view();
   v[0x1e4d] = (uint8_t)camera_x; v[0x1e4e] = (uint8_t)(camera_x >> 8);
   v[0x1e50] = (uint8_t)camera_y; v[0x1e51] = (uint8_t)(camera_y >> 8);
   draw_body(v, &s);
   if (!canvas_used) return;
-  canvas_object = (PpuExtraObject){
-      .x = 0, .y = 1, .width = 256, .height = 224, .stride = 256,
-      .priority = (uint8_t)priority, .math = 0, .oamSlot = (uint8_t)(slot < 0 ? 0 : slot),
-      .order = 1, .pixels = canvas};
-  PpuSetExtraObjects(g_ppu, &canvas_object, 1);
+  canvas_publish(priority, (slot < 0 ? 0 : slot));
 }
 
 bool MmxX2ZeroCoopBadge(int *x, int *y) {
@@ -931,8 +962,7 @@ static bool pause_figure(void) {
     hidden_y[i] = g_ppu->oam[i * 2];
     g_ppu->oam[i * 2] = (uint16_t)((g_ppu->oam[i * 2] & 0xff) | (0xf0 << 8));
   }
-  memset(canvas, 0, sizeof(canvas));
-  canvas_used = false;
+  canvas_clear();
   const int dx = (left + right) / 2 - (px0 + px1 + 1) / 2, dy = bottom - 1 - py1;
   const uint16_t *colors = MmxZeroColors();
   const uint16_t *body_colors = MmxZeroBodyColors(&s);
@@ -942,11 +972,22 @@ static bool pause_figure(void) {
       if (pixel) put(col + dx, row + dy, pixel >= 16 && pixel < 32 ? body_colors[pixel - 16] : colors[pixel]);
     }
   if (!canvas_used) return true;
-  canvas_object = (PpuExtraObject){
-      .x = 0, .y = 1, .width = 256, .height = 224, .stride = 256,
-      .priority = 3, .math = 0, .oamSlot = (uint8_t)slot, .order = 1, .pixels = canvas};
-  PpuSetExtraObjects(g_ppu, &canvas_object, 1);
+  canvas_publish(3, slot);
   return true;
+}
+
+/* X2's weapon switch ($08:BED3, from $08:BECC: L / R, both for the buster,
+ * Up + Down for $12): Zero has no X2 weapons for now (his X2 page skills
+ * come later), so it never runs for him and he keeps no X2 weapon (+$33).
+ * Nonzero skips the routine (to its RTS, $08:BECB). */
+int MmxX2ZeroSkipWeaponSwitch(void) {
+  if (!x2_gameplay() || !MmxX2ZeroPausedIsZero()) return 0;
+  g_ram[X2_PLAYER + 0x33] = 0;
+  return 1;
+}
+static void weapon_switch_hook(CpuState *cpu, uint32_t pc) {
+  (void)cpu; (void)pc;
+  if (MmxX2ZeroSkipWeaponSwitch()) interp_bridge_pre_opcode_redirect(0x08becb);
 }
 
 /* The one paused is Zero (his pause figure, his X1 skills page). */
@@ -988,15 +1029,10 @@ void MmxX2ZeroBeforeDraw(void) {
   }
   /* No X sprites this frame (an invulnerability blink): no body either. */
   if (slot < 0 && !s.swap_phase) return;
-  memset(canvas, 0, sizeof(canvas));
-  canvas_used = false;
+  canvas_clear();
   draw_body(build_view(), &s);
   if (!canvas_used) return;
-  canvas_object = (PpuExtraObject){
-      .x = 0, .y = 1, .width = 256, .height = 224, .stride = 256,
-      .priority = (uint8_t)priority, .math = 0, .oamSlot = (uint8_t)(slot < 0 ? 0 : slot),
-      .order = 1, .pixels = canvas};
-  PpuSetExtraObjects(g_ppu, &canvas_object, 1);
+  canvas_publish(priority, (slot < 0 ? 0 : slot));
 }
 
 static uint32_t screen_color(uint16_t c) {
@@ -1005,8 +1041,10 @@ static uint32_t screen_color(uint16_t c) {
 }
 
 static uint32_t *screen_row(int y) {
+  /* Screen x 0 (the native view's left edge): the row holds extraLeftRight
+   * columns before it (the PPU's compose offset plus extraLeftCur). */
   return (uint32_t *)(g_ppu->renderBuffer + (size_t)y * g_ppu->renderPitch) +
-      (g_ppu->extraLeftRight - g_ppu->extraLeftCur);
+      g_ppu->extraLeftRight;
 }
 
 void MmxX2ZeroAfterDraw(void) {
@@ -1018,14 +1056,18 @@ void MmxX2ZeroAfterDraw(void) {
                                           coop_badge_x >= 0 ? coop_badge_y : badge_y);
   if (badge_x < 0) return;
   /* The HUD badge is not world art: it goes over the finished frame.
-   * A sprite at OAM Y starts on line Y+1, which is renderBuffer row Y. */
+   * A sprite at OAM Y starts on line Y+1, which is renderBuffer row Y.
+   * Widescreen moves the bar it sits on out to the edge (X2ConfigureWsHud). */
+  const int bx = badge_x - X2WsHudLeftShift();
   for (unsigned row = 0; row < 16; ++row) {
     const int y = badge_y + (int)row;
     if (y < 0 || y >= 224) continue;
     uint32_t *dst = screen_row(y);
     for (unsigned col = 0; col < 16; ++col) {
       const int color = MmxZeroHudColor(col, row);
-      if (color >= 0 && badge_x + (int)col < 256) dst[badge_x + col] = screen_color((uint16_t)color);
+      const int x = bx + (int)col;
+      if (color >= 0 && x >= -view_left() && x < 256 + view_right())
+        dst[x] = screen_color((uint16_t)color);
     }
   }
 }
@@ -1033,8 +1075,22 @@ void MmxX2ZeroAfterDraw(void) {
 /* Developer mod: Hitbox overlay on the X2 page. X2's objects share X1's
  * layout and collision records (+$20 into bank $86), so X1's collector runs
  * on the X1-layout view with X2's cart; outlines go over the finished frame. */
+static void draw_hitbox_view(void);
+/* Co-op: each player's boxes (the view holds one player at a time). */
 void MmxX2DrawHitboxOverlay(void) {
   if (!MmxHitboxOverlayEnabled() || !g_ppu || !g_snes || !g_snes->cart) return;
+  uint8_t *const kept = player_src;
+  player_src = NULL;
+  draw_hitbox_view();
+  uint8_t *other = MmxX2CoopOtherBody();
+  if (other) {
+    player_src = other;
+    draw_hitbox_view();
+  }
+  player_src = kept;
+}
+
+static void draw_hitbox_view(void) {
   MmxRenderDebugRect rects[64];
   /* The overlay reads the same records X2's collision does, so KSX's box,
    * kept at X2 $86:FE00 (publish_bounds), is looked up there. */
@@ -1052,6 +1108,7 @@ void MmxX2DrawHitboxOverlay(void) {
   const unsigned count = MmxHitboxOverlayCollect(v, g_snes->cart->rom, g_snes->cart->romSize,
                                                  NULL, NULL, rects, 64);
   const int cx = (int)word(v + 0x1e4d), cy = (int)word(v + 0x1e50);
+  const int x_min = -view_left(), x_max = 256 + view_right();
   for (unsigned i = 0; i < count; ++i) {
     const MmxRenderDebugRect *r = &rects[i];
     const uint32_t color = screen_color(r->rgb555);
@@ -1061,10 +1118,10 @@ void MmxX2DrawHitboxOverlay(void) {
       if (y < 0 || y >= 224) continue;
       uint32_t *dst = screen_row(y);
       if (y == top || y == bottom) {
-        for (int x = left; x <= right; ++x) if (x >= 0 && x < 256) dst[x] = color;
+        for (int x = left; x <= right; ++x) if (x >= x_min && x < x_max) dst[x] = color;
       } else {
-        if (left >= 0 && left < 256) dst[left] = color;
-        if (right >= 0 && right < 256) dst[right] = color;
+        if (left >= x_min && left < x_max) dst[left] = color;
+        if (right >= x_min && right < x_max) dst[right] = color;
       }
     }
   }

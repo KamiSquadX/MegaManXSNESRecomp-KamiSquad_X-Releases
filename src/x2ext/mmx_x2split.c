@@ -41,12 +41,15 @@ extern uint8_t g_ram[0x20000];
 extern Snes *g_snes;
 
 enum { PANE_W = 256, PANE_H = 224 };
+/* A pane's width (Mega Man X Widescreen: wider than PANE_W) and its margin
+ * on each side; PANE_W is the native view inside it. */
+static int s_w = PANE_W, s_e;
 
 static Ppu s_start;   /* the field's PPU state before its first line */
 static Ppu s_pane;
 static Dma s_dma;
 static bool s_have_start, s_pane_ready;
-static uint32_t s_pixels[PANE_W * PANE_H];
+static uint32_t s_pixels[kPpuBufWidth * PANE_H];
 
 /* BG2 parallax: its unwrapped plane position and the rate it moves at. */
 static struct {
@@ -208,8 +211,8 @@ static void move_oam(Ppu *p, int dx, int dy) {
     else continue; /* parked */
     const int a = (int)x9 - dx, b = (int)x9 - 512 - dx;
     int nx;
-    if (a > -size && a < PANE_W) nx = a;
-    else if (b > -size && b < PANE_W) nx = b;
+    if (a > -size - s_e && a < PANE_W + s_e) nx = a;
+    else if (b > -size - s_e && b < PANE_W + s_e) nx = b;
     else { hide(p, i); continue; }
     const int ny = sy - dy;
     if (ny <= -size || ny >= PANE_H) { hide(p, i); continue; }
@@ -238,8 +241,8 @@ void MmxX2SplitRenderPane(void) {
   memset(s_pane.overlayRenderBuffer, 0, sizeof(s_pane.overlayRenderBuffer));
   PpuSetWidescreenLineEnhancer(&s_pane, NULL, NULL);
   PpuSetExtraObjects(&s_pane, NULL, 0);
-  PpuBeginDrawing(&s_pane, (uint8_t *)s_pixels, PANE_W * 4, field->renderFlags);
-  PpuSetExtraSpace(&s_pane, 0);
+  PpuBeginDrawing(&s_pane, (uint8_t *)s_pixels, (size_t)s_w * 4, field->renderFlags);
+  PpuSetExtraSpace(&s_pane, (uint8)s_e);
 
   /* Each layer's offset from the field's scroll. */
   int offset[2][2] = {{dx, dy}, {(dx * s_bg2.rate4[0]) / 4, (dy * s_bg2.rate4[1]) / 4}};
@@ -288,20 +291,23 @@ void MmxX2SplitRenderPane(void) {
 
 /* ── Presenter ────────────────────────────────────────────────────────── */
 
-void MmxX2SplitPrepareFrame(int *frame_w, int *frame_h) {
-  *frame_w = MmxX2SplitWanted() ? 2 * PANE_W : PANE_W;
+void MmxX2SplitPrepareFrame(int pane_w, int *frame_w, int *frame_h) {
+  if (pane_w < PANE_W || pane_w > kPpuBufWidth) pane_w = PANE_W;
+  s_w = pane_w & ~1;
+  s_e = (s_w - PANE_W) / 2;
+  *frame_w = MmxX2SplitWanted() ? 2 * s_w : s_w;
   *frame_h = PANE_H;
 }
 
 int MmxX2SplitDrawFrame(uint8_t *dst, size_t pitch, const uint8_t *field, int w, int h) {
   if (netplay_second_view()) {
-    if (w != PANE_W || h != PANE_H || !s_pane_ready) return 0;
+    if (w != s_w || h != PANE_H || !s_pane_ready) return 0;
     for (int y = 0; y < PANE_H; ++y)
-      memcpy(dst + (size_t)y * pitch, s_pixels + y * PANE_W, PANE_W * 4);
+      memcpy(dst + (size_t)y * pitch, s_pixels + y * s_w, (size_t)s_w * 4);
     return 1;
   }
-  if (!MmxX2SplitWanted() || w != 2 * PANE_W || h != PANE_H || !field) return 0;
+  if (!MmxX2SplitWanted() || w != 2 * s_w || h != PANE_H || !field) return 0;
   /* Outside a stage (menus, scenes, loading): the shared frame twice. */
-  return SnesLocalViews_ComposeSideBySide(dst, pitch, PANE_W, PANE_H, field, PANE_W * 4,
-                                          s_pane_ready ? s_pixels : NULL, PANE_W * 4) ? 1 : 0;
+  return SnesLocalViews_ComposeSideBySide(dst, pitch, s_w, PANE_H, field, (size_t)s_w * 4,
+                                          s_pane_ready ? s_pixels : NULL, (size_t)s_w * 4) ? 1 : 0;
 }
